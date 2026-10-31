@@ -1,0 +1,5 @@
+{
+  "standard": { "planner": "claude", "workers": ["claude", "codex"], "rev": "codex" },
+  "solo": { "planner": "none", "workers": ["claude"], "rev": "none" },
+  "large": { "planner": "claude", "workers": ["claude", "codex", "claude", "codex"], "rev": "codex" }
+}
