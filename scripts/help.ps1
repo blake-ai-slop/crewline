@@ -111,6 +111,7 @@ foreach ($entry in $commands) {
 }
 Write-Output ''
 Write-Output 'Mẹo'
+Write-Output '  - Lần đầu ở project mới, mỗi agent hỏi trust thư mục — crew up liệt kê pane cần bấm.'
 Write-Output '  - Đổi model/thinking: vào pane worker gõ /model — giữ qua các task.'
 Write-Output '  - Đổi agent hoặc quyền: crew up -Restart <w1|…|planner|rev|all>.'
 Write-Output '  - Lỡ đóng pane/space: crew repair (xem trước: crew repair -DryRun).'

@@ -559,7 +559,7 @@ function Invoke-Up {
   $main = Get-MainBranch $root
   $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' })
   $live = @($liveTerms | ForEach-Object { $_.name })
-  $made = @()
+  $made = @(); $started = @()
 
   # -Restart: kill đúng terminal đó (đã chạy thì) rồi để vòng dưới bật lại theo config hiện tại
   if ($Restart) {
@@ -582,7 +582,7 @@ function Invoke-Up {
     $n = "$slug-planner"
     if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else {
       $line = 'Bạn là planner của crew này. Đọc context/README.md rồi context/roles/planner.md; làm đúng vai trò đó và chờ chủ dự án giao việc.'
-      $r = Start-Term $n $root $ids.Space $ids.Planner (Get-AgentCommand $cfg.planner $cfg.access $line); $made += "$n=$($r.address)"
+      $r = Start-Term $n $root $ids.Space $ids.Planner (Get-AgentCommand $cfg.planner $cfg.access $line); $made += "$n=$($r.address)"; $started += @{ Term = $n; Kind = $cfg.planner }
     }
   }
   $wi = 0
@@ -590,13 +590,13 @@ function Invoke-Up {
     $wi++; $n = "$slug-w$wi"
     $wt = Initialize-WorkerTree $root $wi $main
     if ($live -contains $n) { Say "$n đã chạy, bỏ qua."; continue }
-    $r = Start-WorkerTerm $root $cfg $ids $slug $wi $main; $made += "$n=$($r.address) ($kind trong $wt)"
+    $r = Start-WorkerTerm $root $cfg $ids $slug $wi $main; $made += "$n=$($r.address) ($kind trong $wt)"; $started += @{ Term = $n; Kind = $kind }
   }
   if ($cfg.rev -ne 'none') {
     $n = "$slug-rev"
     if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else {
       $line = 'Bạn là rev của crew này. Đọc context/README.md rồi context/roles/rev.md; làm đúng vai trò đó và chờ planner giao việc.'
-      $r = Start-Term $n $root $ids.Space $ids.Rev (Get-AgentCommand $cfg.rev $cfg.access $line); $made += "$n=$($r.address)"
+      $r = Start-Term $n $root $ids.Space $ids.Rev (Get-AgentCommand $cfg.rev $cfg.access $line); $made += "$n=$($r.address)"; $started += @{ Term = $n; Kind = $cfg.rev }
     }
   }
 
@@ -623,7 +623,8 @@ function Invoke-Up {
   } else { Say "cảnh báo: herdr-app chưa hiện space (app có đang mở?)." }
 
   if ($made.Count) { Say "đã bật: $($made -join '; ')" }
-  Say "space 'crew:$slug' sẵn sàng. Agent hỏi trust thư mục? Claude: 'hc keys <tên> down enter', Codex: 'hc keys <tên> enter'."
+  Say "space 'crew:$slug' sẵn sàng."
+  if ($started.Count) { Show-StartupTrust $started (New-HcOps) }
 }
 
 # ---------------- task ----------------
@@ -665,14 +666,54 @@ function Test-SessionReady([string]$kind, $info, [string]$screen) {
   return -not (@($lines[$cmd..($lines.Count - 1)]) -match '^\s*/clear\s{2,}\S').Count
 }
 
+# Chỉ quan sát terminal vừa bật, tối đa 20s; không gửi hay bấm phím.
+function Show-StartupTrust($roles, $ops) {
+  $pending = @($roles); $trust = @()
+  for ($i = 0; $i -le 10 -and $pending.Count; $i++) {
+    if ($i -gt 0) { & $ops.Sleep 2000 }
+    $next = @()
+    foreach ($role in $pending) {
+      $info = & $ops.Get $role.Term
+      $dlg = Get-ScreenDialog (& $ops.Read $role.Term)
+      if ($dlg -eq 'trust') { $trust += $role; continue }
+      if ($dlg) { continue }
+      $st = Get-TermStatus $info
+      $want = @{ claude = 'claude-code'; codex = 'codex' }[$role.Kind]
+      if ($info -and $info.state -eq 'live' -and $st.App -eq $want -and $st.State -eq 'idle') { continue }
+      $next += $role
+    }
+    $pending = $next
+  }
+  if (-not $trust.Count) { return }
+  Say 'Chờ bạn bấm "trust thư mục" (crew không tự bấm):'
+  foreach ($role in $trust) {
+    $keys = if ($role.Kind -eq 'claude') { 'down enter' } else { 'enter' }
+    $hint = if ($role.Kind -eq 'claude') { '↓ rồi Enter' } else { 'Enter' }
+    Say ("  {0}  {1,-6}  vào pane: {2,-12} (hoặc: hc keys {0} {3})" -f $role.Term, $role.Kind, $hint, $keys)
+  }
+  Say 'Trust một lần cho mỗi thư mục; lần sau không hỏi lại.'
+}
+
 # Hàm thuần: màn hình đang có hộp thoại? 'codex-new' = ĐÚNG hộp chọn của Codex /new với dòng 1 đang chọn (an toàn để Enter);
-# 'other' = hộp khác (duyệt lệnh/quyền, trust, …) — không bao giờ bấm; '' = không thấy hộp.
+# 'trust' = trust thư mục; 'other' = hộp khác (duyệt lệnh/quyền, …) — không bao giờ bấm; '' = không thấy hộp.
 # Hộp lạ thắng: chỉ trả 'codex-new' khi bỏ các dòng của hộp chọn đi, phần còn lại KHÔNG còn dấu hiệu hộp nào.
 function Get-ScreenDialog([string]$screen) {
   $marks = 'Where should the new conversation run', 'Do you want to', 'Allow command', '(?m)^\s*Allow\b', '\(y/n\)', 'enter select',
     'esc back', 'Esc to cancel', '(?m)^\s*[›❯]\s*\d+\.\s', 'Yes, proceed'
   $hasMark = { param($t) foreach ($m in $marks) { if ($t -match $m) { return $true } } $false }
   $s = "$screen"
+  $claudeTrust = $s -match 'Yes, I trust this folder'
+  $codexTrust = $s -match 'Trust this folder\?' -and $s -match 'Trust and continue'
+  if ($claudeTrust -or $codexTrust) {
+    $own = if ($claudeTrust) {
+      @('^\s*Quick safety check:.*$', '^\s*[›❯]?\s*No, exit\s*$', '^\s*[›❯]?\s*Yes, I trust this folder\s*$', '^\s*Enter to confirm · Esc to cancel\s*$')
+    } else {
+      @('^\s*Trust this folder\?.*$', '^\s*[›❯]?\s*1\. Trust and continue\s*$', '^\s*2\. Quit\s*$', '^\s*enter continue · esc quit\s*$')
+    }
+    $rest = @($s -split '\r?\n' | Where-Object { $l = $_; -not @($own | Where-Object { $l -match $_ }).Count }) -join "`n"
+    if (& $hasMark $rest) { return 'other' }
+    return 'trust'
+  }
   if ($s -match '(?m)^\s*Where should the new conversation run\?\s*$' -and $s -match '(?m)^\s*›\s*1\. Use current Git worktree') {
     $own = '^\s*Where should the new conversation run\?\s*$', '^\s*›\s*1\. Use current Git worktree\b', '^\s+2\. Create new Git worktree\b',
       '^\s*enter select · esc back\s*$'
@@ -776,7 +817,15 @@ function Invoke-Hot {
   Write-Host "== git worktree list"; git -C $root worktree list
   Write-Host "== terminal"
   Get-LiveTerminals | Where-Object { $_.name -like "$slug-*" } |
-    ForEach-Object { "{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, $(if ($_.status) { $_.status } else { '-' }), $_.agent } | Write-Host
+    ForEach-Object {
+      $st = Get-TermStatus $_
+      $status = if ($_.status) { $_.status } else { '-' }
+      $app = if ($st.App) { $st.App } else { $_.agent }
+      if ($_.state -eq 'live' -and $app -in 'claude', 'claude-code', 'codex' -and $st.State -in 'idle', 'blocked') {
+        if ((Get-ScreenDialog (& (New-HcOps).Read $_.name)) -eq 'trust') { $status = 'chờ trust' }
+      }
+      "{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, $status, $_.agent
+    } | Write-Host
   $tasks = Get-Tasks $root
   Write-Host "== worker (worktree cố định)"
   $wi = 0
@@ -854,13 +903,70 @@ function Wait-WorkerReady([string]$term, [string]$kind, $ops, [int]$tries = 30) 
     if ($i -gt 0) { & $ops.Sleep 2000 }
     $info = & $ops.Get $term
     $m = Get-WorkerMode $info $kind
-    if ($m.Mode -eq 'blocked') { return "$term đang chờ duyệt" }
     if ($m.Mode -eq 'wrong') { return "$term đang chạy $($m.App), config là $kind" }
-    if (Get-ScreenDialog (& $ops.Read $term)) { return "$term đang hiện hộp thoại" }
+    $dlg = Get-ScreenDialog (& $ops.Read $term)
+    if ($dlg -eq 'trust') {
+      $hint = if ($kind -eq 'claude') { '↓ rồi Enter' } else { 'Enter' }
+      $keys = if ($kind -eq 'claude') { 'down enter' } else { 'enter' }
+      return "$term đang chờ trust thư mục — bấm trong pane: $hint (hoặc: hc keys $term $keys)"
+    }
+    if ($m.Mode -eq 'blocked') { return "$term đang chờ duyệt" }
+    if ($dlg) { return "$term đang hiện hộp thoại" }
     if ($m.Mode -eq 'agent' -and (Get-TermStatus $info).State -ne 'working') { return '' }
     if ($m.Mode -eq 'dead') { $why = "$term không live" }
   }
   $why
+}
+
+# Dòng giao Rev (dùng chung crew review + repair): mức review + commit từng nhánh theo đúng thứ tự $tasks.
+# Trả @{ Msg; Error } (không Die). $strict = $false (repair): nhánh không còn commit mới so với $main (Rev đã merge
+# trước khi bị gián đoạn) ⇒ ghi '(đã merge)' thay cho commit, không coi là lỗi.
+function Get-ReviewLine([string]$root, [string]$main, $tasks, [string]$cfgReview, [bool]$strict = $true) {
+  $hotFile = Join-Path $root 'context/HOT.md'
+  $hot = if (Test-Path $hotFile) { (Get-Content $hotFile -TotalCount 1 -Encoding utf8) -join '' } else { '' }
+  $items = @(); $levels = @()
+  foreach ($t in @($tasks)) {
+    $r = Invoke-GitQuiet -C $root log --format=%h "$main..$($t.branch)"
+    if ($r.Code -ne 0) { return @{ Msg = ''; Error = "không đọc được commit của $($t.branch): $($r.Text)" } }
+    $commits = @($r.Text -split '\r?\n' | Where-Object { $_ })
+    if (-not $commits.Count) {
+      if ($strict) { return @{ Msg = ''; Error = "nhánh $($t.branch) không có commit mới so với $main." } }
+      $commits = @('đã merge')
+    }
+    $items += @{ Name = $t.name; Branch = $t.branch; Commits = $commits }
+    $levels += Get-ReviewLevel $t $hot $cfgReview
+  }
+  # các task khác mức ⇒ lấy mức cao nhất (Đủ > Gọn > Nhanh)
+  $level = @('Đủ', 'Gọn', 'Nhanh') | Where-Object { $levels -contains $_ } | Select-Object -First 1
+  @{ Msg = (Format-ReviewMessage $level $items); Error = '' }
+}
+
+# Thao tác git dở trên repo chính (chỉ đọc): @{ Kind = '' | 'merge' | 'rebase' | 'cherry-pick' | 'giải xung đột'; Files (≤5); Count }.
+function Get-MainOp([string]$root) {
+  $res = @{ Kind = ''; Files = @(); Count = 0 }
+  $gd = (Invoke-GitQuiet -C $root rev-parse --absolute-git-dir).Text
+  if ($gd -and (Test-Path -LiteralPath $gd)) {
+    if (Test-Path -LiteralPath (Join-Path $gd 'MERGE_HEAD')) { $res.Kind = 'merge' }
+    elseif ((Test-Path -LiteralPath (Join-Path $gd 'rebase-merge')) -or (Test-Path -LiteralPath (Join-Path $gd 'rebase-apply'))) { $res.Kind = 'rebase' }
+    elseif (Test-Path -LiteralPath (Join-Path $gd 'CHERRY_PICK_HEAD')) { $res.Kind = 'cherry-pick' }
+  }
+  $st = (Invoke-GitQuiet -C $root status --porcelain).Text
+  $un = @(@($st -split '\r?\n') | Where-Object { $_ -match '^(DD|AU|UD|UA|DU|AA|UU) ' } | ForEach-Object { $_.Substring(3) })
+  if ($un.Count -and -not $res.Kind) { $res.Kind = 'giải xung đột' }
+  $res.Count = $un.Count; $res.Files = @($un | Select-Object -First 5)
+  $res
+}
+
+# Task đang chờ review = còn trong tasks.json, có reviewSentAt, nhánh còn. Thứ tự = thứ tự gửi (reviewSentAt, rồi vị trí).
+function Get-PendingReview([string]$root, $tasks) {
+  $i = 0
+  $list = foreach ($t in @($tasks)) {
+    $i++
+    if (-not $t.reviewSentAt) { continue }
+    if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$($t.branch)").Code -ne 0) { continue }
+    [pscustomobject]@{ T = $t; At = [datetime]$t.reviewSentAt; I = $i }
+  }
+  , @(@($list) | Sort-Object At, I | ForEach-Object { $_.T })
 }
 
 # Lõi crew repair (không Die). $ops = bảng hc như New-HcOps + Up (bật terminal thiếu = logic crew up).
@@ -911,6 +1017,14 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     if (-not $hasBranch) { $human.Add("task $($t.name): nhánh $($t.branch) đã mất — không sửa; bỏ bản ghi bằng: crew clean $($t.name) -Force") }
   }
   if (-not $tasks.Count) { Write-Host '(không có)' }
+
+  # --- chẩn đoán repo chính: thao tác dở + task chờ review ---
+  Write-Host "== main"
+  $op = Get-MainOp $root
+  if ($op.Kind) { Write-Host "$root đang $($op.Kind) dở$(if ($op.Count) { "; xung đột ($($op.Count)): $($op.Files -join ', ')$(if ($op.Count -gt 5) { ', …' })" })" }
+  else { Write-Host "$root không có thao tác dở" }
+  $pending = Get-PendingReview $root $tasks
+  if ($pending.Count) { Write-Host "chờ review: $(@($pending | ForEach-Object { $_.name }) -join ', ')" }
 
   # --- sửa: prune + tạo lại w<N> ---
   if (@($trees.Values | Where-Object { $_.State -eq 'hỏng' }).Count -or @($meta.Values | Where-Object { $_.Prunable }).Count) {
@@ -991,6 +1105,34 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     $r = Invoke-SendFlow $role.Term $line $ops
     if ($r.Ok) { $done.Add("giao lại task $($t.name) -> $($role.Term)"); $sent += $t.name }
     else { $human.Add("giao lại task $($t.name) chưa xong: $($r.Message)") }
+  }
+
+  # --- giao lại review (chỉ Rev vừa bật lại) + việc cần người khi main có thao tác dở ---
+  # Không bao giờ: merge --abort/reset/checkout repo chính, xóa reviewSentAt.
+  $rev = $roles | Where-Object { $_.Role -eq 'rev' } | Select-Object -First 1
+  $opWhat = "main đang $($op.Kind) dở"
+  if (-not $rev) {
+    if ($op.Kind) { $human.Add("$opWhat — không có Rev trong config; xem git status trên $root.") }
+  } elseif ($started -contains $rev -and $pending.Count) {
+    $names = @($pending | ForEach-Object { $_.name }) -join ','
+    $rl = Get-ReviewLine $root $main $pending $cfg.review $false
+    if ($rl.Error) { $human.Add("chưa soạn lại được dòng review ($names): $($rl.Error)") }
+    else {
+      $line = $rl.Msg
+      if ($op.Kind) { $line += " Lưu ý: bạn bị gián đoạn; repo chính đang $($op.Kind) dở — xem git status, làm tiếp hoặc tự hủy (git merge --abort …) rồi làm lại." }
+      if ($dry) { & $will "giao lại review $names -> $($rev.Term)" }
+      else {
+        $why = Wait-WorkerReady $rev.Term $rev.Kind $ops
+        if ($why) { $human.Add("$why — chưa giao lại review $names, không bấm phím; sau đó: crew send $($rev.Term) `"$line`"") }
+        else {
+          $r = Invoke-SendFlow $rev.Term $line $ops
+          if ($r.Ok) { $done.Add("giao lại review $names -> $($rev.Term)"); $sent += @($pending | ForEach-Object { $_.name }) }
+          else { $human.Add("giao lại review $names chưa xong: $($r.Message)") }
+        }
+      }
+    }
+  } elseif ($op.Kind) {
+    $human.Add("$opWhat — hỏi Rev ($($rev.Term)) hoặc xem git status")
   }
   foreach ($r in $roles | Where-Object { $_.Live -and $_.Role -notlike 'w*' -and $_.Mode -in 'wrong', 'shell', 'blocked' }) {
     $human.Add("$($r.Term): $(@{ wrong = 'sai agent'; shell = 'agent đã thoát'; blocked = 'chờ duyệt' }[$r.Mode]) — xem tay (crew up -Restart $($r.Role) để bật lại).")
@@ -1385,24 +1527,21 @@ function Invoke-Review {
   $cfg = Get-Config $root; $slug = Get-Slug $root; $tasks = Get-Tasks $root
   $main = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
   if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." }
-  $hotFile = Join-Path $root 'context/HOT.md'
-  $hot = if (Test-Path $hotFile) { (Get-Content $hotFile -TotalCount 1 -Encoding utf8) -join '' } else { '' }
-  $items = @(); $levels = @()
-  foreach ($n in $names) {
+  $sel = @(foreach ($n in $names) {
     $t = $tasks | Where-Object { $_.name -eq $n } | Select-Object -First 1
     if (-not $t) { Die "task $n không có trong .crew/tasks.json." }
-    $r = Invoke-GitQuiet -C $root log --format=%h "$main..$($t.branch)"
-    if ($r.Code -ne 0) { Die "không đọc được commit của $($t.branch): $($r.Text)" }
-    $commits = @($r.Text -split '\r?\n' | Where-Object { $_ })
-    if (-not $commits.Count) { Die "nhánh $($t.branch) không có commit mới so với $main." }
-    $items += @{ Name = $n; Branch = $t.branch; Commits = $commits }
-    $levels += Get-ReviewLevel $t $hot $cfg.review
+    $t
+  })
+  $rl = Get-ReviewLine $root $main $sel $cfg.review
+  if ($rl.Error) { Die $rl.Error }
+  if ($DryRun) { Write-Host $rl.Msg; return }
+  Send-CrewMessage "$slug-rev" $rl.Msg
+  # gửi được ⇒ đánh dấu chờ review (crew repair giao lại khi Rev bị đóng giữa chừng); +i ms giữ thứ tự gửi
+  $now = [DateTime]::UtcNow
+  for ($i = 0; $i -lt $sel.Count; $i++) {
+    $sel[$i] | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $now.AddMilliseconds($i).ToString('o') -Force
   }
-  # các task khác mức ⇒ lấy mức cao nhất (Đủ > Gọn > Nhanh)
-  $level = @('Đủ', 'Gọn', 'Nhanh') | Where-Object { $levels -contains $_ } | Select-Object -First 1
-  $msg = Format-ReviewMessage $level $items
-  if ($DryRun) { Write-Host $msg; return }
-  Send-CrewMessage "$slug-rev" $msg
+  Save-Tasks $root $tasks
 }
 
 # Chuẩn hóa tên: PowerShell biến `a,b` / `a, b` thành mảng, Git Bash truyền chuỗi "a,b" ⇒ nối bằng ',' rồi tách, trim, bỏ rỗng.

@@ -24,6 +24,7 @@ crew:<repo>  (space trong herdr-app)
    crew init     # tạo context/ chung + .crew/config.json
    crew up       # mở tab planner / workers / rev trong herdr
    ```
+   Lần đầu ở project mới, mỗi agent hỏi trust thư mục; `crew up` liệt kê pane cần bạn bấm xác nhận.
    Thư mục mới chưa có git: `crew init` sẽ hỏi có tạo repo git (git init + commit đầu) không, gõ `1` rồi Enter. Không muốn hỏi thì dùng `crew init -GitInit`.
 4. **Làm việc:** sang tab **planner**, nói việc muốn làm. Planner chia việc, đưa bảng chia cho bạn duyệt, rồi giao cho worker. Worker xong thì Rev review và merge. Theo dõi bằng `crew hot`.
 5. **Cập nhật Crewline:** chạy lại lệnh cài ở bước 2, rồi trong mỗi project chạy `crew upgrade`. Có gì mới: xem [`CHANGELOG.md`](CHANGELOG.md).

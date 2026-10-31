@@ -3,7 +3,8 @@ $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Format-DirtyFiles',
-  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore'
+  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
+  'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -249,5 +250,203 @@ Describe 'crew repair (hc giả)' {
     (@($res.Done) -join '|') | Should Match ([regex]::Escape('chép lại prompt'))
     $ops.State.Sent.Count | Should Be 1
     @($res.Human).Count | Should Be 0
+  }
+}
+
+# ---------------- Rev bị đóng giữa review/merge ----------------
+$CfgRev = [pscustomobject]@{ planner = 'none'; workers = @('claude', 'claude'); rev = 'claude'; access = 'work'; review = 'lean' }
+function Invoke-RepRev([string]$root, $ops, [bool]$dry = $false) { Invoke-RepairCore $root $CfgRev 'x' 'main' $dry $ops }
+
+# commit 1 file trong worktree của task
+function Add-Commit([string]$root, [string]$name, [int]$n, [string]$file = 'n.txt', [string]$text = 'x') {
+  $wt = Get-WorkerTree $root $n
+  $text | Set-Content (Join-Path $wt $file); git -C $wt add -A; git -C $wt commit -q -m $name
+}
+
+# đánh dấu chờ review theo thứ tự $names (giống crew review đã gửi)
+function Set-ReviewSent([string]$root, [string[]]$names) {
+  $tasks = Get-Tasks $root; $t0 = [DateTime]::UtcNow
+  for ($i = 0; $i -lt $names.Count; $i++) {
+    $t = $tasks | Where-Object { $_.name -eq $names[$i] }
+    $t | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $t0.AddMilliseconds($i).ToString('o') -Force
+  }
+  Save-Tasks $root $tasks
+}
+
+# a, b cùng sửa a.txt; main merge a (ff) rồi merge b ⇒ xung đột thật, MERGE_HEAD
+function New-MergeConflict([string]$root) {
+  Add-Commit $root 'a' 1 'a.txt' 'từ a'
+  Add-Commit $root 'b' 2 'a.txt' 'từ b'
+  git -C $root merge -q crew/a 2>&1 | Out-Null
+  git -C $root merge -q --no-edit crew/b 2>&1 | Out-Null
+}
+
+Describe 'crew repair: Rev bị đóng giữa review (hc giả)' {
+  BeforeEach { $script:HcCalls = 0 }
+
+  It 'Rev thiếu + 2 task chờ review -> bật lại, gửi đúng 1 dòng = Get-ReviewLine theo thứ tự gửi' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+    Add-Task $root 'b' 2; Add-Commit $root 'b' 2
+    Set-ReviewSent $root @('b', 'a')
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops
+    $all = Get-Tasks $root; $tb = $all | Where-Object { $_.name -eq 'b' }; $ta = $all | Where-Object { $_.name -eq 'a' }
+    $want = (Get-ReviewLine $root 'main' @($tb, $ta) 'lean' $false).Msg
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Be $want
+    $ops.State.Sent[0] | Should Match ([regex]::Escape('merge crew/b ('))
+    $ops.State.Sent[0].IndexOf('crew/b') | Should BeLessThan $ops.State.Sent[0].IndexOf('crew/a')
+    $ops.State.Keys | Should Be 0
+    (@($res.Done) -join '|') | Should Match ([regex]::Escape('giao lại review b,a -> x-rev'))
+    @($res.Human).Count | Should Be 0
+    @((Get-Tasks $root) | ForEach-Object { $_ } | Where-Object { $_.reviewSentAt }).Count | Should Be 2
+    $script:HcCalls | Should Be 0
+  }
+
+  It 'Rev thiếu + main merge dở (xung đột thật) -> dòng có Lưu ý merge dở; repo chính không đổi HEAD/MERGE_HEAD' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Task $root 'b' 2
+    New-MergeConflict $root
+    Set-ReviewSent $root @('a', 'b')
+    $head = (git -C $root rev-parse HEAD).Trim()
+    $mh = Get-Content (Join-Path $root '.git/MERGE_HEAD') -Raw
+    $op = Get-MainOp $root
+    $op.Kind | Should Be 'merge'
+    $op.Files -join ',' | Should Be 'a.txt'
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Match ([regex]::Escape('crew/a (đã merge) rồi crew/b ('))
+    $ops.State.Sent[0] | Should Match ([regex]::Escape('Lưu ý: bạn bị gián đoạn; repo chính đang merge dở — xem git status'))
+    $ops.State.Keys | Should Be 0
+    @($res.Human).Count | Should Be 0
+    (git -C $root rev-parse HEAD).Trim() | Should Be $head
+    Get-Content (Join-Path $root '.git/MERGE_HEAD') -Raw | Should Be $mh
+  }
+
+  It 'Rev live + main merge dở -> không gửi, việc cần người (exit 1), không đụng repo chính' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Task $root 'b' 2
+    New-MergeConflict $root
+    Set-ReviewSent $root @('a', 'b')
+    $head = (git -C $root rev-parse HEAD).Trim()
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Up | Should Be 0
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    (@($res.Human) -join '|') | Should Match ([regex]::Escape('main đang merge dở — hỏi Rev (x-rev) hoặc xem git status'))
+    (git -C $root rev-parse HEAD).Trim() | Should Be $head
+    Test-Path (Join-Path $root '.git/MERGE_HEAD') | Should Be $true
+    @((Get-Tasks $root) | ForEach-Object { $_ } | Where-Object { $_.reviewSentAt }).Count | Should Be 2
+  }
+
+  It 'rev: none + main merge dở -> việc cần người' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Task $root 'b' 2
+    New-MergeConflict $root
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    (@($res.Human) -join '|') | Should Match ([regex]::Escape('main đang merge dở — không có Rev'))
+    $ops.State.Sent.Count | Should Be 0
+  }
+
+  It 'Rev thiếu, không có task chờ review -> bật lại nhưng không gửi' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
+    @($res.Human).Count | Should Be 0
+  }
+
+  It '-DryRun: Rev thiếu + task chờ review + merge dở -> (sẽ làm) giao lại review, 0 Send/Keys/Up/Read' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Task $root 'b' 2
+    New-MergeConflict $root
+    Set-ReviewSent $root @('a', 'b')
+    $head = (git -C $root rev-parse HEAD).Trim()
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops $true
+    (@($res.Done) -join '|') | Should Match ([regex]::Escape('(sẽ làm) giao lại review a,b -> x-rev'))
+    @($res.Done | Where-Object { $_ -notlike '(sẽ làm)*' }).Count | Should Be 0
+    $ops.State.Up | Should Be 0
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    $ops.State.Ri | Should Be 0
+    (git -C $root rev-parse HEAD).Trim() | Should Be $head
+    Test-Path (Join-Path $root '.git/MERGE_HEAD') | Should Be $true
+    $script:HcCalls | Should Be 0
+  }
+
+  It 'Rev vừa bật lại nhưng blocked -> không gửi review, 0 Enter, cần người' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+    Set-ReviewSent $root @('a')
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null } @('') (New-Info 'blocked')
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    (@($res.Human) -join '|') | Should Match 'chưa giao lại review a'
+  }
+
+  It 'Rev vừa bật lại chờ trust -> hướng dẫn từ Wait-WorkerReady, không gửi review/Enter' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+    Set-ReviewSent $root @('a')
+    $screen = "Quick safety check:`n❯ No, exit`n  Yes, I trust this folder`nEnter to confirm · Esc to cancel"
+    $ops = New-FakeOps @{ 'x-w1' = (New-Info); 'x-w2' = (New-Info); 'x-rev' = $null } @($screen) (New-Info 'blocked')
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    (@($res.Human) -join '|') | Should Match 'x-rev đang chờ trust thư mục.*hc keys x-rev down enter'
+    (@($res.Human) -join '|') | Should Match 'chưa giao lại review a'
+  }
+}
+
+function New-ReviewRepo {
+  $root = New-RepairRepo
+  '{"review":"lean"}' | Set-Content (Join-Path $root '.crew/config.json')
+  Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+  Add-Task $root 'b' 2; Add-Commit $root 'b' 2
+  $root
+}
+
+Describe 'crew review ghi reviewSentAt' {
+  $script:ReviewSent = [Collections.Generic.List[string]]::new()
+  function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false) { $script:ReviewSent.Add("$term|$text") }
+  BeforeEach { $script:ReviewSent.Clear() }
+
+  It 'gửi OK -> tasks.json có reviewSentAt (ISO, theo thứ tự), không đổi trường khác' {
+    $root = New-ReviewRepo
+    $before = Get-Content (Join-Path $root '.crew/tasks.json') -Raw | ConvertFrom-Json
+    $NameList = @('b', 'a'); $DryRun = $false
+    Push-Location $root
+    try { Invoke-Review } finally { Pop-Location }
+    $script:ReviewSent.Count | Should Be 1
+    $tasks = Get-Tasks $root
+    Get-Content (Join-Path $root '.crew/tasks.json') -Raw | Should Match '"reviewSentAt":\s*"\d{4}-\d\d-\d\dT'
+    $ta = $tasks | Where-Object { $_.name -eq 'a' }; $tb = $tasks | Where-Object { $_.name -eq 'b' }
+    ([datetime]$tb.reviewSentAt) | Should BeLessThan ([datetime]$ta.reviewSentAt)
+    foreach ($t in $before) {
+      $now = $tasks | Where-Object { $_.name -eq $t.name }
+      foreach ($p in $t.PSObject.Properties) { [string]$now.($p.Name) | Should Be ([string]$p.Value) }
+    }
+    $pend = Get-PendingReview $root $tasks
+    (@($pend | ForEach-Object { $_.name }) -join ',') | Should Be 'b,a'
+    $script:ReviewSent[0] | Should Be ("$(Get-Slug $root)-rev|" + (Get-ReviewLine $root 'main' $pend 'lean').Msg)
+  }
+
+  It '-DryRun -> không gửi, không ghi reviewSentAt' {
+    $root = New-ReviewRepo
+    $NameList = @('a', 'b'); $DryRun = $true
+    Push-Location $root
+    try { Invoke-Review } finally { Pop-Location }
+    $script:ReviewSent.Count | Should Be 0
+    @((Get-Tasks $root) | ForEach-Object { $_ } | Where-Object { $_.reviewSentAt }).Count | Should Be 0
   }
 }

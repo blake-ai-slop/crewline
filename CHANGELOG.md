@@ -20,6 +20,8 @@ Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng,
 - **`crew upgrade`:** cập nhật `roles/`, `context/README.md`, PITFALLS chung và khối crew trong CLAUDE.md/AGENTS.md của project cũ từ skeleton mới; không đụng PROJECT/HOT/DECISIONS/tasks. Có `-DryRun`, sao lưu file trước khi ghi đè. Xem `docs/upgrade.md`.
 
 ### Sửa
+- **Hộp "trust thư mục" lần đầu:** ở project mới, mỗi agent hỏi trust thư mục và đứng chờ. `crew up` nay liệt kê đúng pane nào đang chờ kèm phím cần bấm (Claude: ↓ rồi Enter; Codex: Enter); `crew hot` hiện `chờ trust`. Crew không bao giờ tự bấm hộp này.
+- **`crew repair` khôi phục cả Rev:** Rev bị đóng giữa lúc review thì repair bật lại và giao lại đúng lệnh review còn dở (`crew review` nay ghi lại lúc đã giao). Repo chính đang merge/rebase dở thì repair báo rõ và nhắc Rev xử lý tiếp; không bao giờ tự hủy merge.
 - `crew repair -DryRun` nay báo cả việc sẽ giao lại task dở và sẽ chép lại prompt (trước đây chỉ báo bật terminal thiếu). `crew repair` đã thử với agent thật: đóng pane Codex giữa task, repair bật lại và agent làm tiếp đúng phần còn lại.
 - Worker giữ phiên: `/clear` (Claude) và `/new` (Codex) trước đây tới agent như câu chat nên không xóa context; nay lệnh slash gửi trần, hộp chọn worktree của Codex `/new` được chọn tự động — chỉ khi đúng hộp đó và không có hộp nào khác trên màn hình (hộp duyệt quyền thì dừng, không bấm). Đã thử với Claude và Codex thật.
 - `crew check` báo nhầm "ngoài phạm vi" khi đường dẫn được phép nằm trong ngoặc ở dòng "Được sửa".
