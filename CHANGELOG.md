@@ -20,6 +20,7 @@ Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng,
 - **`crew upgrade`:** cập nhật `roles/`, `context/README.md`, PITFALLS chung và khối crew trong CLAUDE.md/AGENTS.md của project cũ từ skeleton mới; không đụng PROJECT/HOT/DECISIONS/tasks. Có `-DryRun`, sao lưu file trước khi ghi đè. Xem `docs/upgrade.md`.
 
 ### Sửa
+- `crew repair -DryRun` nay báo cả việc sẽ giao lại task dở và sẽ chép lại prompt (trước đây chỉ báo bật terminal thiếu). `crew repair` đã thử với agent thật: đóng pane Codex giữa task, repair bật lại và agent làm tiếp đúng phần còn lại.
 - Worker giữ phiên: `/clear` (Claude) và `/new` (Codex) trước đây tới agent như câu chat nên không xóa context; nay lệnh slash gửi trần, hộp chọn worktree của Codex `/new` được chọn tự động — chỉ khi đúng hộp đó và không có hộp nào khác trên màn hình (hộp duyệt quyền thì dừng, không bấm). Đã thử với Claude và Codex thật.
 - `crew check` báo nhầm "ngoài phạm vi" khi đường dẫn được phép nằm trong ngoặc ở dòng "Được sửa".
 - `crew review a,b` gõ từ PowerShell (không ngoặc) bị lỗi và không gửi gì; nay nhận `a,b`, `"a,b"`, `a, b` từ PowerShell lẫn Git Bash. Lệnh chỉ nhận 1 tên (`task`, `clean`, `check`, `send`) báo lỗi rõ nếu truyền 2 tên.

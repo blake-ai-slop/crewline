@@ -3,7 +3,7 @@ $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Format-DirtyFiles',
-  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Invoke-RepairCore'
+  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -176,5 +176,78 @@ Describe 'crew repair (hc giả)' {
     $ops.State.Sent.Count | Should Be 0
     $ops.State.Keys | Should Be 0
     (@($res.Human) -join '|') | Should Match 'chờ duyệt'
+  }
+
+  It '-DryRun: w1 thiếu terminal + có task + đúng nhánh -> in sẽ giao lại task, 0 Send/Keys/Up' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops $true
+    (@($res.Done) -join '|') | Should Match ([regex]::Escape('(sẽ làm) giao lại task a -> x-w1'))
+    @($res.Done | Where-Object { $_ -notlike '(sẽ làm)*' }).Count | Should Be 0
+    @($res.Human).Count | Should Be 0
+    $ops.State.Up | Should Be 0
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    $ops.State.Ri | Should Be 0
+    $script:HcCalls | Should Be 0
+  }
+
+  It '-DryRun: worktree sai nhánh -> không có dòng giao lại, có việc cần người' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $wt = Get-WorkerTree $root 1
+    git -C $wt switch -q --detach main
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops $true
+    (@($res.Done) -join '|') | Should Not Match 'giao lại task'
+    (@($res.Human) -join '|') | Should Match ([regex]::Escape("x-w1 vừa bật lại nhưng $wt không ở crew/a — chưa giao lại task a."))
+    $ops.State.Up | Should Be 0
+    $ops.State.Sent.Count | Should Be 0
+  }
+
+  It '-DryRun: thiếu prompt.md nhưng có prompt nguồn -> in sẽ chép lại, không tạo file' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $wt = Get-WorkerTree $root 1
+    $pm = Join-Path $wt '.crew/prompt.md'
+    Remove-Item -LiteralPath $pm -Force
+    New-Item -ItemType Directory -Force (Join-Path $root '.crew/prompts') | Out-Null
+    'nguồn' | Set-Content (Join-Path $root '.crew/prompts/a.md')
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops $true
+    $d = @($res.Done) -join '|'
+    $d | Should Match ([regex]::Escape('(sẽ làm) chép lại prompt'))
+    $d | Should Match ([regex]::Escape('(sẽ làm) giao lại task a -> x-w1'))
+    Test-Path -LiteralPath $pm | Should Be $false
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Up | Should Be 0
+  }
+
+  It '-DryRun: w1 bị xóa + thiếu terminal -> coi như tạo lại + switch, báo thiếu prompt giống chạy thật' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $wt = Get-WorkerTree $root 1
+    Remove-Item -LiteralPath $wt -Recurse -Force
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops $true
+    (@($res.Human) -join '|') | Should Match ([regex]::Escape("$wt thiếu .crew/prompt.md"))
+    (@($res.Human) -join '|') | Should Not Match 'không ở crew/a'
+    Test-Path $wt | Should Be $false
+  }
+
+  It 'chạy thật: thiếu prompt.md + có prompt nguồn -> chép lại rồi gửi' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $pm = Join-Path (Get-WorkerTree $root 1) '.crew/prompt.md'
+    Remove-Item -LiteralPath $pm -Force
+    New-Item -ItemType Directory -Force (Join-Path $root '.crew/prompts') | Out-Null
+    'nguồn' | Set-Content (Join-Path $root '.crew/prompts/a.md')
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    Test-Path -LiteralPath $pm | Should Be $true
+    (@($res.Done) -join '|') | Should Match ([regex]::Escape('chép lại prompt'))
+    $ops.State.Sent.Count | Should Be 1
+    @($res.Human).Count | Should Be 0
   }
 }

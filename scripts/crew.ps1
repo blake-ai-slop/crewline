@@ -816,6 +816,22 @@ function Get-ResumeLine([string]$name, [string]$wt, [string]$branch) {
   "Bạn là worker. Tiếp tục task $name (bị gián đoạn): đọc context/roles/worker.md, file $wt\.crew\prompt.md, context/tasks/$name.md nếu có, xem git log và git status; làm tiếp phần còn lại. Thư mục làm việc: $wt (nhánh $branch)."
 }
 
+# Điều kiện giao lại task cho worker vừa bật lại (chỉ đọc, dùng chung DryRun + chạy thật).
+# $assumeBranch: nhánh worktree sẽ có sau các bước tạo lại/switch của chính lần repair này (DryRun); rỗng ⇒ đọc git.
+# Trả @{ Human = '' | lý do cần người; Line; Pm; Src = prompt nguồn sẽ chép ('' nếu không chép) }.
+function Get-ResumeCheck([string]$root, $t, $role, [string]$assumeBranch) {
+  $wt = $t.worktree; $line = Get-ResumeLine $t.name $wt $t.branch
+  $res = @{ Human = ''; Line = $line; Pm = (Join-Path $wt '.crew/prompt.md'); Src = '' }
+  $b = if ($assumeBranch) { $assumeBranch } elseif (Test-Path -LiteralPath $wt) { (Invoke-GitQuiet -C $wt branch --show-current).Text } else { '' }
+  if ($b -ne $t.branch) { $res.Human = "$($role.Term) vừa bật lại nhưng $wt không ở $($t.branch) — chưa giao lại task $($t.name)."; return $res }
+  $src = Join-Path $root ".crew/prompts/$($t.name).md"
+  if (-not (Test-Path -LiteralPath $res.Pm)) {
+    if (Test-Path -LiteralPath $src) { $res.Src = $src }
+    else { $res.Human = "$wt thiếu .crew/prompt.md — chép prompt của task $($t.name) vào đó rồi: crew send $($role.Term) `"$line`"" }
+  }
+  $res
+}
+
 # Trạng thái một worktree (chỉ đọc): @{ Path; State = 'có'|'mất'|'hỏng'|'lạ'; Branch; Dirty (≤5 file); DirtyCount }.
 function Get-TreeState([string]$root, [string]$wt, $meta) {
   $key = [IO.Path]::GetFullPath(($wt -replace '/', '\')).TrimEnd('\')
@@ -905,6 +921,7 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     }
   }
   $stray = $false
+  $planned = @{}  # DryRun: w<N> -> nhánh sẽ switch sau khi tạo lại
   foreach ($i in @($trees.Keys | Sort-Object)) {
     $s = $trees[$i]
     $task = $tasks | Where-Object { [int]$_.worker -eq $i -and (Test-KeepTask $root $_) } | Select-Object -First 1
@@ -920,7 +937,8 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
       }
       if ($task -and $info[$task.name].HasBranch) {
         & $will "git -C $($s.Path) switch $($task.branch)"
-        if (-not $dry) {
+        if ($dry) { $planned[$i] = $task.branch }
+        else {
           $r = Invoke-GitQuiet -C $s.Path switch -q $task.branch
           if ($r.Code -ne 0) { $human.Add("w${i}: switch $($task.branch) lỗi: $($r.Text)") }
         }
@@ -937,7 +955,8 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     if ($stray) { $human.Add("chưa bật terminal thiếu ($(@($dead | ForEach-Object { $_.Term }) -join ', ')): còn thư mục w<N> lạ, crew up sẽ lỗi.") }
     else {
       & $will "bật terminal thiếu qua crew up: $(@($dead | ForEach-Object { $_.Term }) -join ', ')"
-      if (-not $dry) {
+      if ($dry) { $started = $dead }  # DryRun: coi như bật được, không gọi Up
+      else {
         & $ops.Up
         foreach ($r in $dead) {
           if ((Get-WorkerMode (& $ops.Get $r.Term) $r.Kind).Mode -ne 'dead') { $started += $r } else { $human.Add("$($r.Term) vẫn chưa live sau crew up.") }
@@ -959,16 +978,14 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
       continue
     }
     if ($started -notcontains $role -or -not (Test-KeepTask $root $t)) { continue }
-    $wt = $t.worktree; $line = Get-ResumeLine $t.name $wt $t.branch
-    $b = if (Test-Path -LiteralPath $wt) { (Invoke-GitQuiet -C $wt branch --show-current).Text } else { '' }
-    if ($b -ne $t.branch) { $human.Add("$($role.Term) vừa bật lại nhưng $wt không ở $($t.branch) — chưa giao lại task $($t.name)."); continue }
-    $pm = Join-Path $wt '.crew/prompt.md'
-    $src = Join-Path $root ".crew/prompts/$($t.name).md"
-    if (-not (Test-Path -LiteralPath $pm) -and (Test-Path -LiteralPath $src)) {
-      New-Item -ItemType Directory -Force (Split-Path $pm) | Out-Null
-      Copy-Item -LiteralPath $src $pm; $done.Add("chép lại prompt $src -> $pm")
+    $chk = Get-ResumeCheck $root $t $role $(if ($dry) { [string]$planned[[int]$t.worker] } else { '' })
+    if ($chk.Human) { $human.Add($chk.Human); continue }
+    $line = $chk.Line
+    if ($chk.Src) {
+      & $will "chép lại prompt $($chk.Src) -> $($chk.Pm)"
+      if (-not $dry) { New-Item -ItemType Directory -Force (Split-Path $chk.Pm) | Out-Null; Copy-Item -LiteralPath $chk.Src $chk.Pm }
     }
-    if (-not (Test-Path -LiteralPath $pm)) { $human.Add("$wt thiếu .crew/prompt.md — chép prompt của task $($t.name) vào đó rồi: crew send $($role.Term) `"$line`""); continue }
+    if ($dry) { & $will "giao lại task $($t.name) -> $($role.Term)"; continue }
     $why = Wait-WorkerReady $role.Term $role.Kind $ops
     if ($why) { $human.Add("$why — chưa giao lại task $($t.name), không bấm phím; sau đó: crew send $($role.Term) `"$line`""); continue }
     $r = Invoke-SendFlow $role.Term $line $ops
