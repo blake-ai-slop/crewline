@@ -31,6 +31,7 @@ Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng,
 - `install.ps1` không ghi cứng đường dẫn, chạy lại an toàn.
 
 ### Khác
+- **Repo public chỉ còn phần sản phẩm:** bỏ context nội bộ của việc phát triển Crewline, lịch sử làm lại từ đầu. Ai đã cài trước đó mà lệnh cài 1 dòng báo `git pull --ff-only that bai` thì xóa thư mục `~/Crewline` rồi chạy lại lệnh cài (cấu hình `~/.crewline` và các project không bị ảnh hưởng).
 - **Role v4 (`crew upgrade` để nhận):** planner dùng `crew send`/`review`/`check`/`selfcheck`, gửi worker sửa tiếp trước khi giao Rev, làn nhanh cho việc nhỏ, push chỉ khi bạn cho phép (kèm selfcheck + CHANGELOG), đóng đợt bằng mục "Tiếp theo" trong HOT để planner mới tiếp quản; HOT bỏ "Đang làm" (`crew hot` là nguồn); MAP vào thứ tự đọc; Rev chỉ nâng Gọn→Đủ khi chạm vùng nhạy cảm, đổi hợp đồng giữa nhánh cùng đợt, hoặc gặp P0/P1; Rev dọn `archive/` khi PROGRESS/PITFALLS gần trần.
 - Khối crew trong CLAUDE.md/AGENTS.md: "chỉ planner push khi chủ dự án cho phép" + dòng MAP. `crew upgrade -DryRun` báo trước cả việc thêm `*.bak-*` vào `.gitignore`.
 - `context/MAP.md`: bản đồ code để worker mới tìm đúng file nhanh, đỡ phải dò cả repo.
