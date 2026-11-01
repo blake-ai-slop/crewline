@@ -91,7 +91,7 @@ Describe 'crew check committed task changes' {
     $r.Text | Should Match 'task absent không có'
   }
   It 'runs changed tests in the task worktree and propagates failures' {
-    Save-CheckFixture @{ 'tests/Example.Tests.ps1' = 'Describe "child" { It "cwd" { (Get-Location).Path | Should Be $PSScriptRoot.Replace("\tests", "") }; It "failure" { 1 | Should Be 2 } }' }
+    Save-CheckFixture @{ 'tests/Example.Tests.ps1' = 'Describe "child" { It "cwd" { (Get-Location).Path | Should Be (Split-Path $PSScriptRoot -Parent) }; It "failure" { 1 | Should Be 2 } }' }
     $r = Run-FixtureCheck
     $r.Code | Should Be 1
     $r.Text | Should Match 'test : LỖI'

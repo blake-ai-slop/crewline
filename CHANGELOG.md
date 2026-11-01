@@ -2,6 +2,17 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-01
+
+### Mới
+- **Linux và macOS (thử nghiệm):** cài 1 dòng `curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh` — tự cài pwsh 7 vào `~/.local` nếu thiếu (không cần sudo), clone vào `~/Crewline` rồi chạy `install.ps1`. Template hc vào `~/.config/herdr-core/templates`, lệnh `crew` vào `~/.local/bin`, PATH thêm vào `~/.profile` (macOS thêm `~/.zshrc`). Bảng kiểm phần mềm gợi ý brew (macOS) / apt-dnf (Linux, không tự chạy sudo); herdr cài bằng lệnh chính thức chỉ khi bạn chọn "Cài giúp". Mac Intel chưa có herdr-app. Windows không đổi: vẫn `irm … | iex`. Chưa thử với herdr-app thật trên Linux/macOS — xem `docs/herdr-unix.md`.
+- **CI GitHub Actions:** test tự chạy trên Windows + Linux mỗi lần push; macOS chạy tay (`workflow_dispatch`) hoặc khi phát hành. Đã xanh cả 3 hệ (Windows 340 test; Ubuntu/macOS 330, bỏ qua 6 test chỉ dành cho Windows).
+
+### Sửa
+- **`crew limits` chỉ xếp mốc theo limit 5h:** limit tuần dài hơn nên không còn đẩy mốc lên `theo dõi`/`hạn chế`/`dừng`; tuần dùng ≥90% thì hiện `⚠` kèm nhắc báo chủ dự án trước khi giao cho agent đó (không tự chặn). Project cũ nhận quy tắc mới cho planner bằng `crew upgrade`.
+- **`crew check` báo sai khi máy có Pester 4/5:** trước đây đọc dòng tổng kết theo chữ của Pester 3.4; nay tự đếm kết quả nên chạy đúng với Pester 3.4, 4 và 5.
+- Lệnh cài trên Linux/macOS: shim `crew` vẫn được đặt quyền chạy khi PATH không có `chmod`.
+
 ## 2026-10-31
 
 ### Mới

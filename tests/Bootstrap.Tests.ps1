@@ -1,6 +1,7 @@
 ﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $Bootstrap = Join-Path $RepoRoot 'bootstrap.ps1'
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 # Repo Crewline gia trong TestDrive: install.ps1 chi ghi dau vao HOME gia, khong goi mang/hc.
 function New-FakeCrewlineRepo {
@@ -105,13 +106,14 @@ Describe 'bootstrap.ps1' {
     }
   }
 
-  Context 'Windows PowerShell 5.1 (dan vao powershell.exe)' {
+  # powershell.exe chỉ có trên Windows: Linux/macOS bỏ cả Context.
+  if ($OnWindows) { Context 'Windows PowerShell 5.1 (dan vao powershell.exe)' {
     $h = New-CrewTestHome
     $dir = Join-Path $h.Home 'Ps51'
     $runner = Join-Path $TestDrive 'iex-runner-51.ps1'
     Set-Content $runner "Get-Content '$Bootstrap' -Raw | Invoke-Expression; 'SHELL-CON-SONG'"
     # pwsh cha them $PSHOME (thu muc goi WindowsApps, khong chay truc tiep duoc) vao PATH cua tien trinh con; nguoi dung that khong co
-    $path = ($env:Path -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+    $path = ($env:Path -split ';' | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';'
     $r = Invoke-InTestHome -TestHome $h -File $runner -Shell 'powershell' -Env @{ CREWLINE_DIR = $dir; CREWLINE_REPO = $src; Path = $path }
 
     It 'chay duoc tren 5.1, clone + goi install bang pwsh' {
@@ -119,7 +121,7 @@ Describe 'bootstrap.ps1' {
       Test-Path (Join-Path $dir 'install.ps1') | Should Be $true
       Get-InstallRuns $h | Should Be 1
     }
-  }
+  } }
 }
 
 Describe 'bootstrap truyen stdin va DEFAULTS qua iex' {
@@ -142,14 +144,36 @@ $line = [Console]::ReadLine()
     $captured.input | Should Be 'answer'
     $captured.defaults | Should Be '1'
   }
-  It 'PS 5.1 iex giu stdin va truyen DEFAULTS rong xuong pwsh install' {
+  It 'PS 5.1 iex giu stdin va truyen DEFAULTS rong xuong pwsh install' -Skip:(-not $OnWindows) {
     $h = New-CrewTestHome
-    $path = ($env:Path -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+    $path = ($env:Path -split ';' | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';'
     $r = Invoke-InTestHome $h $runner -Shell powershell -Env @{ CREWLINE_DIR = (Join-Path $h.Home 'Crewline'); CREWLINE_REPO = $src; CREWLINE_DEFAULTS = ''; Path = $path } -InputText 'answer51'
     $r.ExitCode | Should Be 0
     $r.Output | Should Match 'SHELL-CON-SONG'
     $captured = Get-Content (Join-Path $h.Home 'bootstrap-input.json') -Raw | ConvertFrom-Json
     $captured.input | Should Be 'answer51'
     [string]$captured.defaults | Should Be ''
+  }
+}
+
+Describe 'bootstrap.sh POSIX entrypoint' {
+  $sh = if (Get-Command sh -ErrorAction SilentlyContinue) { (Get-Command sh).Source } else { 'C:/Program Files/Git/bin/sh.exe' }
+  It 'parses as POSIX sh and is ASCII' {
+    & $sh -n (Join-Path $RepoRoot 'bootstrap.sh')
+    $LASTEXITCODE | Should Be 0
+    $bytes = [IO.File]::ReadAllBytes((Join-Path $RepoRoot 'bootstrap.sh'))
+    @($bytes | Where-Object { $_ -gt 127 -or $_ -eq 13 }).Count | Should Be 0
+  }
+  It 'selects the release asset using uname and rejects unsupported hosts' {
+    $source = (Join-Path $RepoRoot 'bootstrap.sh').Replace('\', '/')
+    foreach ($case in @(@('Linux', 'x86_64', 'linux-x64'), @('Linux', 'aarch64', 'linux-arm64'), @('Darwin', 'arm64', 'osx-arm64'), @('Darwin', 'x86_64', 'osx-x64'))) {
+      $command = 'CREWLINE_BOOTSTRAP_LIBRARY=1; . "' + $source + '"; uname() { case "$1" in -s) echo ' + $case[0] + ';; -m) echo ' + $case[1] + ';; esac; }; crew_pwsh_asset'
+      $out = & $sh -c $command
+      $LASTEXITCODE | Should Be 0
+      $out | Should Be $case[2]
+    }
+    $command = 'CREWLINE_BOOTSTRAP_LIBRARY=1; . "' + $source + '"; uname() { echo unsupported; }; crew_pwsh_asset 2>/dev/null'
+    & $sh -c $command
+    $LASTEXITCODE | Should Be 1
   }
 }

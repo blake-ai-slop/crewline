@@ -1,5 +1,5 @@
 ﻿<#
-crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc (Windows).
+crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc (Windows, Linux, macOS; pwsh 7).
 
   crew doctor                               kiểm môi trường: herdr, hc, agent, git identity
   crew init  [-Path .] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]
@@ -7,12 +7,12 @@ crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc
   crew up    [-Path .] [-Restart w1|…|planner|rev|all] [-Force]  dựng space/tab/agent theo .crew/config.json; worker chạy sẵn agent trong worktree cố định .crew/worktrees/w<N>; -Restart kill + bật lại đúng terminal đó theo config hiện tại (đổi agent/quyền), worker đang có task cần -Force
   crew task  <tên> <file-prompt> [-Worker N] [-Review lean|fast|full] worker rảnh: nhánh crew/<tên> từ nhánh chính trong w<N> (phải sạch), chép prompt, /clear (Claude) hoặc /new (Codex) rồi giao việc; đổi model = /model trong pane, giữ qua task
   crew hot   [-Path .]                      worktree, terminal, task đang chạy
-  crew limits [-Path .]                     đọc 1 lần % limit 5h/tuần từ màn hình từng terminal (mốc ok/theo dõi/hạn chế/dừng)
+  crew limits [-Path .]                     đọc 1 lần % limit 5h/tuần từ màn hình từng terminal (mốc ok/theo dõi/hạn chế/dừng theo 5h; tuần ≥90% cảnh báo)
   crew clean <tên> [-Force]                 w<N> về detached nhánh chính, xóa nhánh crew/<tên> + bản ghi; không kill agent, không xóa thư mục (task kiểu cũ .crew/worktrees/<tên>: gỡ worktree như trước)
   crew send <terminal> "<tin>" [-Raw]       gửi tin; tin kẹt ở ô nhập thì tự Enter; shell, lệnh /… và -Raw gửi trần (không bọc <hc from>)
   crew review <task>[,<task2>…] [-DryRun]  soạn 1 dòng giao Rev merge các task theo thứ tự, gửi tới <slug>-rev
   crew check <task>                         đối chiếu diff với "Được sửa", parse, test phần đó
-  crew selfcheck                            cài thử vào HOME giả + PS 5.1 + init/upgrade trước khi push
+  crew selfcheck                            cài thử vào HOME giả + PS 5.1 (chỉ Windows) + init/upgrade trước khi push
   crew repair [-DryRun]  chẩn đoán + sửa an toàn sau khi lỡ xóa pane/agent, giao lại task dở
   crew setup   chọn đội mặc định (agent, số worker, Rev, review, quyền)
   crew help [lệnh]                          mọi lệnh theo nhóm (scripts/help.ps1)
@@ -36,6 +36,7 @@ param(
 )
 
 # Chốt chặn: crew cần pwsh 7. Gọi bằng Windows PowerShell 5.1 (powershell.exe) thì chạy lại chính file này bằng pwsh.
+# Chỉ Windows tới được nhánh này (Linux/macOS chỉ có pwsh 7) nên thông báo winget đúng hệ.
 # Phần này phải chạy được trên 5.1: ở 5.1 + EAP Stop, stderr của lệnh native thành lỗi chặn (NativeCommandError).
 if ($PSVersionTable.PSVersion.Major -lt 7) {
   $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
@@ -56,6 +57,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 }
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'platform.ps1')
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $OutputEncoding = [Text.Encoding]::UTF8
 $Skeleton = Join-Path (Split-Path $PSScriptRoot -Parent) 'skeleton'
@@ -216,7 +218,8 @@ function Get-Flags([string]$kind, [string]$access) {
 
 function Quote([string]$s) { "'" + ($s -replace "'", "''") + "'" }
 
-# dòng lệnh bật agent dùng chung cho planner, worker, Rev; cờ quyền theo access (codex đã có --no-daemon trong Get-Flags)
+# dòng lệnh bật agent dùng chung cho planner, worker, Rev; cờ quyền theo access (codex đã có --no-daemon trong Get-Flags).
+# Một đường cho mọi hệ: lệnh chạy trong pwsh (Start-Term); pwsh tự tìm claude/codex trên PATH (npm shim .cmd/.ps1 trên Windows, file thực thi trên Unix).
 function Get-AgentCommand([string]$kind, [string]$access, [string]$line) {
   $exe = if ($kind -eq 'codex') { 'codex' } else { 'claude' }
   "$exe $(Get-Flags $kind $access) $(Quote $line)"
@@ -264,7 +267,7 @@ function Wait-Tab([string]$tab) {
 # ---------------- worker giữ phiên ----------------
 # Worktree cố định của worker N — chỗ DUY NHẤT dựng đường dẫn này (up/task/clean/hot đều gọi).
 function Get-WorkerTree([string]$root, [int]$n) {
-  [IO.Path]::GetFullPath((Join-Path $root ".crew\worktrees\w$n"))
+  [IO.Path]::GetFullPath((Join-Path $root ".crew/worktrees/w$n"))
 }
 
 # Nhánh chính = nhánh hiện tại của repo chính. Detached HEAD ⇒ Die.
@@ -372,7 +375,7 @@ function Invoke-Doctor {
   $gitCfg = { param($k) $r = Invoke-GitQuiet config --global $k; if ($r.Code -eq 0) { $r.Text } }
   $n = & $gitCfg user.name; $e = & $gitCfg user.email
   Check "git identity ($n <$e>)" ([bool]($n -and $e)) 'git config --global user.name/user.email'
-  $tdir = Join-Path $env:APPDATA 'herdr-core/templates'
+  $tdir = Get-HcTemplateDir
   $tpl = @(Get-ChildItem $tdir -Filter 'crew-*.md' -ErrorAction SilentlyContinue).Count
   Check "template hc ($tpl trong $tdir)" ($tpl -ge 4) 'chạy install.ps1'
   Check "khung context ($Skeleton)" (Test-Path (Join-Path $Skeleton 'context/roles/planner.md')) 'repo Crewline thiếu skeleton/'
@@ -726,7 +729,7 @@ function Get-ScreenDialog([string]$screen) {
 }
 
 function Get-TaskLine([string]$wt, [string]$branch) {
-  "Bạn là worker. Đọc context/roles/worker.md, rồi làm đúng file $wt\.crew\prompt.md. Thư mục làm việc: $wt (nhánh $branch); mọi lệnh chạy trong thư mục này."
+  "Bạn là worker. Đọc context/roles/worker.md, rồi làm đúng file $([IO.Path]::Combine($wt, '.crew', 'prompt.md')). Thư mục làm việc: $wt (nhánh $branch); mọi lệnh chạy trong thư mục này."
 }
 
 # Phần git của crew task trên worktree cố định: kiểm sạch, tạo crew/<tên> từ nhánh chính, chép prompt. Lỗi ⇒ throw.
@@ -851,7 +854,7 @@ function Invoke-Hot {
 # ---------------- repair ----------------
 # Metadata worktree từ `git worktree list --porcelain`: đường dẫn chuẩn hóa -> @{ Branch; Prunable }.
 function Get-WorktreeMeta([string]$root) {
-  $norm = { param($p) [IO.Path]::GetFullPath(($p -replace '/', '\')).TrimEnd('\') }
+  $norm = { param($p) [IO.Path]::GetFullPath($p).TrimEnd('\', '/') }
   $map = @{}; $cur = $null
   foreach ($l in @((Invoke-GitQuiet -C $root worktree list --porcelain).Text -split '\r?\n')) {
     if ($l -like 'worktree *') { $cur = @{ Branch = ''; Prunable = $false }; $map[(& $norm $l.Substring(9))] = $cur }
@@ -862,7 +865,7 @@ function Get-WorktreeMeta([string]$root) {
 }
 
 function Get-ResumeLine([string]$name, [string]$wt, [string]$branch) {
-  "Bạn là worker. Tiếp tục task $name (bị gián đoạn): đọc context/roles/worker.md, file $wt\.crew\prompt.md, context/tasks/$name.md nếu có, xem git log và git status; làm tiếp phần còn lại. Thư mục làm việc: $wt (nhánh $branch)."
+  "Bạn là worker. Tiếp tục task $name (bị gián đoạn): đọc context/roles/worker.md, file $([IO.Path]::Combine($wt, '.crew', 'prompt.md')), context/tasks/$name.md nếu có, xem git log và git status; làm tiếp phần còn lại. Thư mục làm việc: $wt (nhánh $branch)."
 }
 
 # Điều kiện giao lại task cho worker vừa bật lại (chỉ đọc, dùng chung DryRun + chạy thật).
@@ -883,7 +886,7 @@ function Get-ResumeCheck([string]$root, $t, $role, [string]$assumeBranch) {
 
 # Trạng thái một worktree (chỉ đọc): @{ Path; State = 'có'|'mất'|'hỏng'|'lạ'; Branch; Dirty (≤5 file); DirtyCount }.
 function Get-TreeState([string]$root, [string]$wt, $meta) {
-  $key = [IO.Path]::GetFullPath(($wt -replace '/', '\')).TrimEnd('\')
+  $key = [IO.Path]::GetFullPath($wt).TrimEnd('\', '/')
   $m = $meta[$key]; $dir = Test-Path -LiteralPath $wt
   $s = @{ Path = $wt; State = 'có'; Branch = ''; Dirty = @(); DirtyCount = 0 }
   if ($m -and ($m.Prunable -or -not $dir)) { $s.State = 'hỏng'; return $s }
@@ -1162,6 +1165,8 @@ function Get-LimitTiers {
     @{ Min = 50; Level = 'theo dõi'; Note = 'theo dõi' }
   )
 }
+# % tuần không vào mốc; từ ngưỡng này chỉ cảnh báo (báo chủ dự án trước khi giao), không tự chặn.
+function Get-LimitWeekWarn { return 90 }
 function Get-LimitLevel([int]$used) {
   foreach ($t in (Get-LimitTiers)) { if ($used -ge $t.Min) { return $t.Level } }
   return 'ok'
@@ -1180,12 +1185,10 @@ function Get-LimitInfo([string]$screen) {
   }
   $five = Find-Used "$screen" '5h'
   $week = Find-Used "$screen" '(?:weekly|week)'
-  $vals = @($five, $week | Where-Object { $null -ne $_ })
-  $level = if (-not $vals.Count) { 'không rõ' } else {
-    $max = ($vals | Measure-Object -Maximum).Maximum
-    Get-LimitLevel $max
-  }
-  return @{ FiveHour = $five; Week = $week; Level = $level }
+  # Mốc chỉ theo 5h; tuần chỉ bật cờ cảnh báo.
+  $level = if ($null -eq $five) { 'không rõ' } else { Get-LimitLevel $five }
+  $warn = $null -ne $week -and $week -ge (Get-LimitWeekWarn)
+  return @{ FiveHour = $five; Week = $week; Level = $level; WeekWarn = $warn }
 }
 
 # Limit tính theo tài khoản agent, không theo pane: pane chạy mà đọc không được ('không rõ', vd chân màn hình bị cắt '…')
@@ -1197,7 +1200,11 @@ function Resolve-LimitRows($rows) {
     $row = @{} + $r; $row.From = $null; $row.Shown = $r.Info
     if ($r.Live -and (-not $r.Info -or $r.Info.Level -eq 'không rõ')) {
       $src = @($rows | Where-Object { $_.Agent -eq $r.Agent -and $_.Name -ne $r.Name -and $_.Live -and $_.Info -and $_.Info.Level -ne 'không rõ' }) | Select-Object -First 1
-      if ($src) { $row.Shown = $src.Info; $row.From = $src.Name }
+      if ($src) {
+        # Mượn nguyên Info (gồm WeekWarn); pane tự đọc được tuần ≥ngưỡng thì vẫn giữ cảnh báo.
+        $row.Shown = @{} + $src.Info; $row.From = $src.Name
+        if ($r.Info -and $r.Info.WeekWarn) { $row.Shown.WeekWarn = $true }
+      }
     }
     $out += $row
   }
@@ -1219,7 +1226,8 @@ function Invoke-Limits {
   }
   $fmt = '{0,-18} {1,-7} {2,-8} {3,-10} {4,-9} {5}'
   $marks = @((Get-LimitTiers) | Sort-Object { $_.Min } | ForEach-Object { "$($_.Min)% $($_.Note)" }) -join ' · '
-  Write-Host "== limits crew:$slug  (mốc: $marks)"
+  Write-Host "== limits crew:$slug  (mốc 5h: $marks; tuần ≥$(Get-LimitWeekWarn)% cảnh báo)"
+  $warned = @()
   Write-Host ($fmt -f 'terminal', 'agent', '5h dùng', 'tuần dùng', 'mốc', 'task')
   foreach ($r in (Resolve-LimitRows $rows)) {
     $task = ($tasks | Where-Object { $_.terminal -eq $r.Name } | ForEach-Object { $_.name }) -join ','
@@ -1230,15 +1238,18 @@ function Invoke-Limits {
     $p5 = if ($i -and $null -ne $i.FiveHour) { "$($i.FiveHour)%" } else { '?' }
     $pw = if ($i -and $null -ne $i.Week) { "$($i.Week)%" } else { '?' }
     $lv = if ($i) { $i.Level } else { 'không rõ' }
-    Write-Host (($fmt -f $r.Name, $r.Agent, $p5, $pw, $lv, $task) + $note)
+    if ($i -and $i.WeekWarn) { $lv = "$lv ⚠"; $warned += "$($r.Name) ($($r.Agent)): tuần $pw" }
+    $line = ($fmt -f $r.Name, $r.Agent, $p5, $pw, $lv, $task) + $note
+    if ($i -and $i.WeekWarn) { Write-Host $line -ForegroundColor Yellow } else { Write-Host $line }
   }
-  Write-Host 'Limit tính theo tài khoản: mọi pane cùng agent dùng chung số.'
+  foreach ($w in $warned) { Write-Host "⚠ tuần ≥$(Get-LimitWeekWarn)%: $w — báo chủ dự án trước khi giao cho agent này." -ForegroundColor Yellow }
+  Write-Host 'Limit tính theo tài khoản: mọi pane cùng agent dùng chung số. Mốc chỉ theo 5h; tuần chỉ cảnh báo.'
 }
 
 # ---------------- clean ----------------
 
 function Test-WorktreeListed([string]$root, [string]$wt) {
-  $norm = { param($p) [IO.Path]::GetFullPath(($p -replace '/', '\')).TrimEnd('\') }
+  $norm = { param($p) [IO.Path]::GetFullPath($p).TrimEnd('\', '/') }
   $want = & $norm $wt
   foreach ($l in @(git -C $root worktree list --porcelain)) {
     if ($l -like 'worktree *' -and (& $norm $l.Substring(9)) -eq $want) { return $true }
@@ -1288,7 +1299,7 @@ function Remove-TaskBranch([string]$root, $task, [bool]$force) {
 # Task chạy trên worktree cố định của worker (bản mới) hay worktree riêng .crew/worktrees/<tên-task> (bản cũ)?
 function Test-KeepTask([string]$root, $task) {
   if (-not $task.worktree -or -not $task.worker) { return $false }
-  $norm = { param($p) [IO.Path]::GetFullPath(($p -replace '/', '\')).TrimEnd('\') }
+  $norm = { param($p) [IO.Path]::GetFullPath($p).TrimEnd('\', '/') }
   (& $norm $task.worktree) -eq (& $norm (Get-WorkerTree $root ([int]$task.worker)))
 }
 
@@ -1339,8 +1350,9 @@ function Invoke-Clean {
     # agent cũ còn đứng trong worktree của task (giữ khóa thư mục) ⇒ kill rồi bật lại worker theo kiểu mới
     $info = Get-TermInfo $t.terminal
     $cwd = if ($info -and $info.foreground -and $info.foreground.cwd) { $info.foreground.cwd } elseif ($info) { $info.cwd } else { $null }
-    $old = [IO.Path]::GetFullPath(($t.worktree -replace '/', '\')).TrimEnd('\')
-    if ($info -and $info.state -eq 'live' -and $cwd -and ([IO.Path]::GetFullPath($cwd).TrimEnd('\') + '\').StartsWith("$old\", [StringComparison]::OrdinalIgnoreCase)) {
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $old = [IO.Path]::GetFullPath($t.worktree).TrimEnd('\', '/')
+    if ($info -and $info.state -eq 'live' -and $cwd -and ([IO.Path]::GetFullPath($cwd).TrimEnd('\', '/') + $sep).StartsWith("$old$sep", [StringComparison]::OrdinalIgnoreCase)) {
       Say "dừng $($t.terminal) ($($info.address)) đang đứng trong $old, bật lại worker trong worktree cố định."
       Stop-Term $info.address
       Start-WorkerTerm $root $cfg $ids $slug ([int]$t.worker) (Get-MainBranch $root) | Out-Null

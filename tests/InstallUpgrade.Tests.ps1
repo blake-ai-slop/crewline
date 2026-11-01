@@ -16,7 +16,9 @@ Describe 'real install -> personal config -> init -> upgrade' {
     git -C $repo config user.name 'Crew Test'
     git -C $repo config user.email 'crew@example.invalid'
     git -C $repo commit -q --allow-empty -m initial
-    $shim = Join-Path $h.Home '.local/bin/crew.ps1'
+    # Unix: shim là file thực thi `crew` (shebang pwsh), không có crew.ps1.
+    $shimName = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { 'crew' } else { 'crew.ps1' }
+    $shim = Join-Path $h.Home ".local/bin/$shimName"
     $r = Invoke-InTestHome -TestHome $h -File $shim -Arguments 'init', '-Path', $repo
     if ($r.ExitCode -ne 0) { throw $r.Output }
     $cfg = Get-Content "$repo/.crew/config.json" -Raw | ConvertFrom-Json
@@ -27,7 +29,7 @@ Describe 'real install -> personal config -> init -> upgrade' {
     $hotBefore = [IO.File]::ReadAllText("$repo/context/HOT.md")
     $projectBefore = [IO.File]::ReadAllText("$repo/context/PROJECT.md")
     Set-Content "$repo/context/roles/worker.md" 'old worker role'
-    Remove-Item "$repo/context/.skeleton-version"
+    Remove-Item -Force "$repo/context/.skeleton-version"
     git -C $repo add context
     git -C $repo commit -q -m old
     $r = Invoke-InTestHome -TestHome $h -File $shim -Arguments 'upgrade', '-Path', $repo

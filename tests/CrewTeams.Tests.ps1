@@ -131,6 +131,7 @@ Describe 'crew init đội tùy chỉnh' {
     $copy = Join-Path $h.Home 'crewline'
     New-Item -ItemType Directory "$copy/scripts" | Out-Null
     Copy-Item $crewScript "$copy/scripts/"
+    Copy-Item (Join-Path $repoRoot 'scripts/platform.ps1') "$copy/scripts/"
     Copy-Item (Join-Path $repoRoot 'skeleton') $copy -Recurse
     Set-Content "$copy/scripts/teams.json" '{"standard":{"planner":"none","workers":["codex","codex","codex"],"rev":"claude"},"duo":{"planner":"claude","workers":["claude"],"rev":"none"}}'
     $r = Invoke-Init -Script "$copy/scripts/crew.ps1"
@@ -150,6 +151,7 @@ Describe 'crew init đội tùy chỉnh' {
     $copy = Join-Path $h.Home 'crewline'
     New-Item -ItemType Directory "$copy/scripts" | Out-Null
     Copy-Item $crewScript "$copy/scripts/"
+    Copy-Item (Join-Path $repoRoot 'scripts/platform.ps1') "$copy/scripts/"
     Set-Content "$copy/scripts/teams.json" '{"standard":{"planner":"claude","workers":["claude"],"rev":"bad"}}'
     $r = Invoke-Init -Script "$copy/scripts/crew.ps1"
     $r.ExitCode | Should Be 1

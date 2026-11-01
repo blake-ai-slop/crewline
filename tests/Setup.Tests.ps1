@@ -1,5 +1,16 @@
 ﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
+# Empty command stubs on PATH: .cmd on Windows, executable sh on Linux/macOS; PATH holds only the stub dir (+ System32 on Windows).
+function New-AgentStub([string]$Bin, [string]$Name) {
+  if ($OnWindows) { Set-Content (Join-Path $Bin "$Name.cmd") '@exit /b 0'; return }
+  $file = Join-Path $Bin $Name
+  [IO.File]::WriteAllText($file, "#!/bin/sh`nexit 0`n")
+  & chmod +x $file
+}
+function Get-StubPathEnv([string]$Bin) {
+  if ($OnWindows) { @{ Path = "$Bin;$env:SystemRoot\System32" } } else { @{ PATH = $Bin } }
+}
 
 function New-SetupFixture([string[]]$Agents = @('claude', 'codex')) {
   $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -9,8 +20,9 @@ function New-SetupFixture([string[]]$Agents = @('claude', 'codex')) {
   Copy-Item (Join-Path $RepoRoot 'scripts/setup.ps1') $scripts
   Copy-Item (Join-Path $RepoRoot 'scripts/ui.ps1') $scripts
   Set-Content (Join-Path $scripts 'teams.json') '{"standard":{"planner":"claude","workers":["claude","codex"],"rev":"codex"},"solo":{"planner":"none","workers":["claude"],"rev":"none"},"large":{"planner":"claude","workers":["claude","codex","claude","codex"],"rev":"codex"}}'
-  foreach ($a in $Agents) { Set-Content (Join-Path $bin "$a.cmd") '' }
-  @{ File = Join-Path $scripts 'setup.ps1'; Env = @{ CREWLINE_DEFAULTS = ''; Path = "$bin;$env:SystemRoot\System32" } }
+  foreach ($a in $Agents) { New-AgentStub $bin $a }
+  $vars = Get-StubPathEnv $bin; $vars.CREWLINE_DEFAULTS = ''
+  @{ File = Join-Path $scripts 'setup.ps1'; Env = $vars }
 }
 function Read-SetupConfig($h) { Get-Content (Join-Path $h.Home '.crewline/config.json') -Raw | ConvertFrom-Json }
 

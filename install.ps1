@@ -1,13 +1,13 @@
 ﻿<#
-Cài Crewline cho người dùng hiện tại (Windows, herdr-app + hc).
-  - shim `crew` (PowerShell + Git Bash) trong ~/.local/bin, trỏ về repo này
-  - template hc crew-* trong %APPDATA%\herdr-core\templates (sao lưu bản khác trước khi ghi đè)
-  - jq nếu thiếu (tải từ GitHub; máy không có winget)
+Cài Crewline cho người dùng hiện tại (Windows/Linux/macOS, herdr-app + hc).
+  - shim `crew` (Windows: PowerShell + Git Bash; Unix: pwsh thực thi) trong ~/.local/bin, trỏ về repo này
+  - template hc crew-* trong %APPDATA%/herdr-core/templates (Windows) hoặc $XDG_CONFIG_HOME/herdr-core/templates (~/.config mặc định trên Unix) (sao lưu bản khác trước khi ghi đè)
+  - jq nếu thiếu trên Windows: tải GitHub; Unix: dùng jq của hệ
   - thêm ~/.local/bin vào PATH người dùng nếu chưa có
   - thư mục ~/.crewline/ và chọn đội mặc định khi chưa có config
 Chạy lại an toàn bao nhiêu lần cũng được.
   -NoDoctor             bỏ bước `crew doctor` cuối cùng
-  CREWLINE_NO_PATH=1    không ghi PATH người dùng (registry)
+  CREWLINE_NO_PATH=1    không ghi PATH người dùng (registry hoặc shell profile)
   CREWLINE_NO_JQ=1      không tải jq
   CREWLINE_NO_INSTALL=1 không hỏi cài phần mềm còn thiếu (vẫn in bảng kiểm)
 Sau bước chọn đội: in bảng kiểm phần mềm (scripts/prereq.ps1), hỏi cài giúp mục thiếu có lệnh cài (winget/npm).
@@ -16,7 +16,9 @@ param([switch]$NoDoctor)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $Repo = $PSScriptRoot
-$Bin = Join-Path $HOME '.local/bin'
+. (Join-Path $Repo 'scripts/platform.ps1')
+$OS = Get-CrewOS
+$Bin = Get-UserBinDir
 $Today = Get-Date -Format 'yyyyMMdd'
 function Say($m) { Write-Host "install: $m" }
 
@@ -25,6 +27,7 @@ New-Item -ItemType Directory -Force $Bin | Out-Null
 # ~/.crewline: mặc định cá nhân
 New-Item -ItemType Directory -Force (Join-Path $HOME '.crewline') | Out-Null
 
+if ($OS -eq 'windows') {
 # shim PowerShell
 $crewPs1 = Join-Path $Repo 'scripts/crew.ps1'
 # crew cần pwsh 7: shim gọi từ Windows PowerShell 5.1 thì chuyển sang pwsh. Ghi UTF-8 BOM để PS 5.1 đọc đúng đường dẫn Unicode.
@@ -58,8 +61,29 @@ $bashShim = "#!/usr/bin/env bash`n# Crewline shim - sinh bởi install.ps1`nexec
 [IO.File]::WriteAllText((Join-Path $Bin 'crew'), $bashShim.Replace("`r`n", "`n"))
 Say "shim $(Join-Path $Bin 'crew') (Git Bash)"
 
+} else {
+  $crewPs1 = Join-Path $Repo 'scripts/crew.ps1'
+  $crewQ = $crewPs1.Replace("'", "''")
+  # The args token belongs to the generated script, not this installer.
+  $shim = '#!/usr/bin/env pwsh' + "`n# Crewline shim - sinh boi install.ps1`n& '$crewQ' @args`nexit " + '$LASTEXITCODE' + "`n"
+  $dst = Join-Path $Bin 'crew'
+  if ((Test-Path $dst) -and ([IO.File]::ReadAllText($dst) -notmatch 'Crewline shim')) {
+    Copy-Item $dst "$dst.bak-$Today"
+  }
+  [IO.File]::WriteAllText($dst, $shim, [Text.UTF8Encoding]::new($false))
+  # PATH không có chmod (PATH tối giản): đặt +x qua .NET 7+ (UnixFileMode).
+  $unixMode = 'System.IO.UnixFileMode' -as [type]
+  if (-not (Get-Command chmod -ErrorAction SilentlyContinue) -and $unixMode) {
+    [IO.File]::SetUnixFileMode($dst, [Enum]::ToObject($unixMode, [int][IO.File]::GetUnixFileMode($dst) -bor 0x49)) # +x cho user/group/other (0o111)
+  } else {
+    & chmod +x $dst
+    if ($LASTEXITCODE -ne 0) { throw "chmod failed: $dst" }
+  }
+  Say "shim $dst -> $crewPs1"
+}
+
 # template hc
-$tdir = Join-Path $env:APPDATA 'herdr-core/templates'
+$tdir = Get-HcTemplateDir
 New-Item -ItemType Directory -Force $tdir | Out-Null
 foreach ($t in Get-ChildItem (Join-Path $Repo 'templates') -Filter '*.md') {
   $d = Join-Path $tdir $t.Name
@@ -73,24 +97,17 @@ Say "template hc -> $tdir"
 # jq
 if ($env:CREWLINE_NO_JQ -eq '1') {
   Say "bỏ qua jq (CREWLINE_NO_JQ=1)"
-} elseif (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
+} elseif ($OS -eq 'windows' -and -not (Get-Command jq -ErrorAction SilentlyContinue)) {
   Say "tải jq 1.8.1"
   Invoke-WebRequest 'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe' -OutFile (Join-Path $Bin 'jq.exe')
 }
 
 # PATH
-$binWin = (Resolve-Path $Bin).Path
-if ($env:CREWLINE_NO_PATH -eq '1') {
-  Say "bỏ qua PATH người dùng (CREWLINE_NO_PATH=1)"
-} else {
-  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if (-not (($userPath -split ';') -contains $binWin)) {
-    [Environment]::SetEnvironmentVariable('Path', (@($binWin) + @($userPath -split ';' | Where-Object { $_ })) -join ';', 'User')
-    Say "thêm $binWin vào PATH người dùng (mở terminal mới để nhận)."
-  }
-}
-if (-not (($env:Path -split ';') -contains $binWin)) { $env:Path = "$binWin;$env:Path" }
-
+$binPath = (Resolve-Path $Bin).Path
+if ($env:CREWLINE_NO_PATH -eq '1') { Say 'bỏ qua PATH người dùng (CREWLINE_NO_PATH=1)' }
+elseif (Add-UserPath $binPath) { Say "thêm $binPath vào PATH người dùng (mở terminal mới để nhận)." }
+$separator = [IO.Path]::PathSeparator
+if (-not (($env:Path -split [regex]::Escape("$separator")) -contains $binPath)) { $env:Path = "$binPath$separator$env:Path" }
 $configFile = if ($env:CREWLINE_USER_CONFIG) { $env:CREWLINE_USER_CONFIG } else { Join-Path $HOME '.crewline/config.json' }
 if (Test-Path -LiteralPath $configFile) {
   Say "đã có config cá nhân, chạy 'crew setup' để đổi"
@@ -106,13 +123,13 @@ $fancy = $PSVersionTable.PSEdition -eq 'Core'
 $arrow = if ($fancy) { '→' } else { '->' }
 $team = Get-PrereqTeam @($configFile) (Join-Path $Repo 'scripts/teams.json')
 $need = Get-TeamAgents $team
-$items = @(Get-Prereqs | Where-Object { $_.Group -eq 'required' -or ($_.Group -eq 'team' -and $need -contains $_.Name) })
+$items = @(Get-Prereqs | Where-Object { $_.Group -eq 'required' -or ($_.Group -eq 'team' -and $need -contains $_.Name) -or ($OS -ne 'windows' -and $_.Name -eq 'jq') })
 $ok = @{}
 foreach ($p in $items) { $ok[$p.Name] = Test-Prereq $p }
 $width = ($items | ForEach-Object { $_.Label.Length } | Measure-Object -Maximum).Maximum
 Write-Host ''
 Write-Host 'Kiểm phần mềm'
-foreach ($g in @(@('required', 'Bắt buộc'), @('team', "Theo đội của bạn ($(Get-TeamLine $team))"))) {
+foreach ($g in @(@('optional', 'Không bắt buộc'), @('required', 'Bắt buộc'), @('team', "Theo đội của bạn ($(Get-TeamLine $team))"))) {
   $list = @($items | Where-Object { $_.Group -eq $g[0] })
   if (-not $list.Count) { continue }
   Write-Host "  $($g[1])"
@@ -125,11 +142,11 @@ foreach ($g in @(@('required', 'Bắt buộc'), @('team', "Theo đội của b�
     }
   }
 }
-# Hỏi cài giúp: mặc định [1] Bỏ qua; chỉ cài khi chọn rõ 2 / 'Cài giúp' (Enter trống, EOF không cài). Herdr không có lệnh tự cài.
+# Hỏi cài giúp: mặc định [1] Bỏ qua; chỉ cài khi chọn rõ 2 / 'Cài giúp' (Enter trống, EOF không cài). Herdr trên Unix chỉ cài khi chọn rõ.
 if ($env:CREWLINE_NO_INSTALL -eq '1') {
   Say "bỏ qua hỏi cài (CREWLINE_NO_INSTALL=1)"
 } elseif ($env:CREWLINE_DEFAULTS -ne '1') {
-  foreach ($p in @($items | Where-Object { -not $ok[$_.Name] })) {
+  foreach ($p in @($items | Where-Object { -not $ok[$_.Name] -and $_.Group -ne 'optional' })) {
     $inst = Get-PrereqInstall $p
     if (-not $inst) { continue }
     $choice = Read-Choice "Cài $($p.Label) bằng: $($inst.Text)" @(
@@ -166,3 +183,6 @@ Write-Host "Nhắc đăng nhập: $(($need | ForEach-Object { "$_ ($(Get-AgentLo
 if ($NoDoctor) { Say "xong (bỏ qua crew doctor)."; return }
 Say "xong. Kiểm môi trường:"
 & $crewPs1 doctor
+
+
+

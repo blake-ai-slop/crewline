@@ -88,7 +88,7 @@ Describe 'Get-WorkerTree / Initialize-WorkerTree' {
   It 'w<N> trong .crew/worktrees, tạo detached tại main khi thiếu, gọi lại không tạo lần nữa' {
     $r = New-KeepRepo
     $wt = Get-WorkerTree $r.Root 2
-    $wt | Should Be ([IO.Path]::GetFullPath((Join-Path $r.Root '.crew\worktrees\w2')))
+    $wt | Should Be ([IO.Path]::GetFullPath((Join-Path $r.Root '.crew/worktrees/w2')))
     (Initialize-WorkerTree $r.Root 2 'main') | Should Be $wt
     Test-WorktreeListed $r.Root $wt | Should Be $true
     (git -C $wt branch --show-current) | Should BeNullOrEmpty
@@ -112,7 +112,7 @@ Describe 'crew task trên worktree cố định (hc giả)' {
     $ops.State.Sent.Count | Should Be 2
     $ops.State.Sent[0] | Should Be '/clear'
     $ops.State.Sent[1] | Should Be (Get-TaskLine $wt 'crew/a')
-    $ops.State.Sent[1] | Should Match ([regex]::Escape("$wt\.crew\prompt.md"))
+    $ops.State.Sent[1] | Should Match ([regex]::Escape([IO.Path]::Combine($wt, '.crew', 'prompt.md')))
     # /clear gửi trần (để chạy lệnh thật), dòng giao việc gửi bọc như tin thường
     $ops.State.Raw[0] | Should Be $true
     $ops.State.Raw[1] | Should Be $false

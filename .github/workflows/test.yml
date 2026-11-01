@@ -1,0 +1,87 @@
+name: test
+
+# Repo dev: Windows + Linux mỗi push/PR vào main; macOS chỉ chạy tay (workflow_dispatch).
+# Repo public (blake-ai-slop/crewline): push vào main (phát hành) chạy thêm macOS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Hệ điều hành cần chạy
+        type: choice
+        options: [all, windows, ubuntu, macos]
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && (inputs.os == 'all' && '["windows-latest","ubuntu-latest","macos-latest"]' || format('["{0}-latest"]', inputs.os)) || (github.event_name == 'push' && github.repository == 'blake-ai-slop/crewline') && '["windows-latest","ubuntu-latest","macos-latest"]' || '["windows-latest","ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Git identity cho test
+        shell: pwsh
+        run: |
+          git config --global user.name 'crewline-ci'
+          git config --global user.email 'crewline-ci@users.noreply.github.com'
+          exit $LASTEXITCODE
+
+      - name: Cài/nạp Pester theo hệ
+        shell: pwsh
+        run: |
+          # Windows: Pester 3.4.0 có sẵn (Windows PowerShell modules). Linux/macOS: Pester 3.4 không chạy
+          # trên pwsh Unix (Get-WmiObject) nên dùng 4.10.1; test vẫn viết cú pháp 3.4.
+          $want = if ($IsWindows) { '3.4.0' } else { '4.10.1' }
+          if (Get-Module -ListAvailable Pester | Where-Object { $_.Version -eq [version]$want }) {
+            Write-Host "Pester $want đã có sẵn"
+          } else {
+            if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) { Register-PSRepository -Default }
+            Set-PSRepository PSGallery -InstallationPolicy Trusted
+            Install-Module Pester -RequiredVersion $want -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          "PESTER_VERSION=$want" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
+
+      - name: Kiểm cú pháp .ps1
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -File -Filter *.ps1 | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' }) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "$($f.FullName):$($e.Extent.StartLineNumber): $($e.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+          exit 0
+
+      - name: Kiểm cú pháp bootstrap.sh
+        shell: bash
+        run: sh -n bootstrap.sh
+
+      - name: Pester (tests, tools nếu có)
+        shell: pwsh
+        env:
+          # Pester 3.4 dựng TestDrive từ $env:TEMP, biến này không có sẵn trên Linux/macOS.
+          # runner.* chỉ dùng được ở cấp step (không có ở jobs.<id>.env).
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: |
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION -Force
+          Write-Host "Pester đã nạp: $((Get-Module Pester).Version)"
+          # Repo public không có tools/ (ngoài danh sách phát hành): chỉ thêm khi có.
+          $scripts = @('tests')
+          if (Test-Path tools) { $scripts += 'tools' }
+          $r = Invoke-Pester -Script $scripts -PassThru
+          if ($r.FailedCount -gt 0) { exit 1 }
+          # pwsh trả $LASTEXITCODE còn sót từ tiến trình con trong test nếu không exit tường minh.
+          exit 0

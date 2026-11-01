@@ -1,12 +1,13 @@
 ﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $CrewScript = Join-Path $RepoRoot 'scripts/crew.ps1'
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 function New-InitEnv([hashtable]$Extra = @{}) {
   $e = @{}
   # pwsh dat $PSHOME dau PATH cho tien trinh con; pwsh ban Store goi thang tu do bi Access denied khi ho so nguoi dung la gia.
   # Bo $PSHOME de PS 5.1 tim pwsh qua alias nhu may that.
-  $e.Path = (($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+  if ($OnWindows) { $e.Path = (($env:Path -split ';') | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';' }
   foreach ($k in $Extra.Keys) { $e[$k] = $Extra[$k] }
   $e
 }
@@ -24,7 +25,7 @@ Describe 'crew init trong thư mục chưa có git' {
       Set-Content (Join-Path $dir 'note.txt') 'du lieu cu'
     }
 
-    It 'PS 5.1 gọi thẳng crew.ps1: không NativeCommandError, báo lỗi crew gợi ý -GitInit' {
+    It 'PS 5.1 gọi thẳng crew.ps1: không NativeCommandError, báo lỗi crew gợi ý -GitInit' -Skip:(-not $OnWindows) {
       $r = Invoke-InTestHome -TestHome $h -File $CrewScript -Shell powershell -Arguments @('init', '-Path', $dir, '-NoCommit') -Env (New-InitEnv)
       $r.ExitCode | Should Be 1
       $r.Output | Should Not Match 'NativeCommandError'
@@ -73,7 +74,7 @@ Describe 'crew init trong thư mục chưa có git' {
       @(git -C $dir status --porcelain).Count | Should Be 0
     }
 
-    It 'PS 5.1 + stdin 1: chuyển sang pwsh, vẫn hỏi và tạo repo' {
+    It 'PS 5.1 + stdin 1: chuyển sang pwsh, vẫn hỏi và tạo repo' -Skip:(-not $OnWindows) {
       $r = Invoke-InTestHome -TestHome $h -File $CrewScript -Shell powershell -Arguments @('init', '-Path', $dir, '-NoCommit') -Env (New-InitEnv @{ CREWLINE_DEFAULTS = '' }) -InputText "1`n"
       $r.ExitCode | Should Be 0
       $r.Output | Should Not Match 'NativeCommandError'

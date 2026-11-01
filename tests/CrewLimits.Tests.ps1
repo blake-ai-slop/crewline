@@ -1,7 +1,7 @@
 ﻿# Test Get-LimitInfo: trích hàm bằng AST từ crew.ps1, không gọi hc.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-LimitTiers', 'Get-LimitLevel', 'Get-LimitInfo', 'Resolve-LimitRows' }, $false)) {
+foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-LimitTiers', 'Get-LimitWeekWarn', 'Get-LimitLevel', 'Get-LimitInfo', 'Resolve-LimitRows' }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 
@@ -62,19 +62,69 @@ Describe 'Mốc 3 cấp (ranh giới)' {
   foreach ($c in $cases) {
     It "dùng $($c.U)% -> $($c.L) (Claude và Codex)" {
       (Get-LimitInfo "5h $($c.U)% · week 0%").Level | Should Be $c.L
-      (Get-LimitInfo "5h 100% left · weekly $(100 - $c.U)% left").Level | Should Be $c.L
+      (Get-LimitInfo "5h $(100 - $c.U)% left · weekly 100% left").Level | Should Be $c.L
       Get-LimitLevel $c.U | Should Be $c.L
     }
   }
 
-  It 'lấy max(5h, tuần): 5h 10%, tuần 75% -> hạn chế' {
-    (Get-LimitInfo '5h 10% · week 75%').Level | Should Be 'hạn chế'
+  It 'ngưỡng cảnh báo tuần chỉ ở Get-LimitWeekWarn: 90' {
+    Get-LimitWeekWarn | Should Be 90
   }
 
   It 'ngưỡng chỉ ở Get-LimitTiers: 50/70/90 xếp giảm dần' {
     $t = Get-LimitTiers
     ($t | ForEach-Object { $_.Min }) -join ',' | Should Be '90,70,50'
     ($t | ForEach-Object { $_.Level }) -join ',' | Should Be 'dừng,hạn chế,theo dõi'
+  }
+}
+
+Describe 'Mốc chỉ theo 5h, tuần chỉ cảnh báo' {
+  It '5h thấp + tuần cao (<90) -> ok, không cảnh báo' {
+    $i = Get-LimitInfo '5h 10% · week 89%'
+    $i.Level | Should Be 'ok'
+    $i.WeekWarn | Should Be $false
+  }
+
+  It '5h thấp + tuần ≥90 -> ok + cảnh báo' {
+    $i = Get-LimitInfo '5h 10% · week 90%'
+    $i.Level | Should Be 'ok'
+    $i.WeekWarn | Should Be $true
+  }
+
+  It '5h 75 + tuần 10 -> hạn chế, không cảnh báo' {
+    $i = Get-LimitInfo '5h 75% · week 10%'
+    $i.Level | Should Be 'hạn chế'
+    $i.WeekWarn | Should Be $false
+  }
+
+  It 'thiếu 5h + có tuần -> không rõ; tuần ≥90 vẫn cảnh báo' {
+    $i = Get-LimitInfo 'ctx 40% · week 30%'
+    $i.Level | Should Be 'không rõ'
+    $i.WeekWarn | Should Be $false
+    $j = Get-LimitInfo 'Context 80% left · weekly 5% left'
+    $j.Level | Should Be 'không rõ'
+    $j.Week | Should Be 95
+    $j.WeekWarn | Should Be $true
+  }
+
+  It 'màn hình Codex: 5h 100% left · weekly 5% left -> ok + cảnh báo' {
+    $i = Get-LimitInfo 'GPT-6.1-Sol medium · Context 58% left · 5h 100% left · weekly 5% left · 325K used'
+    $i.FiveHour | Should Be 0
+    $i.Week | Should Be 95
+    $i.Level | Should Be 'ok'
+    $i.WeekWarn | Should Be $true
+  }
+
+  It 'màn hình Claude: 5h 13% · week 95% -> ok + cảnh báo' {
+    $i = Get-LimitInfo 'ctx 42% · 5h 13% · week 95%'
+    $i.FiveHour | Should Be 13
+    $i.Week | Should Be 95
+    $i.Level | Should Be 'ok'
+    $i.WeekWarn | Should Be $true
+  }
+
+  It 'không có số -> không cảnh báo' {
+    (Get-LimitInfo '').WeekWarn | Should Be $false
   }
 }
 
@@ -127,5 +177,28 @@ Describe 'Resolve-LimitRows (limit theo tài khoản agent)' {
     $null -eq $out[0].From | Should Be $true
     $null -eq $out[1].From | Should Be $true
     $out[1].Shown.Level | Should Be 'không rõ'
+  }
+
+  It 'mượn số giữ cờ cảnh báo tuần của nguồn' {
+    $rows = @(
+      @{ Name = 'c-w1'; Agent = 'codex'; Live = $true; Info = (Get-LimitInfo $codexCut) },
+      @{ Name = 'c-rev'; Agent = 'codex'; Live = $true; Info = (Get-LimitInfo '5h 100% left · weekly 5% left') }
+    )
+    $out = Resolve-LimitRows $rows
+    $out[0].From | Should Be 'c-rev'
+    $out[0].Shown.Level | Should Be 'ok'
+    $out[0].Shown.WeekWarn | Should Be $true
+  }
+
+  It 'pane tự đọc được tuần ≥90 nhưng thiếu 5h: mượn 5h, vẫn giữ cảnh báo' {
+    $rows = @(
+      @{ Name = 'c-w1'; Agent = 'codex'; Live = $true; Info = (Get-LimitInfo 'Context 90% left · weekly 8% left') },
+      @{ Name = 'c-rev'; Agent = 'codex'; Live = $true; Info = (Get-LimitInfo '5h 100% left') }
+    )
+    $out = Resolve-LimitRows $rows
+    $out[0].From | Should Be 'c-rev'
+    $out[0].Shown.Level | Should Be 'ok'
+    $out[0].Shown.WeekWarn | Should Be $true
+    $out[1].Shown.WeekWarn | Should Be $false
   }
 }

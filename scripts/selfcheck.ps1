@@ -4,6 +4,9 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('crew-selfcheck-' + [guid]::NewGuid().ToString('N'))
 $failed = $false
+# PS 5.1 (powershell.exe) chỉ có trên Windows; Linux/macOS bỏ các bước PS 5.1, init chạy bằng pwsh.
+$onWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
+$oldShell = if ($onWindows) { 'powershell.exe' } else { 'pwsh' }
 
 # Child-only environment: never change the caller's profile, PATH or Git config.
 function Invoke-SelfChild {
@@ -30,10 +33,11 @@ function Invoke-SelfChild {
     GIT_COMMITTER_NAME = 'Crew Selfcheck'; GIT_COMMITTER_EMAIL = 'selfcheck@example.invalid'
     GIT_CONFIG_COUNT = '1'; GIT_CONFIG_KEY_0 = 'core.autocrlf'; GIT_CONFIG_VALUE_0 = 'false'
   }
+  if (-not $onWindows) { $vars.XDG_CONFIG_HOME = (Join-Path $Profile '.config'); $vars.XDG_DATA_HOME = (Join-Path $Profile '.local/share') }
   if ($InteractiveInit) { $vars.CREWLINE_DEFAULTS = '' }
   # Store pwsh: let Windows PowerShell resolve the public alias.
   if ($Shell -eq 'powershell.exe') {
-    $vars.Path = (($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+    $vars.Path = (($env:Path -split ';') | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';'
   }
   foreach ($key in $vars.Keys) { $info.EnvironmentVariables[$key] = $vars[$key] }
   $process = [Diagnostics.Process]::Start($info)
@@ -65,21 +69,21 @@ try {
   foreach ($variant in @('home', 'thử-crew')) {
     $profile = Join-Path $tempRoot $variant
     foreach ($dir in @($profile, (Join-Path $profile 'AppData/Roaming'), (Join-Path $profile 'AppData/Local'))) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $shim = Join-Path $profile '.local/bin/crew.ps1'
+    $shim = Join-Path $profile $(if ($onWindows) { '.local/bin/crew.ps1' } else { '.local/bin/crew' })
     Step "install ($variant): shim trong HOME giả" {
       $r = Invoke-SelfChild -Profile $profile -Directory $repo -Code ("& " + (Quote-Self (Join-Path $repo 'install.ps1')) + ' -NoDoctor; exit $LASTEXITCODE')
       Assert-Child $r
-      if (-not (Test-Path -LiteralPath $shim)) { throw 'thiếu shim crew.ps1' }
+      if (-not (Test-Path -LiteralPath $shim)) { throw "thiếu shim $(Split-Path $shim -Leaf)" }
     }
-    Step "help PS 5.1 ($variant): exit 0, không lỗi parser/native" {
+    if ($onWindows) { Step "help PS 5.1 ($variant): exit 0, không lỗi parser/native" {
       $r = Invoke-SelfChild -Profile $profile -Directory $repo -Shell powershell.exe -Code ("& " + (Quote-Self $shim) + ' help; exit $LASTEXITCODE')
       Assert-Child $r
-    }
+    } }
     if ($variant -ne 'home') { continue }
     $project = Join-Path $profile 'new project'
     New-Item -ItemType Directory -Path $project | Out-Null
-    Step 'init PS 5.1: stdin 1 tạo git, context và commit đầu' {
-      $r = Invoke-SelfChild -Profile $profile -Directory $project -Shell powershell.exe -InteractiveInit -InputText "1`n" -Code ("& " + (Quote-Self $shim) + ' init; exit $LASTEXITCODE')
+    Step "init $(if ($onWindows) { 'PS 5.1' } else { 'pwsh' }): stdin 1 tạo git, context và commit đầu" {
+      $r = Invoke-SelfChild -Profile $profile -Directory $project -Shell $oldShell -InteractiveInit -InputText "1`n" -Code ("& " + (Quote-Self $shim) + ' init; exit $LASTEXITCODE')
       Assert-Child $r
       if (-not (Test-Path "$project/.git") -or -not (Test-Path "$project/context/roles/worker.md")) { throw 'thiếu .git/context' }
       $r = Invoke-SelfChild -Profile $profile -Directory $project -Code 'git log --format=%s; exit $LASTEXITCODE'
@@ -121,7 +125,7 @@ finally {
   elseif (Test-Path -LiteralPath $tempRoot) {
     try {
       $resolved = [IO.Path]::GetFullPath($tempRoot)
-      $parent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+      $parent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
       if (-not $resolved.StartsWith($parent, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path $resolved -Leaf) -notlike 'crew-selfcheck-*') { throw 'đường dẫn xóa không hợp lệ' }
       Remove-Item -LiteralPath $resolved -Recurse -Force
     } catch { Write-Host "Không xóa được thư mục tạm: $tempRoot ($($_.Exception.Message))" }

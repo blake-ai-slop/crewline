@@ -1,13 +1,14 @@
-﻿# Phần mềm Crewline cần: nguồn duy nhất cho install.ps1 và crew doctor (dot-source; chỉ định nghĩa hàm, không chạy gì).
+﻿. (Join-Path $PSScriptRoot 'platform.ps1')
+# Phần mềm Crewline cần: nguồn duy nhất cho install.ps1 và crew doctor (dot-source; chỉ định nghĩa hàm, không chạy gì).
 # Group: required (bắt buộc) / team (theo đội: chỉ cần khi đội dùng agent đó) / optional (không bắt buộc).
 function Get-Prereqs {
   @(
-    [pscustomobject]@{ Name = 'git'; Label = 'git'; Commands = @('git'); Group = 'required'; Url = 'https://git-scm.com/download/win'; Winget = 'Git.Git'; Npm = $null; Fix = $null }
+    [pscustomobject]@{ Name = 'git'; Label = 'git'; Commands = @('git'); Group = 'required'; Url = $(if ((Get-CrewOS) -eq 'windows') { 'https://git-scm.com/download/win' } else { 'https://git-scm.com/downloads' }); Winget = 'Git.Git'; Npm = $null; Fix = $null }
     [pscustomobject]@{ Name = 'pwsh'; Label = 'pwsh'; Commands = @('pwsh'); Group = 'required'; Url = 'https://aka.ms/powershell-release?tag=stable'; Winget = 'Microsoft.PowerShell'; Npm = $null; Fix = $null }
     [pscustomobject]@{ Name = 'herdr'; Label = 'herdr-app + hc'; Commands = @('herdr-app', 'hc'); Group = 'required'; Url = 'https://herdr.dev/'; Winget = $null; Npm = $null; Fix = $null }
     [pscustomobject]@{ Name = 'claude'; Label = 'claude'; Commands = @('claude'); Group = 'team'; Url = 'https://docs.claude.com/en/docs/claude-code'; Winget = $null; Npm = '@anthropic-ai/claude-code'; Fix = $null }
     [pscustomobject]@{ Name = 'codex'; Label = 'codex'; Commands = @('codex'); Group = 'team'; Url = 'https://github.com/openai/codex'; Winget = $null; Npm = '@openai/codex'; Fix = $null }
-    [pscustomobject]@{ Name = 'jq'; Label = 'jq (không bắt buộc)'; Commands = @('jq'); Group = 'optional'; Url = $null; Winget = $null; Npm = $null; Fix = 'install.ps1 tự tải' }
+    [pscustomobject]@{ Name = 'jq'; Label = 'jq (không bắt buộc)'; Commands = @('jq'); Group = 'optional'; Url = $null; Winget = $null; Npm = $null; Fix = $(if ((Get-CrewOS) -eq 'windows') { 'install.ps1 tự tải' } else { 'cài jq bằng trình quản lý gói của hệ' }) }
   )
 }
 
@@ -18,7 +19,17 @@ function Test-Prereq($p) {
 
 # Lệnh cài tự động dùng được trên máy này: @{ Exe; Args; Text } hoặc $null (winget chỉ khi có winget, npm chỉ khi có npm).
 function Get-PrereqInstall($p) {
-  if ($p.Winget -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+  $os = Get-CrewOS
+  if ($os -ne 'windows' -and $p.Name -eq 'herdr') {
+    $hint = Get-HerdrInstallHint
+    if ($hint -notlike 'curl *') { return $null }
+    return [pscustomobject]@{ Exe = 'sh'; Args = @('-c', $hint); Text = $hint }
+  }
+  if ($os -eq 'macos' -and $p.Name -in @('git', 'pwsh', 'jq') -and (Get-Command brew -ErrorAction SilentlyContinue)) {
+    $package = if ($p.Name -eq 'pwsh') { 'powershell' } else { $p.Name }
+    return [pscustomobject]@{ Exe = 'brew'; Args = @('install', $package); Text = "brew install $package" }
+  }
+  if ($os -eq 'windows' -and $p.Winget -and (Get-Command winget -ErrorAction SilentlyContinue)) {
     $a = @('install', $p.Winget)
     return [pscustomobject]@{ Exe = 'winget'; Args = $a; Text = "winget $($a -join ' ')" }
   }
@@ -31,9 +42,16 @@ function Get-PrereqInstall($p) {
 
 # Cách sửa khi thiếu (không có chữ "chưa cài"): lệnh cài nếu có, không thì link (kèm Node.js nếu cần npm).
 function Get-PrereqFix($p) {
-  if ($p.Fix) { return $p.Fix }
+  $os = Get-CrewOS
+  if ($p.Name -eq 'herdr') { return (Get-HerdrInstallHint) }
+  if ($os -eq 'linux' -and $p.Name -in @('git', 'pwsh', 'jq')) {
+    $package = if ($p.Name -eq 'pwsh') { 'powershell' } else { $p.Name }
+    $extra = if ($p.Name -eq 'pwsh') { ' (cần kho Microsoft: https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux)' } else { '' }
+    return "sudo apt install $package / sudo dnf install $package$extra"
+  }
   $i = Get-PrereqInstall $p
   if ($i) { return $i.Text }
+  if ($p.Fix) { return $p.Fix }
   $s = "tải: $($p.Url)"
   if ($p.Npm) { $s += " (cần Node.js: https://nodejs.org)" }
   $s
@@ -80,3 +98,5 @@ function Get-TeamLine($team) {
 function Get-AgentLogin([string]$name) {
   @{ claude = 'chạy `claude` một lần để đăng nhập'; codex = '`codex login`' }[$name]
 }
+
+

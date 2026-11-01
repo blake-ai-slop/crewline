@@ -1,6 +1,9 @@
 ﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
-# Lệnh giả: .cmd rỗng trong thư mục đầu PATH; PATH chỉ còn System32 (không có npm/winget/agent thật).
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
+# Tên biến PATH: Windows không phân biệt hoa thường (Path), Unix chỉ có PATH.
+$PathKey = if ($OnWindows) { 'Path' } else { 'PATH' }
+# Lệnh giả: .cmd rỗng (Unix: script sh) trong thư mục đầu PATH; PATH chỉ còn System32 (không có npm/winget/agent thật).
 # npm.cmd / winget.cmd giả ghi tham số vào file, không cài gì.
 
 function New-PrereqFixture {
@@ -8,23 +11,38 @@ function New-PrereqFixture {
   New-Item -ItemType Directory -Force (Join-Path $f 'scripts') | Out-Null
   Copy-Item (Join-Path $RepoRoot 'install.ps1') $f
   Copy-Item (Join-Path $RepoRoot 'templates') $f -Recurse
-  foreach ($n in 'crew.ps1', 'setup.ps1', 'ui.ps1', 'prereq.ps1', 'teams.json') { Copy-Item (Join-Path $RepoRoot "scripts/$n") (Join-Path $f 'scripts') }
+  foreach ($n in 'platform.ps1', 'crew.ps1', 'setup.ps1', 'ui.ps1', 'prereq.ps1', 'teams.json') { Copy-Item (Join-Path $RepoRoot "scripts/$n") (Join-Path $f 'scripts') }
+  # Các test winget/herdr.dev kiểm logic nhánh Windows: trên Linux/macOS giả Get-CrewOS = windows (test Unix bên dưới ghi đè lại).
+  if (-not $OnWindows) { Add-Content (Join-Path $f 'scripts/platform.ps1') "`nfunction Get-CrewOS { 'windows' }" }
   $f
 }
 
+# Lệnh giả ghi tham số vào $Log (nếu có): .cmd trên Windows, script sh thực thi trên Linux/macOS.
+function New-FakeCmd([string]$Bin, [string]$Name, [string]$Log) {
+  if ($OnWindows) {
+    $body = if ($Log) { "@echo %*>>`"$Log`"`r`n@exit /b 0`r`n" } else { "@exit /b 0`r`n" }
+    [IO.File]::WriteAllText((Join-Path $Bin "$Name.cmd"), $body)
+    return
+  }
+  $file = Join-Path $Bin $Name
+  $body = if ($Log) { "#!/bin/sh`necho `"`$*`" >> '$Log'`nexit 0`n" } else { "#!/bin/sh`nexit 0`n" }
+  [IO.File]::WriteAllText($file, $body)
+  & chmod +x $file
+}
+
 # Trả @{ Bin; Log; WLog; Path }. $Have: tên lệnh giả cần tạo (npm -> Log, winget -> WLog).
+# Path chỉ còn thư mục giả (+ System32 trên Windows): không có npm/winget/agent thật.
 function New-FakeBin([string[]]$Have) {
   $bin = Join-Path $TestDrive "bin-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
   New-Item -ItemType Directory -Force $bin | Out-Null
   $log = Join-Path $bin 'npm-args.txt'
   $wlog = Join-Path $bin 'winget-args.txt'
   foreach ($c in $Have) {
-    $body = if ($c -eq 'npm') { "@echo %*>>`"$log`"`r`n@exit /b 0`r`n" }
-    elseif ($c -eq 'winget') { "@echo %*>>`"$wlog`"`r`n@exit /b 0`r`n" }
-    else { "@exit /b 0`r`n" }
-    [IO.File]::WriteAllText((Join-Path $bin "$c.cmd"), $body)
+    $l = if ($c -eq 'npm') { $log } elseif ($c -eq 'winget') { $wlog } else { '' }
+    New-FakeCmd $bin $c $l
   }
-  @{ Bin = $bin; Log = $log; WLog = $wlog; Path = "$bin;$env:SystemRoot\System32" }
+  $path = if ($OnWindows) { "$bin;$env:SystemRoot\System32" } else { $bin }
+  @{ Bin = $bin; Log = $log; WLog = $wlog; Path = $path }
 }
 
 function New-UserConfig($h, [string]$team) {
@@ -34,7 +52,7 @@ function New-UserConfig($h, [string]$team) {
 }
 
 function Invoke-Install($fx, $h, $fake, [hashtable]$Env = @{}, [string]$InputText = '') {
-  $vars = @{ CREWLINE_DEFAULTS = ''; CREWLINE_NO_JQ = '1'; Path = $fake.Path }
+  $vars = @{ CREWLINE_DEFAULTS = ''; CREWLINE_NO_JQ = '1'; $PathKey = $fake.Path }
   foreach ($k in $Env.Keys) { $vars[$k] = $Env[$k] }
   Invoke-InTestHome $h (Join-Path $fx 'install.ps1') -Arguments '-NoDoctor' -Env $vars -InputText $InputText
 }
@@ -201,7 +219,7 @@ Describe 'crew doctor dung bang prereq' {
 
   It 'thieu herdr => link tu prereq.ps1; doi solo => codex khong dung' {
     $h = New-CrewTestHome; $fake = New-FakeBin @('git', 'pwsh', 'claude')
-    $r = Invoke-InTestHome $h (Join-Path $fx 'scripts/crew.ps1') -Arguments 'doctor' -WorkingDirectory $h.Home -Env @{ Path = $fake.Path; CREWLINE_USER_CONFIG = (New-UserConfig $h 'solo') }
+    $r = Invoke-InTestHome $h (Join-Path $fx 'scripts/crew.ps1') -Arguments 'doctor' -WorkingDirectory $h.Home -Env @{ $PathKey = $fake.Path; CREWLINE_USER_CONFIG = (New-UserConfig $h 'solo') }
     $r.ExitCode | Should Be 1
     $r.Output | Should Match 'THIẾU herdr-app \+ hc  -> tải: https://herdr.dev/'
     $r.Output | Should Match 'codex \(không dùng trong đội\)'
@@ -210,10 +228,95 @@ Describe 'crew doctor dung bang prereq' {
 
   It 'doi standard thieu codex co npm => goi y lenh npm' {
     $h = New-CrewTestHome; $fake = New-FakeBin $All
-    $r = Invoke-InTestHome $h (Join-Path $fx 'scripts/crew.ps1') -Arguments 'doctor' -WorkingDirectory $h.Home -Env @{ Path = $fake.Path }
+    $r = Invoke-InTestHome $h (Join-Path $fx 'scripts/crew.ps1') -Arguments 'doctor' -WorkingDirectory $h.Home -Env @{ $PathKey = $fake.Path }
     $r.Output | Should Match 'THIẾU codex  -> npm install -g @openai/codex'
     Test-Path $fake.Log | Should Be $false
   }
 
   [Console]::OutputEncoding = $savedEnc
+}
+
+
+Describe 'prereq platform installation commands' {
+  . (Join-Path $RepoRoot 'scripts/prereq.ps1')
+  It 'Linux suggests apt/dnf, never returns a sudo install action' {
+    Mock Get-CrewOS { 'linux' }
+    Mock Get-Command { $null }
+    foreach ($name in 'git', 'pwsh', 'jq') {
+      $p = Get-Prereqs | Where-Object Name -eq $name
+      Get-PrereqInstall $p | Should BeNullOrEmpty
+      Get-PrereqFix $p | Should Match 'sudo apt install .+ / sudo dnf install'
+    }
+    $herdr = Get-Prereqs | Where-Object Name -eq 'herdr'
+    $i = Get-PrereqInstall $herdr
+    $i.Exe | Should Be 'sh'
+    $i.Args[0] | Should Be '-c'
+    $i.Args[1] | Should Be 'curl -fsSL https://releases.herdr.dev/app/install.sh | sh'
+  }
+  It 'macOS uses brew when present and npm for agents' {
+    Mock Get-CrewOS { 'macos' }
+    Mock Get-Command { [pscustomobject]@{ Source = 'fake-command' } }
+    $git = Get-Prereqs | Where-Object Name -eq 'git'
+    (Get-PrereqInstall $git).Text | Should Be 'brew install git'
+    $pwsh = Get-Prereqs | Where-Object Name -eq 'pwsh'
+    (Get-PrereqInstall $pwsh).Text | Should Be 'brew install powershell'
+    $agent = Get-Prereqs | Where-Object Name -eq 'codex'
+    (Get-PrereqInstall $agent).Text | Should Be 'npm install -g @openai/codex'
+  }
+  It 'macOS without brew has no automatic package-manager action' {
+    Mock Get-CrewOS { 'macos' }
+    Mock Get-Command { $null }
+    $git = Get-Prereqs | Where-Object Name -eq 'git'
+    Get-PrereqInstall $git | Should BeNullOrEmpty
+  }
+  It 'matches command names without an exe suffix' {
+    Mock Get-Command { [pscustomobject]@{ Source = '/usr/local/bin/hc' } }
+    $p = Get-Prereqs | Where-Object Name -eq 'herdr'
+    Test-Prereq $p | Should Be $true
+    Assert-MockCalled Get-Command -ParameterFilter { $Name -eq 'hc' } -Times 1
+  }
+}
+
+Describe 'Unix install flow simulated in a fake HOME' {
+  $fx = New-PrereqFixture
+  Add-Content (Join-Path $fx 'scripts/platform.ps1') "`nfunction Get-CrewOS { 'linux' }`nfunction chmod { `$global:LASTEXITCODE = 0 }"
+  It 'macOS reports missing jq without offering to install the optional package' {
+    $mac = New-PrereqFixture
+    Add-Content (Join-Path $mac 'scripts/platform.ps1') "`nfunction Get-CrewOS { 'macos' }`nfunction chmod { `$global:LASTEXITCODE = 0 }"
+    $h = New-CrewTestHome
+    $fake = New-FakeBin @('git', 'pwsh', 'herdr-app', 'hc', 'claude', 'brew')
+    $r = Invoke-Install $mac $h $fake @{ CREWLINE_USER_CONFIG = (New-UserConfig $h 'solo'); XDG_CONFIG_HOME = (Join-Path $h.Home '.config') } '2'
+    $r.ExitCode | Should Be 0
+    $r.Output | Should Match 'jq .+brew install jq'
+    $r.Output | Should Not Match 'Cài jq'
+  }
+  It 'creates a pwsh shim, uses XDG templates, and never downloads jq.exe' {
+    $h = New-CrewTestHome
+    $fake = New-FakeBin @('git', 'pwsh', 'claude', 'jq')
+    $xdg = Join-Path $h.Home 'config-unix'
+    $r = Invoke-Install $fx $h $fake @{ CREWLINE_USER_CONFIG = (New-UserConfig $h 'solo'); XDG_CONFIG_HOME = $xdg; CREWLINE_NO_JQ = ''; CREWLINE_DEFAULTS = '1' } '2'
+    $r.ExitCode | Should Be 0
+    $shim = Get-Content (Join-Path $h.Home '.local/bin/crew') -Raw
+    $shim | Should Match '^#!/usr/bin/env pwsh'
+    $shim | Should Match '@args'
+    Test-Path (Join-Path $h.Home '.local/bin/crew.ps1') | Should Be $false
+    Test-Path (Join-Path $h.Home '.local/bin/jq.exe') | Should Be $false
+    Test-Path (Join-Path $xdg 'herdr-core/templates/crew-planner.md') | Should Be $true
+    $r.Output | Should Match 'curl -fsSL https://releases.herdr.dev/app/install.sh'
+    $r.Output | Should Not Match 'Cài herdr'
+  }
+  It 'herdr shell installer only runs after explicit selection' {
+    foreach ($scenario in @(@{ Input = ''; Env = @{}; Run = $false }, @{ Input = "`n"; Env = @{}; Run = $false }, @{ Input = '2'; Env = @{ CREWLINE_NO_INSTALL = '1' }; Run = $false }, @{ Input = '2'; Env = @{ CREWLINE_DEFAULTS = '1' }; Run = $false }, @{ Input = '2'; Env = @{}; Run = $true })) {
+      $h = New-CrewTestHome
+      $fake = New-FakeBin @('git', 'pwsh', 'claude', 'jq')
+      $log = Join-Path $fake.Bin 'sh-log.txt'
+      New-FakeCmd $fake.Bin 'sh' $log
+      $vars = @{ CREWLINE_USER_CONFIG = (New-UserConfig $h 'solo'); XDG_CONFIG_HOME = (Join-Path $h.Home '.config') }
+      foreach ($k in $scenario.Env.Keys) { $vars[$k] = $scenario.Env[$k] }
+      $r = Invoke-Install $fx $h $fake $vars $scenario.Input
+      $r.ExitCode | Should Be 0
+      (Test-Path $log) | Should Be $scenario.Run
+      if ($scenario.Run) { Get-Content $log -Raw | Should Match 'curl -fsSL https://releases.herdr.dev/app/install.sh \| sh' }
+    }
+  }
 }

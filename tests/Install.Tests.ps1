@@ -1,10 +1,13 @@
-. "$PSScriptRoot/TestHome.ps1"
+﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $Install = Join-Path $RepoRoot 'install.ps1'
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
+# Shim: Windows crew.ps1 (+ crew cho Git Bash); Linux/macOS chỉ có crew (pwsh thực thi).
+$ShimName = if ($OnWindows) { 'crew.ps1' } else { 'crew' }
 $NoJq = @{ CREWLINE_NO_JQ = '1'; CREWLINE_NO_INSTALL = '1' }
 # pwsh dat `$PSHOME dau PATH cho tien trinh con; pwsh ban Store goi thang tu thu muc goi (WindowsApps) bi Access denied khi ho so nguoi dung la gia.
 # Bo `$PSHOME khoi PATH de PS 5.1 tim pwsh qua alias nhu may that.
-$Ps51Path = (($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+$Ps51Path = (($env:Path -split ';') | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';' # chỉ dùng trên Windows
 
 Describe 'install.ps1' {
   $h = New-CrewTestHome
@@ -16,22 +19,22 @@ Describe 'install.ps1' {
     $r1.ExitCode | Should Be 0
   }
 
-  It 'tao shim crew.ps1 tro ve scripts/crew.ps1 cua repo' {
-    $s = Get-Content (Join-Path $bin 'crew.ps1') -Raw
+  It 'tao shim tro ve scripts/crew.ps1 cua repo' {
+    $s = Get-Content (Join-Path $bin $ShimName) -Raw
     $s | Should Match 'Crewline shim'
     $s.Contains((Join-Path $RepoRoot 'scripts/crew.ps1')) | Should Be $true
   }
 
-  It 'shim crew.ps1 goi tu PS 5.1 chay duoc (chuyen sang pwsh, khong NativeCommandError)' {
+  It 'shim crew.ps1 goi tu PS 5.1 chay duoc (chuyen sang pwsh, khong NativeCommandError)' -Skip:(-not $OnWindows) {
     $r = Invoke-InTestHome -TestHome $h -File (Join-Path $bin 'crew.ps1') -Shell powershell -Arguments 'help' -Env @{ Path = $Ps51Path }
     $r.ExitCode | Should Be 0
     $r.Output | Should Match 'crew doctor'
     $r.Output | Should Not Match 'NativeCommandError'
   }
 
-  It 'tao shim crew cho Git Bash voi dong LF' {
+  It 'tao shim crew (Windows: Git Bash; Unix: pwsh) voi dong LF' {
     $raw = [IO.File]::ReadAllText((Join-Path $bin 'crew'))
-    $raw | Should Match '^#!/usr/bin/env bash'
+    $raw | Should Match $(if ($OnWindows) { '^#!/usr/bin/env bash' } else { '^#!/usr/bin/env pwsh' })
     $raw.Contains("`r") | Should Be $false
   }
 
@@ -82,6 +85,7 @@ Describe 'install setup voi stdin gia' {
   # teams.json thuoc task team-config: dung fixture, khong tao trong repo that.
   $fixture = Join-Path $TestDrive 'install-fixture'
   New-Item -ItemType Directory -Force (Join-Path $fixture 'scripts') | Out-Null
+  Copy-Item (Join-Path $RepoRoot 'scripts/platform.ps1') (Join-Path $fixture 'scripts')
   Copy-Item $Install $fixture
   Copy-Item (Join-Path $RepoRoot 'templates') $fixture -Recurse
   Copy-Item (Join-Path $RepoRoot 'scripts/setup.ps1') (Join-Path $fixture 'scripts')
@@ -114,20 +118,21 @@ Describe 'shim PowerShell chuyen sang pwsh 7' {
   # crew.ps1 gia in phien ban PowerShell va tham so nhan duoc.
   $fixture = Join-Path $TestDrive 'shim-fixture'
   New-Item -ItemType Directory -Force (Join-Path $fixture 'scripts') | Out-Null
+  Copy-Item (Join-Path $RepoRoot 'scripts/platform.ps1') (Join-Path $fixture 'scripts')
   Copy-Item $Install $fixture
   Copy-Item (Join-Path $RepoRoot 'templates') $fixture -Recurse
   Copy-Item (Join-Path $RepoRoot 'scripts/ui.ps1'), (Join-Path $RepoRoot 'scripts/prereq.ps1') (Join-Path $fixture 'scripts')
   Set-Content (Join-Path $fixture 'scripts/crew.ps1') 'Write-Output "MAJOR=$($PSVersionTable.PSVersion.Major) ARGS=$($args -join ''|'')"; exit 3'
   $h = New-CrewTestHome
   $r0 = Invoke-InTestHome -TestHome $h -File (Join-Path $fixture 'install.ps1') -Arguments '-NoDoctor' -Env $NoJq
-  $shimFile = Join-Path $h.Home '.local/bin/crew.ps1'
+  $shimFile = Join-Path $h.Home ".local/bin/$ShimName"
 
   It 'install chay thanh cong, shim van la Crewline shim' {
     $r0.ExitCode | Should Be 0
     [IO.File]::ReadAllText($shimFile) | Should Match 'Crewline shim'
   }
 
-  It 'goi tu PS 5.1 => chay bang pwsh 7, giu tham so va exit code' {
+  It 'goi tu PS 5.1 => chay bang pwsh 7, giu tham so va exit code' -Skip:(-not $OnWindows) {
     $r = Invoke-InTestHome -TestHome $h -File $shimFile -Shell powershell -Arguments @('init', '-Path', 'a b') -Env @{ Path = $Ps51Path }
     $r.ExitCode | Should Be 3
     $r.Output | Should Match 'MAJOR=7 ARGS=init\|-Path\|a b'
@@ -139,7 +144,7 @@ Describe 'shim PowerShell chuyen sang pwsh 7' {
     $r.Output | Should Match 'MAJOR=7 ARGS=hot'
   }
 
-  It 'PS 5.1 khong co pwsh => bao cach cai pwsh' {
+  It 'PS 5.1 khong co pwsh => bao cach cai pwsh' -Skip:(-not $OnWindows) {
     $r = Invoke-InTestHome -TestHome $h -File $shimFile -Shell powershell -Arguments 'help' -Env @{ Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell1.0" }
     $r.ExitCode | Should Be 1
     $r.Output | Should Match 'PowerShell 7 \(pwsh\)'
@@ -152,3 +157,4 @@ Describe 'shim PowerShell chuyen sang pwsh 7' {
     @(Get-ChildItem -Force (Split-Path $shimFile) -Filter '*.bak-*').Count | Should Be 0
   }
 }
+

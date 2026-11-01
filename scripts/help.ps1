@@ -45,7 +45,7 @@ $commands = @(
   }
   @{
     Name = 'limits'; Group = 'Giao việc'; Syntax = 'crew limits [-Path .]'; Short = 'đọc limit tài khoản một lần'
-    Details = @('Đọc màn hình terminal của project -Path qua hc một lần, không theo dõi liên tục.', 'Hiện % đã dùng 5h/tuần và mốc ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Pane thiếu số có thể mượn pane cùng agent; không đọc được thì hiện không rõ.')
+    Details = @('Đọc màn hình terminal của project -Path qua hc một lần, không theo dõi liên tục.', 'Hiện % đã dùng 5h/tuần; mốc chỉ theo 5h: ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Tuần không vào mốc; tuần ≥90% thì có cảnh báo ⚠: báo chủ dự án trước khi giao cho agent đó.', 'Pane thiếu số có thể mượn pane cùng agent; không đọc được thì hiện không rõ.')
     Examples = @('crew limits')
   }
   @{
@@ -70,7 +70,7 @@ $commands = @(
   }
   @{
     Name = 'selfcheck'; Group = 'Phát hành'; Syntax = 'crew selfcheck'; Short = 'cài thử và kiểm trước khi push'
-    Details = @('Cài thử vào HOME giả, kiểm shim PS 5.1 và luồng init/upgrade trước khi phát hành.', 'Không sửa HOME thật; lỗi kiểm tra trả exit 1.', 'Giữ thư mục thử: pwsh -File <Crewline>/scripts/selfcheck.ps1 -Keep (cờ của script, không qua crew).')
+    Details = @('Cài thử vào HOME giả, kiểm shim PS 5.1 (chỉ Windows) và luồng init/upgrade trước khi phát hành.', 'Không sửa HOME thật; lỗi kiểm tra trả exit 1.', 'Giữ thư mục thử: pwsh -File <Crewline>/scripts/selfcheck.ps1 -Keep (cờ của script, không qua crew).')
     Examples = @('crew selfcheck', 'pwsh -File ./scripts/selfcheck.ps1 -Keep')
   }
   @{

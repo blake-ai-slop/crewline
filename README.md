@@ -1,6 +1,14 @@
 # Crewline
 
-Đội agent trong **herdr-app + hc** trên Windows: 1 **planner** điều phối, các **worker** làm việc trong git worktree riêng, 1 **Rev** review và gộp nhánh, cùng một bộ **context chung** nằm trong git của project.
+Đội agent trong **herdr-app + hc** trên Windows, Linux và macOS: 1 **planner** điều phối, các **worker** làm việc trong git worktree riêng, 1 **Rev** review và gộp nhánh, cùng một bộ **context chung** nằm trong git của project.
+
+Mục tiêu: nhiều agent (Claude Code, Codex) cùng làm một dự án, song song, không giẫm file nhau và không mất context khi đổi phiên. Cài bằng một dòng lệnh, sau đó tự tinh chỉnh.
+
+| Hệ | Trạng thái |
+|---|---|
+| Windows 10/11 | Dùng hằng ngày, đã chạy thật với agent |
+| Linux (x86_64, ARM) | **Thử nghiệm:** test + CI xanh, chưa chạy thật herdr-app với agent |
+| macOS (Apple Silicon) | **Thử nghiệm:** như Linux; Mac Intel chưa có herdr-app |
 
 ```
 crew:<repo>  (space trong herdr-app)
@@ -16,6 +24,7 @@ crew:<repo>  (space trong herdr-app)
    ```powershell
    irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex
    ```
+   Linux/macOS (trong một pane shell của herdr-app): `curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh` — xem [Cài trên Linux/macOS](#cài-trên-linuxmacos).
    Lúc cài, bạn sẽ được hỏi chọn đội, agent, số worker, Rev, review và quyền: mỗi câu là danh sách đánh số, gõ số rồi Enter (Enter trống = mặc định trong `[ ]`). Đổi sau bằng `crew setup`. Cài không hỏi: đặt `$env:CREWLINE_DEFAULTS=1` trước lệnh cài (không tạo config cá nhân).
    Mở terminal mới để có lệnh `crew`, rồi chạy `crew doctor` để kiểm.
 3. **Bật crew cho một project** (chạy trong một pane của herdr-app, để `crew up` mở được tab):
@@ -55,11 +64,13 @@ planner: crew selfcheck + CHANGELOG → push khi bạn cho phép
   tổng điểm mỗi worker chênh nhau ≤1, số task song song ≤ số worker.
   Bạn duyệt bảng chia trước khi planner giao việc.
 - **Cân theo limit:** lúc sắp giao task, planner chạy `crew limits` để đọc màn hình
-  terminal một lần qua `hc read`, không theo dõi liên tục. Mốc lấy mức đã dùng cao hơn
-  giữa 5h và tuần, chia 3 cấp: dưới 50% `ok`; 50–69% `theo dõi` (giao bình thường,
+  terminal một lần qua `hc read`, không theo dõi liên tục. Mốc chỉ theo % 5h đã dùng,
+  chia 3 cấp: dưới 50% `ok`; 50–69% `theo dõi` (giao bình thường,
   planner đọc lại limit mỗi khi worker báo xong); 70–89% `hạn chế` (không nhận task L,
   chỉ việc nhỏ/vừa, ưu tiên agent khác); từ 90% `dừng` (không nhận task mới trừ khi bạn
   nói rõ "vẫn giao"; đang có task thì planner báo bạn ngay).
+  % tuần không vào mốc; tuần ≥90% thì bảng có cảnh báo ⚠ và planner báo bạn trước khi
+  giao cho agent đó (không tự chặn). Không đọc được 5h thì mốc là `không rõ`.
   Codex luôn hiện limit; Claude chỉ đọc được nếu bạn tự bật status line có 5h/tuần,
   crew không bật hộ. Không đọc được thì hiện `không rõ` và chia theo điểm như cũ.
   Limit tính theo tài khoản agent: các pane cùng agent dùng chung số (kể cả worker Codex và Rev Codex).
@@ -95,6 +106,18 @@ cd ~/Crewline
 
 `install.ps1` cài shim `crew` vào `~/.local/bin` (dùng được từ PowerShell và Git Bash), chép template `hc` vào `%APPDATA%\herdr-core\templates`, tải `jq` nếu thiếu, tạo thư mục `~/.crewline/`, rồi chạy `crew doctor` (bỏ qua bằng `-NoDoctor`). Bạn có thể chạy lại bao nhiêu lần cũng được.
 
+### Cài trên Linux/macOS
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh
+```
+
+- **Cần có:** `git`, `curl`, `tar`. Chưa có `pwsh` thì `bootstrap.sh` tải PowerShell 7 vào `~/.local` (không cần sudo); có rồi thì dùng bản sẵn có. Sau đó clone vào `~/Crewline` và chạy `install.ps1` bằng `pwsh`.
+- `install.ps1` trên Unix: shim `~/.local/bin/crew` (script `pwsh` thực thi), template `hc` vào `~/.config/herdr-core/templates` (theo `XDG_CONFIG_HOME` nếu có), thêm `~/.local/bin` vào PATH qua `~/.profile` (+ `~/.zshrc` trên macOS, `~/.bashrc` nếu có). Không tải `jq`: cài bằng trình quản lý gói nếu cần.
+- **herdr-app + hc:** cài bằng `curl -fsSL https://releases.herdr.dev/app/install.sh | sh`; lệnh cài chỉ chạy khi bạn chọn "Cài giúp".
+- **Mac Intel:** herdr-app không có bản dựng sẵn cho Mac Intel — `crew doctor` báo thiếu và chỉ cách build từ mã nguồn, không chặn cài crew. Mac Apple Silicon dùng bản dựng sẵn bình thường.
+- Shim PS 5.1 và Git Bash chỉ có trên Windows. Khác biệt herdr/hc trên Unix: [`docs/herdr-unix.md`](docs/herdr-unix.md).
+
 Nâng cấp context của dự án cũ khi Crewline đổi: xem [`docs/upgrade.md`](docs/upgrade.md).
 
 Trước khi dùng cần có: herdr-app (đang mở), `claude` và `codex` đã đăng nhập, `git` đã đặt `user.name` và `user.email`.
@@ -129,9 +152,9 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 | `crew send <terminal> "<tin>"` | gửi tin, tự Enter nếu tin kẹt ở ô nhập và gửi lệnh trần tới shell |
 | `crew review <task,…> [-DryRun]` | soạn một dòng giao Rev merge các task theo thứ tự, gửi tới `<slug>-rev` |
 | `crew check <task>` | đối chiếu diff với "Được sửa", kiểm cú pháp và chạy test phần đó |
-| `crew selfcheck` | cài thử vào HOME giả, kiểm PS 5.1 và init/upgrade trước khi push |
+| `crew selfcheck` | cài thử vào HOME giả, kiểm PS 5.1 (chỉ Windows) và init/upgrade trước khi push |
 | `crew hot` | tình hình nhanh cho planner |
-| `crew limits` | đọc limit một lần: terminal · agent · 5h dùng · tuần dùng · mốc (`ok` / `theo dõi` / `hạn chế` / `dừng` / `không rõ`) · task |
+| `crew limits` | đọc limit một lần: terminal · agent · 5h dùng · tuần dùng · mốc theo 5h (`ok` / `theo dõi` / `hạn chế` / `dừng` / `không rõ`, thêm ⚠ khi tuần ≥90%) · task |
 | `crew clean <tên> [-Force]` | về main, xóa nhánh task, giữ agent + thư mục; chỉ dọn task có trong `.crew/tasks.json`, nhánh chưa merge thì từ chối nếu không có `-Force` |
 
 ## Lỡ đóng pane hoặc cả space
@@ -180,7 +203,9 @@ Nguyên tắc: thoáng bên trong worktree, chặt ở ranh giới (dữ liệu 
 ## Cấu trúc repo
 
 ```
-bootstrap.ps1          cài 1 dòng: kiểm git/pwsh, clone hoặc pull, chạy install.ps1
+bootstrap.ps1          cài 1 dòng (Windows): kiểm git/pwsh, clone hoặc pull, chạy install.ps1
+bootstrap.sh           cài 1 dòng (Linux/macOS): cài pwsh vào ~/.local nếu thiếu, clone/pull, chạy install.ps1
+.github/workflows/     CI: Windows + Linux mỗi push/PR; macOS chạy tay (repo public: cả khi phát hành)
 install.ps1            cài shim, template, jq, PATH, ~/.crewline/
 tests/                 Pester 3.4; TestHome.ps1 = HOME/APPDATA giả cho test
 scripts/crew.ps1       lệnh crew
@@ -188,6 +213,7 @@ skeleton/context/      khung chép vào project (README, PROJECT, HOT, PITFALLS,
 templates/             template hc: crew-planner, crew-rev, crew-worker-claude, crew-worker-codex
 PROMPT.md              prompt dán vào agent để nó cài và dựng crew giúp bạn
 docs/herdr-windows.md  herdr-app + hc trên Windows khác tài liệu/bản Linux ở đâu
+docs/herdr-unix.md     herdr-app + hc trên Linux/macOS: đường dẫn, PATH, phần chưa kiểm
 ```
 
 Sửa vai trò hoặc PITFALLS dùng chung thì sửa trong `skeleton/`. Project đã `crew init` giữ bản riêng trong `context/` của nó.

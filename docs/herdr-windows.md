@@ -38,3 +38,6 @@ Kiểm thực tế với herdr-app và hc 0.1.15 trên Windows 10 LTSC (ngày 20
 ## Khác
 - Máy LTSC không có winget, nên jq được tải thẳng từ GitHub vào `~/.local/bin`.
 - Git Bash và PowerShell đều cần lệnh `crew`. install.ps1 tạo cả `crew.ps1` lẫn shim bash `crew`.
+
+## Linux/macOS
+Khác biệt trên Linux/macOS (template ở `~/.config/herdr-core/templates`, shim `~/.local/bin/crew`, PATH qua `~/.profile`) và phần chưa kiểm: xem [`herdr-unix.md`](herdr-unix.md).

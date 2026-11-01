@@ -11,6 +11,10 @@ function New-CrewTestHome {
     AppData      = Join-Path $root 'user/AppData/Roaming'
     LocalAppData = Join-Path $root 'user/AppData/Local'
   }
+  if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
+    $h.AppData = Join-Path $h.Home '.config'
+    $h.LocalAppData = Join-Path $h.Home '.local/share'
+  }
   foreach ($d in $h.Values) { New-Item -ItemType Directory -Force $d | Out-Null }
   $h
 }
@@ -27,6 +31,9 @@ function Invoke-InTestHome {
     [string]$Shell = 'pwsh',
     [AllowEmptyString()][string]$InputText = ''
   )
+  if ($Shell -eq 'powershell' -and $PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
+    throw '-Shell powershell (Windows PowerShell 5.1) is not supported on Unix; skip this test.'
+  }
   $vars = @{
     USERPROFILE      = $TestHome.Home
     HOME             = $TestHome.Home
@@ -37,6 +44,10 @@ function Invoke-InTestHome {
     CREWLINE_USER_CONFIG = $null
     GIT_CONFIG_GLOBAL = Join-Path $TestHome.Home 'gitconfig'
     GIT_CONFIG_NOSYSTEM = '1'
+  }
+  if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
+    $vars.XDG_CONFIG_HOME = $TestHome.AppData
+    $vars.XDG_DATA_HOME = $TestHome.LocalAppData
   }
   foreach ($k in $Env.Keys) { $vars[$k] = $Env[$k] }
   $shellPath = (Get-Command $Shell -ErrorAction Stop).Source
@@ -50,7 +61,12 @@ function Invoke-InTestHome {
     [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
     foreach ($k in $vars.Keys) { [Environment]::SetEnvironmentVariable($k, $vars[$k], 'Process') }
     if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-    $out = $InputText | & $shellPath -NoProfile -NonInteractive -File $File @Arguments 2>&1 | ForEach-Object { "$_" }
+    # Unix: file thuc thi khong duoi .ps1 (vd shim `crew` co shebang) chay truc tiep; pwsh -File chi nhan .ps1.
+    $out = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows -and [IO.Path]::GetExtension($File) -ne '.ps1') {
+      $InputText | & $File @Arguments 2>&1 | ForEach-Object { "$_" }
+    } else {
+      $InputText | & $shellPath -NoProfile -NonInteractive -File $File @Arguments 2>&1 | ForEach-Object { "$_" }
+    }
     @{ ExitCode = $LASTEXITCODE; Output = ($out -join "`n") }
   } finally {
     [Console]::InputEncoding = $savedInputEncoding
@@ -58,3 +74,4 @@ function Invoke-InTestHome {
     foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
   }
 }
+

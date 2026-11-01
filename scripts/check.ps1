@@ -82,7 +82,11 @@ if (`$errors.Count) { exit 1 }
   $tests = @($files | Where-Object { $_ -match '^tests/[^/]+\.Tests\.ps1$' -and (Test-Path -LiteralPath (Join-Path $worktree $_) -PathType Leaf) })
   if ($tests.Count) {
     $list = ($tests | ForEach-Object { "'" + (Join-Path $worktree $_).Replace("'", "''") + "'" }) -join ','
-    $code = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; `$ErrorActionPreference = 'Stop'; try { `$r = Invoke-Pester -Script @($list) -PassThru; if (`$r.FailedCount -gt 0) { exit 1 } } catch { Write-Output `$_; exit 1 }"
+    # Test cú pháp cũ (`Should Be`, không gạch) không chạy được trên Pester 5: khi đó ưu tiên bản Pester <5 mới nhất nếu có.
+    $legacy = @($tests | Where-Object { [IO.File]::ReadAllText((Join-Path $worktree $_)) -match '\bShould\s+(Not\s+)?[A-Za-z]' }).Count -gt 0
+    $pick = if ($legacy) { "`$p = Get-Module -ListAvailable Pester | Where-Object { `$_.Version.Major -lt 5 } | Sort-Object Version -Descending | Select-Object -First 1; if (`$p) { Import-Module `$p.Path -Force } else { Import-Module Pester -Force }" } else { 'Import-Module Pester -Force' }
+    # Dòng tổng tự in, không phụ thuộc định dạng của Pester 3.4/4/5.
+    $code = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; `$ErrorActionPreference = 'Stop'; try { $pick; `$r = Invoke-Pester -Script @($list) -PassThru; Write-Output ('Pester ' + (Get-Module Pester).Version + ': Passed: ' + `$r.PassedCount + ' Failed: ' + `$r.FailedCount); if (`$r.FailedCount -gt 0) { exit 1 } } catch { Write-Output `$_; exit 1 }"
     $r = Run-CheckChild 'pwsh' $code $worktree
     Write-Host $r.Text
     $state.test = 'OK'

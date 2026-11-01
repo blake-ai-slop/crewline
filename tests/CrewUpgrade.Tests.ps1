@@ -26,7 +26,7 @@ Describe 'crew upgrade' {
     Set-Content "$repo/context/roles/worker.md" 'old role'
     Set-Content "$repo/context/PROJECT.md" 'my project'
     Set-Content "$repo/context/HOT.md" 'my hot'
-    Remove-Item "$repo/context/.skeleton-version"
+    Remove-Item -Force "$repo/context/.skeleton-version"
     git -C $repo add context
     git -C $repo commit -q -m old
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)

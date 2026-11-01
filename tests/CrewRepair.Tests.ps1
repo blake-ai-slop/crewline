@@ -85,7 +85,7 @@ Describe 'crew repair (hc giả)' {
     $ops.State.Sent.Count | Should Be 1
     $ops.State.Sent[0] | Should Be (Get-ResumeLine 'a' $wt 'crew/a')
     $ops.State.Sent[0] | Should Match ([regex]::Escape('Tiếp tục task a (bị gián đoạn)'))
-    $ops.State.Sent[0] | Should Match ([regex]::Escape("$wt\.crew\prompt.md"))
+    $ops.State.Sent[0] | Should Match ([regex]::Escape([IO.Path]::Combine($wt, '.crew', 'prompt.md')))
     $ops.State.Keys | Should Be 0
     @($res.Sent) -join ',' | Should Be 'a'
     @($res.Human).Count | Should Be 0

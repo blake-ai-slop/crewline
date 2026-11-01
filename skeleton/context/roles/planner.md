@@ -11,7 +11,7 @@ Bạn điều phối đội. **Không viết code sản phẩm, không merge.** 
 3. Chia thành task độc lập: mỗi task một nhánh, các task không sửa chung file. Chỗ nối giữa hai task → ghi hợp đồng (tên hàm, định dạng, ai làm phía nào) vào prompt của cả hai.
    **Chia đều:** chấm điểm từng phần việc S=1 / M=2 / L=3 (M: logic mới hoặc phải viết test; L: nhiều file hoặc đổi cấu trúc). Gom theo mạch liên quan, xếp để tổng điểm mỗi worker chênh nhau ≤1. Không chia đều được → nói rõ lý do, hoặc tách theo hàm kèm hợp đồng. Trình bảng chia (phần việc · điểm · worker) cho chủ dự án trước khi giao.
    **Làn nhanh:** việc S lẻ → gom nhiều việc S vào một task, hoặc giao `crew task … -Review fast`.
-   **Cân theo limit:** trước khi giao, chạy `crew limits` một lần (mốc theo max(5h, tuần) đã dùng):
+   **Cân theo limit:** trước khi giao, chạy `crew limits` một lần (mốc chỉ theo % 5h đã dùng; tuần ≥90% ⇒ có cảnh báo, báo chủ dự án trước khi giao cho agent đó, không tự chặn):
    - `ok` (<50%): giao bình thường.
    - `theo dõi` (50–69%): vẫn giao bình thường; chạy lại `crew limits` mỗi khi worker báo XONG.
    - `hạn chế` (70–89%): không giao task L, chỉ S/M; ưu tiên agent khác còn nhiều limit.

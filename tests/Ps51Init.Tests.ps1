@@ -1,8 +1,11 @@
 ﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
+$OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 # Real install -> generated shim -> Windows PowerShell 5.1 -> pwsh -> init.
 # No fake crew script, no hc calls, and all profile writes stay in TestDrive.
+# Windows PowerShell 5.1 only exists on Windows: the whole file is skipped on Linux/macOS.
+if ($OnWindows) {
 Describe 'installed shim initializes a project from Windows PowerShell 5.1' {
   $savedEncoding = [Console]::OutputEncoding
   [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -17,7 +20,7 @@ Describe 'installed shim initializes a project from Windows PowerShell 5.1' {
       $r.ExitCode | Should Be 0 | Out-Null
       $shim = Join-Path $h.Home '.local/bin/crew.ps1'
       # Let PS 5.1 resolve the Store alias instead of the package-private exe.
-      $ps51Path = (($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') }) -join ';'
+      $ps51Path = (($env:Path -split ';') | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join ';'
     }
 
     It 'stdin 1 creates Git and context through the installed real shim' {
@@ -63,4 +66,5 @@ Describe 'installed shim initializes a project from Windows PowerShell 5.1' {
   } finally {
     [Console]::OutputEncoding = $savedEncoding
   }
+}
 }
