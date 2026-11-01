@@ -2,7 +2,7 @@
 crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc (Windows, Linux, macOS; pwsh 7).
 
   crew doctor                               kiểm môi trường: herdr, hc, agent, git identity
-  crew init  [-Path .] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]
+  crew init  [-Path .] [-Name <tên>] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]
   crew upgrade [-Path .] [-DryRun] [-NoCommit] [-Force] cập nhật skeleton context
   crew up    [-Path .] [-Restart w1|…|planner|rev|all] [-Force]  dựng space/tab/agent theo .crew/config.json; worker chạy sẵn agent trong worktree cố định .crew/worktrees/w<N>; -Restart kill + bật lại đúng terminal đó theo config hiện tại (đổi agent/quyền), worker đang có task cần -Force
   crew task  <tên> <file-prompt> [-Worker N] [-Review lean|fast|full] worker rảnh: nhánh crew/<tên> từ nhánh chính trong w<N> (phải sạch), chép prompt, /clear (Claude) hoặc /new (Codex) rồi giao việc; đổi model = /model trong pane, giữ qua task
@@ -10,7 +10,7 @@ crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc
   crew limits [-Path .]                     đọc 1 lần % limit 5h/tuần từ màn hình từng terminal (mốc ok/theo dõi/hạn chế/dừng theo 5h; tuần ≥90% cảnh báo)
   crew clean <tên> [-Force]                 w<N> về detached nhánh chính, xóa nhánh crew/<tên> + bản ghi; không kill agent, không xóa thư mục (task kiểu cũ .crew/worktrees/<tên>: gỡ worktree như trước)
   crew send <terminal> "<tin>" [-Raw]       gửi tin; tin kẹt ở ô nhập thì tự Enter; shell, lệnh /… và -Raw gửi trần (không bọc <hc from>)
-  crew review <task>[,<task2>…] [-DryRun]  soạn 1 dòng giao Rev merge các task theo thứ tự, gửi tới <slug>-rev
+  crew review <task>[,<task2>…] [-DryRun]  soạn 1 dòng giao Rev merge các task theo thứ tự, gửi tới <tên crew>-rev
   crew check <task>                         đối chiếu diff với "Được sửa", parse, test phần đó
   crew selfcheck                            cài thử vào HOME giả + PS 5.1 (chỉ Windows) + init/upgrade trước khi push
   crew repair [-DryRun]  chẩn đoán + sửa an toàn sau khi lỡ xóa pane/agent, giao lại task dở
@@ -182,11 +182,243 @@ function Read-GitInitChoice([string]$title, [string]$label) {
   Read-Choice $title $options 'yes' -NoStep -NullOnEof
 }
 
-function Get-Slug([string]$root) {
+# ---------------- tên crew ----------------
+# Slug kiểu cũ (trước khi config có `name`): giữ Y HỆT để project cũ không đổi tên terminal đang chạy. Chỉ Get-CrewName/upgrade gọi.
+function Get-LegacySlug([string]$root) {
   $s = (Split-Path $root -Leaf).ToLower() -replace '[^a-z0-9]+', '-'
   $s = $s.Trim('-')
   if ($s.Length -gt 12) { $s = $s.Substring(0, 12).TrimEnd('-') }
   return $s
+}
+
+# Sinh tên cho project mới: bỏ dấu (FormD, bỏ NonSpacingMark, đ→d), lowercase, ký tự lạ → '-', ≤12 ký tự; rỗng ⇒ crew-<6 hex từ hash root>.
+function Get-Slug([string]$root) {
+  $leaf = (Split-Path $root -Leaf).Normalize([Text.NormalizationForm]::FormD)
+  $plain = -join @($leaf.ToCharArray() | Where-Object { [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark })
+  $s = $plain.Replace('đ', 'd').Replace('Đ', 'D').ToLowerInvariant() -creplace '[^a-z0-9]+', '-'
+  $s = $s.Trim('-')
+  if ($s.Length -gt 12) { $s = $s.Substring(0, 12).TrimEnd('-') }
+  if (-not $s) {
+    $bytes = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes((ConvertTo-RootKey $root).ToLowerInvariant()))
+    $s = 'crew-' + (-join @($bytes[0..2] | ForEach-Object { $_.ToString('x2') }))
+  }
+  return $s
+}
+
+# Tên crew hợp lệ: a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'.
+function Test-CrewName([string]$n) { $n -cmatch '^[a-z0-9](?:[a-z0-9-]{0,10}[a-z0-9])?$' }
+
+# Tên crew của project — chỗ DUY NHẤT mọi lệnh lấy tên (terminal <tên>-planner|-w<N>|-rev, space spcrew<tên>).
+# Config có `name` ⇒ dùng; chưa có (project cũ) ⇒ slug cũ y hệt.
+function Get-CrewName([string]$root, $cfg) {
+  if ($cfg -and $cfg.PSObject.Properties.Name -contains 'name' -and $null -ne $cfg.name) {
+    $n = [string]$cfg.name
+    if (-not (Test-CrewName $n)) { Die "tên crew '$n' trong .crew/config.json không hợp lệ (a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'). Sửa `"name`" hoặc chạy: crew init -Name <tên>" }
+    return $n
+  }
+  $s = Get-LegacySlug $root
+  if (-not $s) { Die "không suy ra được tên crew từ thư mục '$(Split-Path $root -Leaf)'. Chạy 'crew upgrade' (tự ghi name) hoặc 'crew init -Name <tên>'." }
+  return $s
+}
+
+# Đường dẫn chuẩn hóa để so: tuyệt đối, bỏ dấu tách cuối, '/' và '\' như nhau trên Windows.
+function ConvertTo-RootKey([string]$p) {
+  $f = [IO.Path]::GetFullPath($p)
+  if ($f.Length -gt 3 -or -not $IsWindows) { $f = $f.TrimEnd('\', '/') }
+  if (-not $f) { $f = '/' }
+  return $f
+}
+
+# So hai đường dẫn đã chuẩn hóa; Windows không phân biệt hoa thường.
+function Test-SamePath([string]$a, [string]$b) {
+  $cmp = if ($IsWindows -or $PSVersionTable.PSEdition -ne 'Core') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+  [string]::Equals((ConvertTo-RootKey $a), (ConvertTo-RootKey $b), $cmp)
+}
+
+# Terminal (object `hc ls --json` / `hc get --json`) thuộc project $root: cwd là root hoặc <root>/.crew/worktrees/w<N>.
+function Test-TermOwner($term, [string]$root) {
+  $cwd = if ($term -and $term.cwd) { [string]$term.cwd } else { '' }
+  if (-not $cwd) { return $false }
+  if (Test-SamePath $cwd $root) { return $true }
+  $key = ConvertTo-RootKey $cwd
+  (Split-Path $key -Leaf) -match '^w\d+$' -and (Test-SamePath (Split-Path $key -Parent) (Join-Path $root '.crew/worktrees'))
+}
+
+# Lý do chặn khi terminal $name đang live mà thuộc project khác; '' khi của mình, không live, hoặc hc không báo cwd (không kiểm được).
+function Get-ForeignTermError([string]$name, $term, [string]$root) {
+  if (-not $term -or $term.state -ne 'live' -or -not $term.cwd) { return '' }
+  if (Test-TermOwner $term $root) { return '' }
+  "terminal $name đang chạy ở project khác (cwd $($term.cwd)), không phải $root — trùng tên crew. Đặt tên khác: crew init -Name <tên> trong project này, hoặc sửa `"name`" trong .crew/config.json."
+}
+
+# Khóa id herdr (space/tab) của crew: mã hóa đơn ánh từ tên [a-z0-9-]: 'z'→'zz', '-'→'zd' (my-app→myzdapp, myapp→myapp).
+function ConvertTo-IdKey([string]$n) { $n.Replace('z', 'zz').Replace('-', 'zd') }
+# Khóa kiểu cũ (trước idKey): tên bỏ '-' — chỉ để giữ space/tab của project cũ.
+function Get-LegacyIdKey([string]$n) { $n -replace '-', '' }
+function Test-IdKey([string]$k) { $k -cmatch '^[a-z0-9]{1,24}$' }
+
+# Khóa id của project — chỗ DUY NHẤT: config có idKey ⇒ dùng; thiếu (project cũ) ⇒ khóa cũ từ tên như trước.
+function Get-CrewIdKey([string]$root, $cfg) {
+  if ($cfg -and $cfg.PSObject.Properties.Name -contains 'idKey' -and $null -ne $cfg.idKey) {
+    $k = [string]$cfg.idKey
+    if (-not (Test-IdKey $k)) { Die "idKey '$k' trong .crew/config.json không hợp lệ (a-z 0-9, 1–24 ký tự). Sửa `"idKey`" hoặc chạy: crew init -Name <tên>" }
+    return $k
+  }
+  Get-LegacyIdKey (Get-CrewName $root $cfg)
+}
+
+# Sổ tên crew toàn máy: ~/.crewline/projects.json = { "<tên>": { "root": "<root tuyệt đối>", "idKey": "<khóa>" } }.
+# Bản đầu ghi { "<tên>": "<root>" } — vẫn đọc được, idKey coi như khóa cũ (tên bỏ '-').
+function Get-ProjectsFile { Join-Path $HOME '.crewline/projects.json' }
+
+# Đọc sổ: @{ Ok; Map (tên -> @{ Root; IdKey }); Error }. Hỏng ⇒ Ok = $false (người gọi cảnh báo, không chặn).
+function Read-ProjectRegistry {
+  $f = Get-ProjectsFile
+  $map = [ordered]@{}
+  if (-not (Test-Path -LiteralPath $f)) { return @{ Ok = $true; Map = $map; Error = '' } }
+  try {
+    $text = [IO.File]::ReadAllText($f)
+    if (-not $text.Trim()) { return @{ Ok = $true; Map = $map; Error = '' } }
+    $j = $text | ConvertFrom-Json
+    if ($j -isnot [pscustomobject]) { throw 'cần một JSON object' }
+    foreach ($p in $j.PSObject.Properties) {
+      $v = $p.Value
+      if ($v -is [string] -and $v) { $map[$p.Name] = @{ Root = $v; IdKey = (Get-LegacyIdKey $p.Name) }; continue }
+      if ($v -isnot [pscustomobject] -or $v.root -isnot [string] -or -not $v.root) { throw "mục '$($p.Name)' cần root là đường dẫn" }
+      $k = if ($v.idKey -is [string] -and $v.idKey) { $v.idKey } else { Get-LegacyIdKey $p.Name }
+      $map[$p.Name] = @{ Root = $v.root; IdKey = $k }
+    }
+    return @{ Ok = $true; Map = $map; Error = '' }
+  } catch { return @{ Ok = $false; Map = [ordered]@{}; Error = "sổ tên crew $f hỏng ($($_.Exception.Message))" } }
+}
+
+function Save-ProjectRegistry($map) {
+  $f = Get-ProjectsFile
+  New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+  $o = [ordered]@{}
+  foreach ($k in @($map.Keys | Sort-Object)) { $o[$k] = [ordered]@{ root = $map[$k].Root; idKey = $map[$k].IdKey } }
+  [IO.File]::WriteAllText($f, ($o | ConvertTo-Json -Depth 3) + "`n", [Text.UTF8Encoding]::new($false))
+}
+
+# Mục sổ thuộc root khác còn tồn tại (có .crew/config.json)?
+function Test-OtherAlive($entry, [string]$root) {
+  $other = [string]$entry.Root
+  -not (Test-SamePath $other $root) -and (Test-Path -LiteralPath (Join-Path $other '.crew/config.json'))
+}
+
+# Root khác đang giữ tên $n trong sổ (còn .crew/config.json); '' khi trống, của chính $root, hoặc root cũ không còn.
+function Get-NameOwner($map, [string]$n, [string]$root) {
+  if (-not $map.Contains($n)) { return '' }
+  if (Test-OtherAlive $map[$n] $root) { return [string]$map[$n].Root }
+  ''
+}
+
+# Root khác còn tồn tại đang dùng khóa id $k (space/tab herdr); ''.
+function Get-IdKeyOwner($map, [string]$k, [string]$root) {
+  foreach ($n in @($map.Keys)) {
+    if ($map[$n].IdKey -ceq $k -and (Test-OtherAlive $map[$n] $root)) { return [string]$map[$n].Root }
+  }
+  ''
+}
+
+# Tên trống gần nhất: $base, rồi $base-2, -3… (cắt phần gốc để ≤12 ký tự). Trống = tên chưa ai giữ và idKey mới của nó chưa ai dùng.
+# $takenKeys: khóa id đang bị space herdr live của project khác dùng (Get-TakenIdKeys), kể cả project chưa vào sổ.
+function Resolve-CrewName([string]$base, [string]$root, $map, [string[]]$takenKeys = @()) {
+  $free = { param($c) $k = ConvertTo-IdKey $c; -not (Get-NameOwner $map $c $root) -and -not (Get-IdKeyOwner $map $k $root) -and $takenKeys -cnotcontains $k }
+  if (& $free $base) { return $base }
+  for ($i = 2; $i -lt 1000; $i++) {
+    $suffix = "-$i"; $b = $base
+    if ($b.Length + $suffix.Length -gt 12) { $b = $b.Substring(0, 12 - $suffix.Length).TrimEnd('-') }
+    $c = "$b$suffix"
+    if (& $free $c) { return $c }
+  }
+  Die "không tìm được tên crew trống từ '$base' — chạy: crew init -Name <tên>"
+}
+
+# ---- space herdr live (lớp kiểm cho project chưa vào sổ) ----
+# Đọc `herdr-app ls` một lần: @{ Ok; Spaces; Error }. Không có lệnh/lỗi/JSON hỏng ⇒ Ok = $false (người gọi cảnh báo, không chặn).
+function Get-HerdrSpaces {
+  if (-not (Get-Command herdr-app -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Spaces = @(); Error = 'không có herdr-app' } }
+  try {
+    # herdr-app.exe là app GUI trên Windows: gán thẳng `$x = herdr-app ls` không chờ (stdout trống); qua pipe thì PowerShell chờ đọc hết.
+    $text = & { $ErrorActionPreference = 'Continue'; herdr-app ls 2>$null | Out-String }
+    if (-not "$text".Trim()) { return @{ Ok = $false; Spaces = @(); Error = 'herdr-app ls không trả gì' } }
+    $j = $text | ConvertFrom-Json
+    if ($null -eq $j -or $j.PSObject.Properties.Name -notcontains 'spaces') { return @{ Ok = $false; Spaces = @(); Error = 'herdr-app ls thiếu spaces' } }
+    return @{ Ok = $true; Spaces = @($j.spaces | Where-Object { $_ }); Error = '' }
+  } catch { return @{ Ok = $false; Spaces = @(); Error = "herdr-app ls không đọc được ($($_.Exception.Message))" } }
+}
+
+# Thư mục space thuộc project $root (root hoặc worktree w<N>, như cwd terminal).
+function Test-FolderOwner([string]$folder, [string]$root) { Test-TermOwner ([pscustomobject]@{ cwd = $folder }) $root }
+
+# Hàm thuần: space id của crew này (hoặc tab id tbcrew<key>…) đã có trong herdr mà folder thuộc project khác, hoặc terminal
+# trong đó có cwd (hc ls, $liveTerms) thuộc project khác ⇒ lý do; '' khi ổn. $ids = Get-Ids; $spaces = (Get-HerdrSpaces).Spaces.
+function Get-ForeignSpaceError($ids, [string]$root, $spaces, $liveTerms) {
+  $tabIds = @($ids.Planner, $ids.Rev) + @(1..3 | ForEach-Object { & $ids.Workers $_ }) | Where-Object { $_ }
+  $byAddr = @{}
+  foreach ($t in @($liveTerms)) { if ($t -and $t.address) { $byAddr[[string]$t.address] = $t } }
+  foreach ($sp in @($spaces)) {
+    if (-not $sp) { continue }
+    $hitTabs = @(@($sp.tabs) | Where-Object { $_ -and $tabIds -ccontains [string]$_.id })
+    if ([string]$sp.id -cne $ids.Space -and -not $hitTabs.Count) { continue }
+    $what = if ([string]$sp.id -ceq $ids.Space) { "space $($sp.id)" } else { "tab $(@($hitTabs | ForEach-Object { $_.id }) -join ', ') trong space $($sp.id)" }
+    $hint = "Đặt tên khác: crew init -Name <tên khác> (sinh idKey mới), hoặc sửa `"name`"/`"idKey`" trong .crew/config.json."
+    if ($sp.folder -and -not (Test-FolderOwner ([string]$sp.folder) $root)) {
+      return "$what của herdr đang thuộc thư mục $($sp.folder), không phải $root — trùng khóa id với crew khác. $hint"
+    }
+    $tabs = if ([string]$sp.id -ceq $ids.Space) { @($sp.tabs) } else { $hitTabs }
+    foreach ($tb in $tabs) {
+      foreach ($tm in @($tb.terminals)) {
+        $lt = if ($tm) { $byAddr[[string]$tm.terminal] } else { $null }
+        if ($lt -and $lt.cwd -and -not (Test-TermOwner $lt $root)) {
+          return "$what của herdr có terminal $($lt.name) ($($tm.terminal)) chạy ở $($lt.cwd), không phải $root — trùng khóa id với crew khác. $hint"
+        }
+      }
+    }
+  }
+  ''
+}
+
+# Khóa id đang bị space herdr của project khác dùng (space spcrew<key> có folder không thuộc $root). Hàm thuần.
+function Get-TakenIdKeys($spaces, [string]$root) {
+  @(foreach ($sp in @($spaces)) {
+      if ($sp -and [string]$sp.id -cmatch '^spcrew([a-z0-9]+)$' -and $sp.folder -and -not (Test-FolderOwner ([string]$sp.folder) $root)) { $Matches[1] }
+    })
+}
+
+# Ghi $n -> @{ $root; $idKey } vào sổ (bỏ tên cũ của cùng root). Sổ hỏng ⇒ cảnh báo, không ghi đè.
+# Tên hoặc idKey đang thuộc root khác còn tồn tại ⇒ giữ chủ cũ, không ghi, cảnh báo. Trả $true khi đã ghi.
+function Register-CrewName([string]$n, [string]$root, [string]$idKey) {
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { Say "cảnh báo: $($reg.Error) — không ghi sổ; sửa hoặc xóa file đó rồi chạy lại crew init."; return $false }
+  $map = $reg.Map
+  $other = Get-NameOwner $map $n $root
+  if (-not $other) { $other = Get-IdKeyOwner $map $idKey $root }
+  if ($other) { Say "cảnh báo: tên '$n'/idKey '$idKey' đã thuộc project $other trong sổ — giữ nguyên chủ cũ, không ghi sổ. Đổi tên: crew init -Name <tên>."; return $false }
+  foreach ($k in @($map.Keys)) { if ($k -ne $n -and (Test-SamePath ([string]$map[$k].Root) $root)) { $map.Remove($k) } }
+  $map[$n] = @{ Root = (ConvertTo-RootKey $root); IdKey = $idKey }
+  Save-ProjectRegistry $map
+  $true
+}
+
+# Tên crew hoặc khóa id của project đã thuộc root khác còn tồn tại trong sổ (vd chép nguyên thư mục,
+# hoặc project cũ trùng khóa cũ my-app/myapp) ⇒ lý do; '' khi ổn. Không tự đổi gì.
+function Get-NameConflict([string]$root, $cfg) {
+  if (-not $cfg) { return '' }
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { return '' }
+  $hasName = $cfg.PSObject.Properties.Name -contains 'name' -and $cfg.name
+  if ($hasName) {
+    $other = Get-NameOwner $reg.Map ([string]$cfg.name) $root
+    if ($other) { return "tên crew '$($cfg.name)' (.crew/config.json) đã thuộc project $other (sổ $(Get-ProjectsFile)) — có thể do chép nguyên thư mục. Đổi tên: crew init -Name <tên> (hoặc sửa `"name`" trong config)." }
+  }
+  $n = if ($hasName) { [string]$cfg.name } else { Get-LegacySlug $root }
+  if (-not $n -and -not ($cfg.PSObject.Properties.Name -contains 'idKey')) { return '' }
+  $k = Get-CrewIdKey $root $cfg
+  $other = Get-IdKeyOwner $reg.Map $k $root
+  if ($other) { return "khóa id herdr '$k' (space spcrew$k) của project này trùng project $other (sổ $(Get-ProjectsFile)) — hai crew sẽ dùng chung space/tab. Đổi tên: crew init -Name <tên> (sinh idKey mới), hoặc sửa `"name`"/`"idKey`" trong .crew/config.json." }
+  ''
 }
 
 function Get-Config([string]$root) {
@@ -225,13 +457,31 @@ function Get-AgentCommand([string]$kind, [string]$access, [string]$line) {
   "$exe $(Get-Flags $kind $access) $(Quote $line)"
 }
 
+# Terminal từ `hc ls --json`. Thành công rỗng (terminals: []) ⇒ @(); exit≠0, JSON hỏng hoặc thiếu mảng 'terminals' ⇒ throw
+# (không bao giờ trả [] khi lỗi). Chỗ ra quyết định (up, repair) coi lỗi là dừng; chỗ hiển thị (hot, limits, gợi ý chuyển) chỉ cảnh báo.
 function Get-LiveTerminals {
-  $j = hc ls --json | ConvertFrom-Json
-  return @($j.terminals)
+  $out = & { $ErrorActionPreference = 'Continue'; hc ls --json 2>$null }
+  $code = $LASTEXITCODE
+  if ($code -ne 0) { throw "hc ls --json lỗi (exit $code)" }
+  $text = (@($out) -join "`n").Trim()
+  try { $j = $text | ConvertFrom-Json } catch { throw "hc ls --json trả JSON hỏng (exit $code): $($_.Exception.Message)" }
+  if ($null -eq $j -or $j -isnot [pscustomobject] -or $j.PSObject.Properties.Name -notcontains 'terminals') { throw "hc ls --json thiếu mảng 'terminals' (exit $code)" }
+  # terminals phải là mảng JSON; từng phần tử phải có address/state (chuỗi khác rỗng) + name (chuỗi, null nếu chưa đặt tên).
+  # Sai shape ⇒ ném lỗi, KHÔNG lọc thành rỗng (rỗng = "0 terminal" ⇒ repair sẽ đóng space còn terminal lạ).
+  $arr = $j.terminals
+  if ($arr -isnot [array]) { $kind = if ($null -eq $arr) { 'null' } else { $arr.GetType().Name }; throw "hc ls --json: 'terminals' không phải mảng ($kind, exit $code)" }
+  for ($i = 0; $i -lt $arr.Count; $i++) {
+    $t = $arr[$i]
+    if ($t -isnot [pscustomobject]) { throw "hc ls --json: terminals[$i] không phải object (exit $code)" }
+    $p = $t.PSObject.Properties.Name
+    foreach ($k in 'address', 'state') { if ($p -notcontains $k -or $t.$k -isnot [string] -or -not $t.$k) { throw "hc ls --json: terminals[$i] thiếu/sai '$k' (exit $code)" } }
+    if ($p -notcontains 'name' -or ($null -ne $t.name -and $t.name -isnot [string])) { throw "hc ls --json: terminals[$i] thiếu/sai 'name' (exit $code)" }
+  }
+  return @($arr)
 }
 
-function Get-Ids([string]$slug) {
-  $k = $slug -replace '-', ''
+# Id herdr của crew từ khóa id (Get-CrewIdKey) — không tự bỏ ký tự nào nữa.
+function Get-Ids([string]$k) {
   return @{ Space = "spcrew$k"; Planner = "tbcrew${k}planner"; Rev = "tbcrew${k}rev"; Workers = { param($n) "tbcrew${k}workers$n" }.GetNewClosure() }
 }
 
@@ -379,6 +629,11 @@ function Invoke-Doctor {
   $tpl = @(Get-ChildItem $tdir -Filter 'crew-*.md' -ErrorAction SilentlyContinue).Count
   Check "template hc ($tpl trong $tdir)" ($tpl -ge 4) 'chạy install.ps1'
   Check "khung context ($Skeleton)" (Test-Path (Join-Path $Skeleton 'context/roles/planner.md')) 'repo Crewline thiếu skeleton/'
+  if ($root -and (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) {
+    $pcfg = Get-Config $root
+    $clash = Get-NameConflict $root $pcfg
+    Check "tên crew '$(Get-CrewName $root $pcfg)' chỉ thuộc project này" (-not $clash) $clash
+  }
   if (Get-Command hc -ErrorAction SilentlyContinue) {
     & { $ErrorActionPreference = 'Continue'; hc server status *> $null }
     Check 'herdr-core đang chạy' ($LASTEXITCODE -eq 0) 'mở herdr-app'
@@ -388,6 +643,83 @@ function Invoke-Doctor {
 }
 
 # ---------------- init ----------------
+# Tên crew + khóa id cho init: -Name > `name` đã có trong config > slug cũ (config cũ chưa có name) > Get-Slug; tên tự sinh mà trùng ⇒ -2, -3…
+# idKey: giữ khóa đang dùng khi tên không đổi (project cũ ⇒ khóa cũ, không đổi space/tab); tên mới ⇒ ConvertTo-IdKey. Trả @{ Name; IdKey }.
+function Select-InitName([string]$root, [string]$cfgFile) {
+  $prev = $null
+  if (Test-Path -LiteralPath $cfgFile) { try { $prev = Get-Content -LiteralPath $cfgFile -Raw | ConvertFrom-Json } catch { $prev = $null } }
+  $prevName = ''; $prevKey = ''
+  if ($prev) {
+    $prevName = if ($prev.PSObject.Properties.Name -contains 'name' -and (Test-CrewName ([string]$prev.name))) { [string]$prev.name } else { Get-LegacySlug $root }
+    $prevKey = if ($prev.PSObject.Properties.Name -contains 'idKey' -and (Test-IdKey ([string]$prev.idKey))) { [string]$prev.idKey } elseif ($prevName) { Get-LegacyIdKey $prevName } else { '' }
+  }
+  $keyFor = { param($n) if ($prevName -and $n -ceq $prevName -and $prevKey) { $prevKey } else { ConvertTo-IdKey $n } }
+  if ($Name) { return @{ Name = $Name; IdKey = (& $keyFor $Name) } }
+  if ($prev -and $prev.PSObject.Properties.Name -contains 'name' -and $prevName -ceq [string]$prev.name) {
+    $clash = Get-NameConflict $root $prev
+    if ($clash) { Say "cảnh báo: $clash" }
+    return @{ Name = $prevName; IdKey = $prevKey }
+  }
+  $base = if ($prevName) { $prevName } else { Get-Slug $root }
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { Say "cảnh báo: $($reg.Error) — không kiểm được tên trùng với project khác (crew up vẫn kiểm cwd terminal)." }
+  $hs = Get-HerdrSpaces
+  $taken = if ($hs.Ok) { Get-TakenIdKeys $hs.Spaces $root } else { @() }
+  $chosen = Resolve-CrewName $base $root $reg.Map $taken
+  if ($chosen -ne $base) {
+    $who = Get-NameOwner $reg.Map $base $root
+    if (-not $who) { $who = Get-IdKeyOwner $reg.Map (ConvertTo-IdKey $base) $root }
+    if (-not $who) { $who = "(space herdr spcrew$(ConvertTo-IdKey $base) đang chạy)" }
+    Say "tên '$base' (hoặc khóa id của nó) đã thuộc project $who — dùng tên '$chosen'."
+  }
+  @{ Name = $chosen; IdKey = (& $keyFor $chosen) }
+}
+
+# Trùng idKey không chứng minh bản chép: chỉ tên trong sổ thuộc root khác còn sống.
+function Get-CopySource([string]$root, $cfg) {
+  if (-not $cfg -or -not $cfg.name) { return '' }
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { return '' }
+  Get-NameOwner $reg.Map ([string]$cfg.name) $root
+}
+
+# Chỉ dọn trạng thái mang theo từ root khác còn tồn tại; không sửa metadata git.
+function Clear-CopiedCrewState([string]$root, $cfg) {
+  if (-not (Get-CopySource $root $cfg)) { return }
+  $listed = Invoke-GitOrDie 'đọc worktree trước khi dọn bản chép' -C $root worktree list --porcelain
+  $paths = @($listed.Text -split "`n" | Where-Object { $_ -like 'worktree *' } | ForEach-Object { $_.Substring(9).TrimEnd("`r") })
+  $parent = Join-Path (ConvertTo-RootKey $root) '.crew/worktrees'
+  foreach ($path in @((Join-Path $root '.crew'), $parent, (Join-Path $root '.crew/config.json'))) {
+    if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      Die "không dọn tự động đường dẫn liên kết: $path"
+    }
+  }
+  $remove = @()
+  if (Test-Path -LiteralPath $parent) {
+    foreach ($dir in Get-ChildItem -LiteralPath $parent -Directory -Force) {
+      if ($dir.Name -notmatch '^w\d+$') { continue }
+      if (@($paths | Where-Object { Test-SamePath $_ $dir.FullName }).Count) { Say "giữ worktree git đã đăng ký: $($dir.FullName)"; continue }
+      # Kiểm đường dẫn tuyệt đối trước xóa đệ quy; không đi theo junction/symlink.
+      if (-not (Test-SamePath (Split-Path $dir.FullName -Parent) $parent) -or
+          ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+          @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
+        Die "không dọn tự động đường dẫn liên kết/ngoài phạm vi: $($dir.FullName)"
+      }
+      $remove += $dir.FullName
+    }
+  }
+  foreach ($dir in $remove) {
+    Remove-Item -LiteralPath $dir -Recurse -Force
+    Say "đã dọn worktree chép theo (không đăng ký trong git bản chép): $dir"
+  }
+  $tasksFile = Join-Path $root '.crew/tasks.json'
+  if (Test-Path -LiteralPath $tasksFile) { Remove-Item -LiteralPath $tasksFile -Force; Say 'đã dọn .crew/tasks.json của bản gốc.' }
+  $cfg.PSObject.Properties.Remove('name')
+  $cfg.PSObject.Properties.Remove('idKey')
+  $cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root '.crew/config.json') -Encoding utf8
+  Say 'đã bỏ name/idKey của bản gốc; khởi tạo crew mới cho bản chép.'
+}
+
 function Invoke-Init {
   $teams = Get-Teams
   $defaults = Get-UserDefaults $teams
@@ -399,6 +731,28 @@ function Invoke-Init {
   }
   $p = (Resolve-Path $Path).Path
   $root = Get-Root $p
+  $copyRoot = if ($root) { $root } else { $p }
+  $copyConfig = Join-Path $copyRoot '.crew/config.json'
+  $copied = $null
+  if (Test-Path -LiteralPath $copyConfig) {
+    $previous = Get-Content -LiteralPath $copyConfig -Raw | ConvertFrom-Json
+    if (Get-CopySource $copyRoot $previous) {
+      if (-not $Name) { Die 'project là bản chép (bản sao) của crew còn tồn tại; chạy crew init -Name <tên mới> để dọn trạng thái chép theo và tạo crew riêng.' }
+      $copied = $previous
+    }
+  }
+  # -Name kiểm ngay, trước khi đụng git
+  if ($Name) {
+    if (-not (Test-CrewName $Name)) { Die "-Name '$Name' không hợp lệ: chỉ a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'." }
+    $reg = Read-ProjectRegistry
+    $here = if ($root) { $root } else { $p }
+    $other = if ($reg.Ok) { Get-NameOwner $reg.Map $Name $here } else { '' }
+    if ($other) { Die "tên crew '$Name' đã thuộc project $other — chọn tên khác." }
+    $other = if ($reg.Ok) { Get-IdKeyOwner $reg.Map (ConvertTo-IdKey $Name) $here } else { '' }
+    if ($other) { Die "khóa id herdr của tên '$Name' ($(ConvertTo-IdKey $Name)) đã thuộc project $other — chọn tên khác." }
+    $hs = Get-HerdrSpaces
+    if ($hs.Ok -and (Get-TakenIdKeys $hs.Spaces $here) -ccontains (ConvertTo-IdKey $Name)) { Die "space herdr spcrew$(ConvertTo-IdKey $Name) đang thuộc project khác — chọn tên khác cho -Name." }
+  }
   $hasHead = [bool]$root -and (Invoke-GitQuiet -C $root rev-parse --verify -q HEAD).Code -eq 0
   if (-not $hasHead -and -not $GitInit) {
     if ($root) {
@@ -417,12 +771,14 @@ function Invoke-Init {
     $root = (Resolve-Path $p).Path
   }
   if (-not $hasHead) {
+    if ($copied) { Clear-CopiedCrewState $root $copied; $copied = $null }
     Say "tạo commit đầu với các file đang có."
     Invoke-GitOrDie 'git add' -C $root add -A | Out-Null
     Invoke-GitOrDie 'commit đầu' -C $root commit -q --allow-empty -m 'chore: initial commit' | Out-Null
     $hasHead = $true
   }
 
+  if ($copied) { Clear-CopiedCrewState $root $copied }
   # không có Rev thì không ai review ⇒ ép chế độ nhanh
   $rv = $Review; if ($t.rev -eq 'none') { $rv = 'fast' }
   $reviewVi = @{ fast = 'Nhanh'; lean = 'Gọn'; full = 'Đủ' }[$rv]
@@ -457,9 +813,13 @@ function Invoke-Init {
   Add-GitIgnoreLine $root '*.bak-*' | Out-Null
 
   New-Item -ItemType Directory -Force (Join-Path $root '.crew/prompts') | Out-Null
-  $cfg = [ordered]@{ planner = $t.planner; workers = @($t.workers); rev = $t.rev; review = $rv; access = $Access }
-  $cfg | ConvertTo-Json | Set-Content (Join-Path $root '.crew/config.json') -Encoding utf8
+  $cfgFile = Join-Path $root '.crew/config.json'
+  $sel = Select-InitName $root $cfgFile; $crewName = $sel.Name
+  $cfg = [ordered]@{ name = $crewName; idKey = $sel.IdKey; planner = $t.planner; workers = @($t.workers); rev = $t.rev; review = $rv; access = $Access }
+  $cfg | ConvertTo-Json | Set-Content $cfgFile -Encoding utf8
   Say "ghi .crew/config.json: $(($cfg | ConvertTo-Json -Compress))"
+  Register-CrewName $crewName $root $sel.IdKey | Out-Null
+  Say "tên crew: $crewName (terminal $crewName-planner, $crewName-w<N>, $crewName-rev; đổi: crew init -Name <tên>)"
 
   if ($NoCommit) { Say "bỏ qua commit (-NoCommit)."; return }
   Invoke-GitQuiet -C $root add context CLAUDE.md AGENTS.md .gitignore | Out-Null
@@ -469,6 +829,41 @@ function Invoke-Init {
 }
 
 # ---------------- upgrade ----------------
+# Project cũ thiếu `name`/`idKey` ⇒ ghi name = slug cũ và idKey = khóa cũ (tên bỏ '-') vào .crew/config.json (gitignore,
+# không commit) để KHÔNG đổi tên terminal và space/tab đang chạy; ghi sổ nếu tên/khóa còn trống (trùng ⇒ giữ chủ cũ, cảnh báo).
+# Slug cũ rỗng ⇒ sinh tên mới + idKey mã hóa mới. Đủ cả hai ⇒ chỉ cảnh báo khi trùng project khác. $dry ⇒ chỉ in.
+function Update-ConfigName([string]$root, [bool]$dry) {
+  $f = Join-Path $root '.crew/config.json'
+  if (-not (Test-Path -LiteralPath $f)) { return }
+  $cfg = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+  $names = @($cfg.PSObject.Properties.Name)
+  $hasName = $names -contains 'name' -and $cfg.name
+  $hasKey = $names -contains 'idKey' -and $cfg.idKey
+  if ($hasName -and $hasKey) {
+    $clash = Get-NameConflict $root $cfg
+    if ($clash) { Say "cảnh báo: $clash" }
+    return
+  }
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { Say "cảnh báo: $($reg.Error) — không ghi sổ." }
+  $n = if ($hasName) { Get-CrewName $root $cfg } else { Get-LegacySlug $root }
+  $fresh = $false
+  if (-not $n) { $n = Resolve-CrewName (Get-Slug $root) $root $reg.Map; $fresh = $true }
+  $k = if ($hasKey) { Get-CrewIdKey $root $cfg } elseif ($fresh) { ConvertTo-IdKey $n } else { Get-LegacyIdKey $n }
+  $what = @(if (-not $hasName) { "name '$n'" }) + @(if (-not $hasKey) { "idKey '$k'" }) -join ' + '
+  if ($dry) {
+    Say "sẽ ghi $what vào $f (giữ tên terminal và space/tab hiện có) + sổ tên crew nếu còn trống."
+    $clash = Get-NameConflict $root ([pscustomobject]@{ name = $n; idKey = $k })
+    if ($clash) { Say "cảnh báo: $clash" }
+    return
+  }
+  $o = [ordered]@{ name = $n; idKey = $k }
+  foreach ($p in $cfg.PSObject.Properties) { if ($p.Name -notin 'name', 'idKey') { $o[$p.Name] = $p.Value } }
+  $o | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $f -Encoding utf8
+  Say "ghi $what vào $f (giữ tên terminal và space/tab hiện có)."
+  if ($reg.Ok) { Register-CrewName $n $root $k | Out-Null }
+}
+
 function Invoke-Upgrade {
   $root = Get-Root (Resolve-Path $Path).Path
   if (-not $root) { Die 'không phải repo git.' }
@@ -534,6 +929,7 @@ function Invoke-Upgrade {
     Write-UpgradeFile $file $next
   }
   Write-UpgradeFile $versionFile "$version`n"
+  Update-ConfigName $root ([bool]$DryRun)
   if ($DryRun) {
     $gi = Join-Path $root '.gitignore'
     $ignoreText = if (Test-Path -LiteralPath $gi) { [IO.File]::ReadAllText($gi) } else { '' }
@@ -558,9 +954,23 @@ function Invoke-Upgrade {
 # ---------------- up ----------------
 function Invoke-Up {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $ids = Get-Ids $slug
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $ids = Get-Ids (Get-CrewIdKey $root $cfg)
+  $clash = Get-NameConflict $root $cfg
+  if ($clash) { Die $clash }
+  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint }
   $main = Get-MainBranch $root
-  $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' })
+  try { $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Die "$($_.Exception.Message) — không kiểm được terminal đang chạy nên không bật/kill gì. Kiểm hc (hc ls) rồi chạy lại." }
+  # terminal cùng tên mà thuộc project khác ⇒ dừng trước mọi kill/bật/gửi
+  $mine = @(if ($cfg.planner -ne 'none') { "$slug-planner" }) + @(for ($i = 1; $i -le @($cfg.workers).Count; $i++) { "$slug-w$i" }) + @(if ($cfg.rev -ne 'none') { "$slug-rev" })
+  $foreign = @($liveTerms | Where-Object { $mine -contains $_.name } | ForEach-Object { Get-ForeignTermError $_.name $_ $root } | Where-Object { $_ })
+  if ($foreign.Count) { Die ($foreign -join "`n  ") }
+  # space/tab id của crew này đã thuộc project khác (kể cả project chưa vào sổ) ⇒ dừng trước mọi kill/bật/rename/move
+  $hs = Get-HerdrSpaces
+  if (-not $hs.Ok) { Say "cảnh báo: $($hs.Error) — không kiểm được space herdr trùng khóa id; chỉ kiểm terminal cùng tên." }
+  else {
+    $why = Get-ForeignSpaceError $ids $root $hs.Spaces $liveTerms
+    if ($why) { Die $why }
+  }
   $live = @($liveTerms | ForEach-Object { $_.name })
   $made = @(); $started = @()
 
@@ -767,7 +1177,10 @@ function Send-WorkerTask([string]$term, [string]$kind, [string]$mode, [string]$w
 # Lõi crew task (không Die, lỗi ⇒ throw): kiểm terminal TRƯỚC khi đụng git, tạo nhánh + prompt, ghi tasks.json, gửi việc.
 # $tasks = danh sách task đã gồm bản ghi mới. Trả @{ Ok; Message; Line } của bước gửi.
 function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, [string]$access, [string]$term, [string]$name, [string]$promptPath, $tasks, $ops) {
-  $m = Get-WorkerMode (& $ops.Get $term) $kind
+  $info = & $ops.Get $term
+  $foreign = Get-ForeignTermError $term $info $root
+  if ($foreign) { throw "$foreign Chưa giao việc." }
+  $m = Get-WorkerMode $info $kind
   switch ($m.Mode) {
     'dead' { throw "không thấy terminal $term đang chạy — chạy 'crew up' trước." }
     'blocked' { throw "$term đang chờ duyệt — chủ dự án xử lý trước, không giao việc." }
@@ -787,7 +1200,8 @@ function Invoke-Task {
   if (-not (Test-Path $PromptFile)) { Die "không thấy file prompt $PromptFile" }
   $promptPath = (Resolve-Path $PromptFile).Path
   $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $tasks = Get-Tasks $root
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
+  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint }
   if ($tasks | Where-Object { $_.name -eq $Name }) { Die "task $Name đã có trong .crew/tasks.json." }
 
   $n = @($cfg.workers).Count
@@ -813,14 +1227,48 @@ function Invoke-Task {
 }
 
 # ---------------- hot ----------------
+function Get-HotWarnings([string]$root, $cfg, $tasks, $terminals) {
+  $status = Invoke-GitQuiet -C $root status --porcelain
+  $branch = (Invoke-GitQuiet -C $root branch --show-current).Text
+  $merge = Invoke-GitQuiet -C $root rev-parse --git-path MERGE_HEAD
+  $mergePath = if ([IO.Path]::IsPathRooted($merge.Text)) { $merge.Text } else { Join-Path $root $merge.Text }
+  if (($status.Code -eq 0 -and $status.Text) -or ($merge.Code -eq 0 -and (Test-Path -LiteralPath $mergePath))) {
+    "main (nhánh chính ở root: $branch) có thay đổi chưa commit hoặc merge dở."
+  }
+  $parent = Join-Path $root '.crew/worktrees'
+  if (Test-Path -LiteralPath $parent) {
+    foreach ($dir in Get-ChildItem -LiteralPath $parent -Directory -Force) {
+      if ($dir.Name -notmatch '^w(\d+)$') { continue }
+      $workerNumber = [int]$Matches[1]
+      if (@($tasks | Where-Object { [int]$_.worker -eq $workerNumber }).Count) { continue }
+      $dirty = Invoke-GitQuiet -C $dir.FullName status --porcelain
+      if ($dirty.Code -eq 0 -and $dirty.Text) { "$($dir.Name) bẩn mà không có task: $($dir.FullName)" }
+    }
+  }
+  $slug = Get-CrewName $root $cfg
+  $crewNames = '^' + [regex]::Escape($slug) + '-(planner|w\d+|rev)$'
+  foreach ($term in @($terminals)) {
+    if ($term -and $term.cwd -and $null -ne $term.agent -and $term.name -notmatch $crewNames -and (Test-SamePath $term.cwd $root)) {
+      "agent ở root trong terminal '$($term.name)' không thuộc crew — có thể có planner thứ hai."
+    }
+  }
+  if (Get-CopySource $root $cfg) { 'project là bản chép (bản sao) của crew còn tồn tại; chạy crew init -Name <tên mới>.' }
+  else { $clash = Get-NameConflict $root $cfg; if ($clash) { $clash } }
+}
+
 function Invoke-Hot {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
+  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Write-Host "crew: CẢNH BÁO: $($mv.Hint)" -ForegroundColor Yellow }
   Write-Host "== crew:$slug  review=$($cfg.review) access=$($cfg.access) planner=$($cfg.planner) workers=$($cfg.workers -join ',') rev=$($cfg.rev)"
   Write-Host "== git worktree list"; git -C $root worktree list
   Write-Host "== terminal"
-  Get-LiveTerminals | Where-Object { $_.name -like "$slug-*" } |
+  $terminals = try { @(Get-LiveTerminals) } catch { Write-Host "crew: CẢNH BÁO: $($_.Exception.Message) — không liệt kê được terminal." -ForegroundColor Yellow; @() }
+  $foreign = @()
+  $terminals | Where-Object { $_.name -like "$slug-*" } |
     ForEach-Object {
+      $why = Get-ForeignTermError $_.name $_ $root
+      if ($why) { $foreign += $why; return ("{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, 'KHÁC PROJECT', $_.cwd) }
       $st = Get-TermStatus $_
       $status = if ($_.status) { $_.status } else { '-' }
       $app = if ($st.App) { $st.App } else { $_.agent }
@@ -829,6 +1277,7 @@ function Invoke-Hot {
       }
       "{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, $status, $_.agent
     } | Write-Host
+  foreach ($w in $foreign) { Write-Host "crew: CẢNH BÁO: $w" -ForegroundColor Yellow }
   $tasks = Get-Tasks $root
   Write-Host "== worker (worktree cố định)"
   $wi = 0
@@ -848,6 +1297,11 @@ function Invoke-Hot {
       $rv = if ($t.review) { " review=$($t.review)" } else { '' }
       ("{0,-20} w{1} {2,-6} {3} (+{4} commit) {5}" -f $t.name, $t.worker, $t.agent, $t.branch, $ahead, $t.worktree) + $rv | Write-Host
     }
+  }
+  $warnings = @(Get-HotWarnings $root $cfg $tasks $terminals)
+  if ($warnings.Count) {
+    Write-Host '== Cảnh báo' -ForegroundColor Yellow
+    foreach ($warning in $warnings) { Write-Host "- $warning" -ForegroundColor Yellow }
   }
 }
 
@@ -972,14 +1426,90 @@ function Get-PendingReview([string]$root, $tasks) {
   , @(@($list) | Sort-Object At, I | ForEach-Object { $_.T })
 }
 
+# ---- project đã đổi tên / chuyển thư mục ----
+# Chỗ DUY NHẤT nhận diện (repair sửa; up/task/send/hot chỉ báo). Đã chuyển khi có root cũ R ≠ $root mà R KHÔNG còn
+# .crew/config.json (mất hẳn / không còn là project), lấy từ: sổ ghi chính tên này (cùng idKey) cho R; hoặc terminal
+# <tên>-planner|-w<N>|-rev nằm trong space spcrew<idKey> có cwd thuộc R. Luôn cần khớp TÊN: trùng idKey thuần (space
+# spcrew<idKey> của project khác, kể cả đã xóa) không phải chuyển. Space cũ chỉ được kê khi folder thuộc R đã xác nhận.
+# R còn .crew/config.json ⇒ bản chép (việc của crew-copy), KHÔNG coi là chuyển. Không dùng Get-NameConflict (gộp cả trùng idKey).
+# $liveTerms/$spaces: $null ⇒ tự đọc hc ls / herdr-app ls; đọc lỗi ⇒ bỏ lớp đó (sổ vẫn kiểm).
+# Trả @{ Moved; OldRoot; OldRoots; Terms (terminal live của crew ở root cũ); Spaces (space của crew ở root cũ); Hint }.
+# up/task/send/hot gọi trong try: kiểm này chỉ để gợi ý crew repair, lỗi khi kiểm không chặn lệnh.
+function Get-MoveInfo([string]$root, $cfg, $liveTerms = $null, $spaces = $null) {
+  $name = Get-CrewName $root $cfg; $key = Get-CrewIdKey $root $cfg; $sid = (Get-Ids $key).Space
+  # root project của một cwd/folder: <R>/.crew/worktrees/w<N> ⇒ R, ngược lại chính nó
+  $rootOf = {
+    param($p)
+    $k = ConvertTo-RootKey $p; $wts = Split-Path $k -Parent; $crew = Split-Path $wts -Parent
+    if ((Split-Path $k -Leaf) -match '^w\d+$' -and (Split-Path $wts -Leaf) -eq 'worktrees' -and (Split-Path $crew -Leaf) -eq '.crew') { return (Split-Path $crew -Parent) }
+    $k
+  }
+  $gone = { param($r) $r -and -not (Test-SamePath $r $root) -and -not (Test-Path -LiteralPath (Join-Path $r '.crew/config.json')) }
+  $old = [Collections.Generic.List[string]]::new()
+  $isOld = { param($r) [bool]@($old | Where-Object { Test-SamePath $_ $r }).Count }
+  $add = { param($r) if ((& $gone $r) -and -not (& $isOld $r)) { $old.Add((ConvertTo-RootKey $r)) } }
+
+  $reg = Read-ProjectRegistry
+  if ($reg.Ok -and $reg.Map.Contains($name) -and $reg.Map[$name].IdKey -ceq $key) { & $add ([string]$reg.Map[$name].Root) }
+  if ($null -eq $liveTerms) { $liveTerms = try { @(Get-LiveTerminals) } catch { @() } }
+  if ($null -eq $spaces) { $spaces = try { $h = Get-HerdrSpaces; if ($h.Ok) { @($h.Spaces) } else { @() } } catch { @() } }
+  $mine = @($spaces | Where-Object { $_ -and [string]$_.id -ceq $sid })
+  $inSpace = @(foreach ($sp in $mine) { foreach ($tb in @($sp.tabs)) { foreach ($tm in @($tb.terminals)) { if ($tm) { [string]$tm.terminal } } } })
+  $named = @($liveTerms | Where-Object { $_ -and $_.state -eq 'live' -and $_.cwd -and [string]$_.name -cmatch "^$([regex]::Escape($name))-(planner|rev|w\d+)$" })
+  foreach ($t in $named) { if ($inSpace -contains [string]$t.address) { & $add (& $rootOf ([string]$t.cwd)) } }
+
+  $terms = @($named | Where-Object { & $isOld (& $rootOf ([string]$_.cwd)) })
+  $oldSpaces = @($mine | Where-Object { $_.folder -and (& $isOld (& $rootOf ([string]$_.folder))) })
+  $first = if ($old.Count) { $old[0] } else { '' }
+  @{ Moved = [bool]$old.Count; OldRoot = $first; OldRoots = @($old); Terms = $terms; Spaces = $oldSpaces
+    Hint = $(if ($first) { "project đã chuyển từ $first, chạy crew repair" } else { '' }) }
+}
+
+# Đường dẫn $p nằm trong root cũ $old ⇒ cùng vị trí dưới $root mới; ngoài ⇒ giữ nguyên. Hàm thuần.
+function Get-MovedPath([string]$p, [string]$old, [string]$root) {
+  if (-not $p) { return $p }
+  $k = ConvertTo-RootKey $p; $o = ConvertTo-RootKey $old
+  if (Test-SamePath $k $o) { return (ConvertTo-RootKey $root) }
+  $cmp = if ($IsWindows -or $PSVersionTable.PSEdition -ne 'Core') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+  foreach ($sep in '\', '/') {
+    if ($k.StartsWith($o.TrimEnd('\', '/') + $sep, $cmp)) { return [IO.Path]::GetFullPath((Join-Path $root $k.Substring($o.TrimEnd('\', '/').Length + 1))) }
+  }
+  $p
+}
+
 # Lõi crew repair (không Die). $ops = bảng hc như New-HcOps + Up (bật terminal thiếu = logic crew up).
 # Trả @{ Done; Human; Sent } — Human rỗng ⇒ không còn gì cần người quyết.
-# Không bao giờ: xóa nhánh, bỏ thay đổi chưa commit, xóa bản ghi task, kill terminal live.
+# Không bao giờ: xóa nhánh, bỏ thay đổi chưa commit, xóa bản ghi task, kill terminal live — trừ terminal của crew này
+# đang chạy ở root cũ khi project đã chuyển (Get-MoveInfo): kill rồi bật lại ở root mới, giao lại task dở.
 function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [bool]$dry, $ops) {
   $done = [Collections.Generic.List[string]]::new(); $human = [Collections.Generic.List[string]]::new(); $sent = @()
   $will = { param($m) if ($dry) { $done.Add("(sẽ làm) $m") } else { $done.Add($m) } }
   $tasks = Get-Tasks $root
   $workers = @($cfg.workers)
+
+  # --- chẩn đoán chuyển thư mục (Get-MoveInfo; $ops.List/Spaces thiếu ⇒ chỉ kiểm sổ) ---
+  $listErr = ''
+  $lt = if ($ops.List) { try { @(& $ops.List) } catch { $listErr = "hc ls lỗi ($($_.Exception.Message))"; @() } } else { @() }
+  $hs = if ($ops.Spaces) { & $ops.Spaces } else { @{ Ok = $true; Spaces = @() } }
+  if ($listErr) { return @{ Done = @(); Human = @("$listErr — không biết terminal nào đang chạy; repair dừng, không kill/đóng space/bật lại/gửi. Kiểm hc (hc ls) rồi chạy lại crew repair."); Sent = @() } }
+  $mv = Get-MoveInfo $root $cfg $lt @($hs.Spaces)
+  # đọc lại hc ls (địa chỉ terminal live): lỗi ⇒ $null (không rõ ai còn live)
+  $readLive = { if (-not $ops.List) { return $null }; try { , @(@(& $ops.List) | Where-Object { $_ -and $_.state -eq 'live' } | ForEach-Object { [string]$_.address }) } catch { $null } }
+  $killNames = @($mv.Terms | ForEach-Object { [string]$_.name })
+  if ($mv.Moved) {
+    Write-Host "== chuyển thư mục"
+    Write-Host "project đã chuyển: $($mv.OldRoots -join ', ') -> $root"
+    if (-not $hs.Ok) { Write-Host "cảnh báo: $($hs.Error) — không kiểm được space herdr ở root cũ." }
+    foreach ($t in $mv.Terms) { Write-Host "terminal $($t.name) ($($t.address)) cwd $($t.cwd) — root cũ" }
+    foreach ($sp in $mv.Spaces) { Write-Host "space $($sp.id) folder $($sp.folder) — root cũ" }
+    # tasks.json trỏ root cũ ⇒ sửa trong bộ nhớ (chẩn đoán dưới dùng đường dẫn mới cho cả DryRun); chạy thật mới ghi file
+    $movedTasks = @()
+    foreach ($t in $tasks) {
+      $nw = [string]$t.worktree
+      foreach ($o in $mv.OldRoots) { $nw = Get-MovedPath $nw $o $root }
+      if ($nw -ne [string]$t.worktree) { $movedTasks += "$($t.name): $($t.worktree) -> $nw"; $t.worktree = $nw }
+    }
+  }
 
   # --- chẩn đoán terminal ---
   $roles = @()
@@ -987,21 +1517,116 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
   for ($i = 1; $i -le $workers.Count; $i++) { $roles += @{ Role = "w$i"; Kind = $workers[$i - 1]; N = $i } }
   if ($cfg.rev -ne 'none') { $roles += @{ Role = 'rev'; Kind = $cfg.rev } }
   Write-Host "== terminal"
+  $foreign = @()
   foreach ($r in $roles) {
     $r.Term = "$slug-$($r.Role)"
-    $r.Mode = (Get-WorkerMode (& $ops.Get $r.Term) $r.Kind).Mode
+    # live ở root cũ ⇒ sẽ kill rồi bật lại như terminal thiếu (DryRun và chạy thật như nhau)
+    if ($killNames -contains $r.Term) { $r.Mode = 'dead'; $r.Live = $false; Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, 'live ở root cũ — kill, bật lại'); continue }
+    $ti = & $ops.Get $r.Term
+    $why = Get-ForeignTermError $r.Term $ti $root
+    if ($why) { $foreign += $why; Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, "KHÁC PROJECT (cwd $($ti.cwd))"); continue }
+    $r.Mode = (Get-WorkerMode $ti $r.Kind).Mode
     $r.Live = $r.Mode -ne 'dead'
     $note = @{ dead = 'thiếu'; agent = 'live, đúng agent'; wrong = 'live, SAI agent'; shell = 'live, shell (agent đã thoát)'; blocked = 'live, chờ duyệt' }[$r.Mode]
     Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, $note)
   }
+  # trùng tên với project khác ⇒ không sửa, không bật, không gửi gì
+  if ($foreign.Count) { return @{ Done = @(); Human = @($foreign | ForEach-Object { "$_ Repair dừng, không sửa gì." }); Sent = @() } }
+
+  # --- sửa: project đã chuyển (trước prune: prune sẽ xóa metadata worktree đang trỏ đường dẫn cũ) ---
+  # Thứ tự an toàn: git worktree repair (bước CHẶN, xác nhận đủ w<N> ở root mới) → tasks.json → sổ → kill → xác nhận chết
+  # → đọc lại herdr-app ls + hc ls → đóng space cũ → (sau) prune/crew up. Không xóa nhánh/thay đổi/bản ghi task.
+  $blockUp = ''
+  if ($mv.Moved) {
+    $wts = @(@(for ($i = 1; $i -le $workers.Count; $i++) { Get-WorkerTree $root $i }) + @($tasks | ForEach-Object { [string]$_.worktree }) |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { ConvertTo-RootKey $_ } | Select-Object -Unique)
+    if ($wts.Count) {
+      & $will "git worktree repair $($wts -join ' ')"
+      if (-not $dry) {
+        $r = Invoke-GitQuiet -C $root worktree repair @wts
+        $after = Get-WorktreeMeta $root
+        $bad = @($wts | Where-Object { $m = $after[[IO.Path]::GetFullPath($_).TrimEnd('\', '/')]; -not $m -or $m.Prunable })
+        if ($r.Code -ne 0 -or $bad.Count) {
+          $why = if ($r.Code -ne 0) { "lỗi (mã $($r.Code)): $($r.Text)" } else { "xong nhưng git worktree list chưa thấy ở root mới: $($bad -join ', ')" }
+          $quoted = @($wts | ForEach-Object { Quote $_ }) -join ' '
+          $human.Add("git worktree repair $why — repair dừng: không prune, không sửa tasks.json/sổ, không kill/đóng space/bật lại. Tự xử lý: git -C $(Quote $root) worktree repair $quoted; kiểm git -C $(Quote $root) worktree list (KHÔNG chạy git worktree prune trước khi w<N> hiện ở root mới), rồi chạy lại crew repair.")
+          return @{ Done = @($done); Human = @($human); Sent = @() }
+        }
+      }
+    }
+    if ($movedTasks.Count) {
+      & $will "tasks.json: worktree $($movedTasks -join '; ')"
+      if (-not $dry) { Save-Tasks $root $tasks }
+    }
+    $key = Get-CrewIdKey $root $cfg
+    & $will "sổ $(Get-ProjectsFile): $slug -> $root (giữ tên, idKey $key)"
+    if (-not $dry -and -not (Register-CrewName $slug $root $key)) { $human.Add("chưa cập nhật được sổ tên crew cho $root — xem cảnh báo ở trên.") }
+    $killAddr = @($mv.Terms | ForEach-Object { [string]$_.address })
+    foreach ($t in $mv.Terms) {
+      & $will "kill $($t.name) ($($t.address)) đang ở root cũ $($t.cwd) — bật lại ở $root"
+      if (-not $dry) {
+        try { & $ops.Kill ([string]$t.address) } catch { $human.Add("kill $($t.name) lỗi: $($_.Exception.Message)"); $blockUp = "$($t.name) chưa kill được" }
+      }
+    }
+    if (-not $dry -and $killAddr.Count) {
+      $nowLive = & $readLive
+      if ($null -eq $nowLive) { $human.Add('không đọc lại được hc ls sau kill — không xác nhận được terminal root cũ đã tắt.'); $blockUp = 'chưa xác nhận terminal root cũ đã tắt' }
+      else {
+        $still = @($killAddr | Where-Object { $nowLive -contains $_ })
+        if ($still.Count) { $human.Add("terminal root cũ vẫn live sau kill: $($still -join ', ') — xem tay (hc kill <địa chỉ>)."); $blockUp = 'terminal root cũ vẫn live' }
+      }
+    }
+    $liveAddr = @($lt | Where-Object { $_.state -eq 'live' } | ForEach-Object { [string]$_.address })
+    $termsOf = { param($sp) @(foreach ($tb in @($sp.tabs)) { foreach ($tm in @($tb.terminals)) { if ($tm) { [string]$tm.terminal } } }) }
+    $atOld = { param($f) $f -and @($mv.OldRoots | Where-Object { (Get-MovedPath ([string]$f) $_ $root) -ne [string]$f }).Count }
+    $noClose = { param($sp, $why) $human.Add("space $($sp.id) (folder cũ $($sp.folder)) $why — không đóng, không bật lại; đóng tay (herdr-app do space.close --id $($sp.id)) rồi chạy lại crew repair."); Set-Variable blockUp "space $($sp.id) còn ở root cũ" -Scope 1 }
+    foreach ($sp in $mv.Spaces) {
+      # kiểm theo ảnh chụp đầu (dùng chung DryRun + chạy thật)
+      $others = @(& $termsOf $sp | Where-Object { $killAddr -notcontains $_ -and ($listErr -or $liveAddr -contains $_) })
+      if ($others.Count) { & $noClose $sp $(if ($listErr) { "$listErr — không biết terminal nào trong space còn live" } else { "còn terminal khác $($others -join ', ')" }); continue }
+      & $will "đóng space $($sp.id) (folder cũ $($sp.folder)); crew up tạo lại ở $root"
+      if ($dry) { continue }
+      if ($blockUp) { & $noClose $sp "chưa đóng vì $blockUp"; continue }
+      # chạy thật: đọc lại NGAY TRƯỚC Close — space vẫn ở root cũ, không terminal nào trong đó còn live
+      $now = & $ops.Spaces
+      if (-not $now.Ok) { & $noClose $sp "không đọc lại được herdr-app ls ($($now.Error))"; continue }
+      $cur = @($now.Spaces | Where-Object { $_ -and [string]$_.id -ceq [string]$sp.id }) | Select-Object -First 1
+      if (-not $cur) { continue }  # herdr đã tự bỏ space rỗng
+      if (-not (& $atOld $cur.folder)) { & $noClose $sp "giờ có folder $($cur.folder), không còn là root cũ"; continue }
+      $nowLive = & $readLive
+      if ($null -eq $nowLive) { & $noClose $sp 'không đọc lại được hc ls'; continue }
+      $liveIn = @(& $termsOf $cur | Where-Object { $nowLive -contains $_ })
+      if ($liveIn.Count) { & $noClose $sp "còn terminal live $($liveIn -join ', ')"; continue }
+      $r = & $ops.CloseSpace ([string]$sp.id)
+      if ($r.Code -ne 0) { $human.Add("đóng space $($sp.id) lỗi: $($r.Text)"); $blockUp = "space $($sp.id) còn ở root cũ" }
+    }
+  }
 
   # --- chẩn đoán worktree ---
   $meta = Get-WorktreeMeta $root
+  $norm = { param($p) [IO.Path]::GetFullPath($p).TrimEnd('\', '/') }
+  # DryRun khi đã chuyển: chưa chạy git worktree repair nên git -C <w mới> chưa đọc được ⇒ dựng metadata như sau repair
+  # (đường dẫn mới, nhánh lấy từ worktree list); trạng thái bẩn chỉ đọc được sau repair.
+  $sim = $dry -and $mv.Moved
+  if ($sim) {
+    $m2 = @{}
+    foreach ($k in @($meta.Keys)) {
+      $nk = $k; foreach ($o in $mv.OldRoots) { $nk = Get-MovedPath $nk $o $root }
+      $m2[(& $norm $nk)] = @{ Branch = $meta[$k].Branch; Prunable = ($meta[$k].Prunable -and $nk -eq $k) -or -not (Test-Path -LiteralPath $nk) }
+    }
+    $meta = $m2
+  }
   $trees = @{}
+  $planned = @{}  # DryRun: w<N> -> nhánh worktree sẽ có sau các bước sửa của chính lần repair này
   Write-Host "== worktree"
   for ($i = 1; $i -le $workers.Count; $i++) {
-    $s = Get-TreeState $root (Get-WorkerTree $root $i) $meta; $trees[$i] = $s
-    $dirty = if ($s.DirtyCount) { "bẩn ($($s.DirtyCount)): $($s.Dirty -join ', ')$(if ($s.DirtyCount -gt 5) { ', …' })" } elseif ($s.State -eq 'có') { 'sạch' } else { '' }
+    $wt = Get-WorkerTree $root $i; $m = $meta[(& $norm $wt)]
+    if ($sim -and $m -and -not $m.Prunable) {
+      $s = @{ Path = $wt; State = 'có'; Branch = $(if ($m.Branch) { $m.Branch } else { '(detached)' }); Dirty = @(); DirtyCount = 0 }
+      if ($m.Branch) { $planned[$i] = $m.Branch }
+    } else { $s = Get-TreeState $root $wt $meta }
+    $trees[$i] = $s
+    $dirty = if ($s.DirtyCount) { "bẩn ($($s.DirtyCount)): $($s.Dirty -join ', ')$(if ($s.DirtyCount -gt 5) { ', …' })" } elseif ($sim -and $s.State -eq 'có') { '(bẩn/sạch: đọc sau git worktree repair)' } elseif ($s.State -eq 'có') { 'sạch' } else { '' }
     Write-Host ("{0,-4} {1,-5} {2} {3} {4}" -f "w$i", $s.State, $s.Path, $s.Branch, $dirty)
   }
 
@@ -1012,7 +1637,8 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     $hasBranch = (Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$($t.branch)").Code -eq 0
     $ahead = if ($hasBranch) { (Invoke-GitQuiet -C $root rev-list --count "$main..$($t.branch)").Text } else { '-' }
     $role = $roles | Where-Object { $_.N -eq [int]$t.worker } | Select-Object -First 1
-    $wtb = if (Test-Path -LiteralPath $t.worktree) { (Invoke-GitQuiet -C $t.worktree branch --show-current).Text } else { '' }
+    $wtb = if ($sim) { $tr = $trees[[int]$t.worker]; if ($tr -and $tr.State -eq 'có' -and (Test-KeepTask $root $t)) { $tr.Branch } else { '' } }
+    elseif (Test-Path -LiteralPath $t.worktree) { (Invoke-GitQuiet -C $t.worktree branch --show-current).Text } else { '' }
     $info[$t.name] = @{ HasBranch = $hasBranch; Role = $role }
     Write-Host ("{0,-20} w{1} {2} {3} (+{4} commit) worker {5}, worktree {6}" -f $t.name, $t.worker, $t.branch,
       $(if ($hasBranch) { 'còn' } else { 'MẤT' }), $ahead, $(if ($role -and $role.Live) { 'live' } else { 'thiếu' }),
@@ -1038,7 +1664,6 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     }
   }
   $stray = $false
-  $planned = @{}  # DryRun: w<N> -> nhánh sẽ switch sau khi tạo lại
   foreach ($i in @($trees.Keys | Sort-Object)) {
     $s = $trees[$i]
     $task = $tasks | Where-Object { [int]$_.worker -eq $i -and (Test-KeepTask $root $_) } | Select-Object -First 1
@@ -1070,6 +1695,8 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
   $started = @()
   if ($dead.Count) {
     if ($stray) { $human.Add("chưa bật terminal thiếu ($(@($dead | ForEach-Object { $_.Term }) -join ', ')): còn thư mục w<N> lạ, crew up sẽ lỗi.") }
+    elseif ($blockUp) { $human.Add("chưa bật terminal thiếu ($(@($dead | ForEach-Object { $_.Term }) -join ', ')): $blockUp, crew up sẽ lỗi.") }
+    elseif (-not $dry -and $ops.List -and $null -eq (& $readLive)) { $human.Add("chưa bật terminal thiếu ($(@($dead | ForEach-Object { $_.Term }) -join ', ')): không đọc lại được hc ls ngay trước crew up.") }
     else {
       & $will "bật terminal thiếu qua crew up: $(@($dead | ForEach-Object { $_.Term }) -join ', ')"
       if ($dry) { $started = $dead }  # DryRun: coi như bật được, không gọi Up
@@ -1143,11 +1770,27 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
   @{ Done = @($done); Human = @($human); Sent = $sent }
 }
 
+# Bảng hc/herdr THẬT cho crew repair: New-HcOps + Up + (cho project đã chuyển) terminal live, space herdr, kill, đóng space.
+# List ném lỗi khi hc ls lỗi (Get-LiveTerminals) — repair coi lỗi là dừng, không Kill/Close/Up/Send.
+function New-RepairOps {
+  $ops = New-HcOps; $ops.Up = { Invoke-Up }
+  # cho Get-MoveInfo + sửa project đã chuyển: terminal live, space herdr, kill, đóng space cũ
+  $ops.List = { @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) }
+  $ops.Spaces = { Get-HerdrSpaces }
+  $ops.Kill = { param($address) Stop-Term $address }
+  $ops.CloseSpace = {
+    param($id)
+    $out = & { $ErrorActionPreference = 'Continue'; herdr-app do space.close --id $id --confirmed true 2>&1 | Out-String }
+    @{ Code = $LASTEXITCODE; Text = "$out".Trim() }
+  }
+  $ops
+}
+
 function Invoke-Repair {
   $root = Get-MainRoot (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $main = Get-MainBranch $root
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $main = Get-MainBranch $root
   $script:Path = $root  # crew up dựng theo repo chính, kể cả khi gọi từ worktree
-  $ops = New-HcOps; $ops.Up = { Invoke-Up }
+  $ops = New-RepairOps
   $res = Invoke-RepairCore $root $cfg $slug $main ([bool]$DryRun) $ops
   Write-Host "== kết luận$(if ($DryRun) { ' (DryRun: không ghi git, không bật, không gửi)' })"
   if ($res.Done.Count) { foreach ($d in $res.Done) { Write-Host "  đã làm: $d" } } else { Write-Host '  không có gì phải sửa.' }
@@ -1213,15 +1856,20 @@ function Resolve-LimitRows($rows) {
 
 function Invoke-Limits {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $tasks = Get-Tasks $root
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
   $rows = @()
   if ($cfg.planner -ne 'none') { $rows += @{ Name = "$slug-planner"; Agent = $cfg.planner } }
   $wi = 0
   foreach ($kind in @($cfg.workers)) { $wi++; $rows += @{ Name = "$slug-w$wi"; Agent = $kind } }
   if ($cfg.rev -ne 'none') { $rows += @{ Name = "$slug-rev"; Agent = $cfg.rev } }
-  $live = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' } | ForEach-Object { $_.name })
+  $liveTerms = try { @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Say "cảnh báo: $($_.Exception.Message) — không đọc được terminal nào."; @() }
+  $live = @($liveTerms | ForEach-Object { $_.name })
+  $foreign = @()
   foreach ($r in $rows) {
     $r.Live = $live -contains $r.Name
+    # terminal cùng tên của project khác: không đọc số của nó, chỉ cảnh báo
+    $why = if ($r.Live) { Get-ForeignTermError $r.Name ($liveTerms | Where-Object { $_.name -eq $r.Name } | Select-Object -First 1) $root } else { '' }
+    if ($why) { $foreign += $why; $r.Live = $false }
     $r.Info = if ($r.Live) { Get-LimitInfo ((hc read $r.Name --lines 6 2>$null) -join "`n") } else { $null }
   }
   $fmt = '{0,-18} {1,-7} {2,-8} {3,-10} {4,-9} {5}'
@@ -1244,6 +1892,7 @@ function Invoke-Limits {
   }
   foreach ($w in $warned) { Write-Host "⚠ tuần ≥$(Get-LimitWeekWarn)%: $w — báo chủ dự án trước khi giao cho agent này." -ForegroundColor Yellow }
   Write-Host 'Limit tính theo tài khoản: mọi pane cùng agent dùng chung số. Mốc chỉ theo 5h; tuần chỉ cảnh báo.'
+  foreach ($w in $foreign) { Write-Host "crew: CẢNH BÁO: $w (hiện 'tắt', không đọc số)" -ForegroundColor Yellow }
 }
 
 # ---------------- clean ----------------
@@ -1327,7 +1976,7 @@ function Reset-WorkerTree([string]$root, $task, [string]$main, [bool]$force) {
 function Invoke-Clean {
   if (-not $Name) { Die "dùng: crew clean <tên> [-Force]" }
   $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $ids = Get-Ids $slug
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $ids = Get-Ids (Get-CrewIdKey $root $cfg)
   $tasks = Get-Tasks $root; $t = $tasks | Where-Object { $_.name -eq $Name } | Select-Object -First 1
   if (-not $t) { Die "task $Name không có trong .crew/tasks.json — không dọn." }
 
@@ -1493,15 +2142,28 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
 }
 
 # Gửi tin tới terminal, dùng chung cho crew send/review. Lỗi ⇒ Die (exit 1).
-function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false) {
-  $r = Invoke-SendFlow $term $text (New-HcOps) '' 6 $raw
+# $root khác rỗng ⇒ terminal live phải thuộc project đó (Get-ForeignTermError), sai chủ ⇒ Die trước khi gửi.
+function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '') {
+  $ops = New-HcOps
+  if ($root) {
+    $why = Get-ForeignTermError $term (& $ops.Get $term) $root
+    if ($why) { Die "$why Không gửi." }
+  }
+  $r = Invoke-SendFlow $term $text $ops '' 6 $raw
   if (-not $r.Ok) { Die $r.Message }
   Say $r.Message
 }
 
 function Invoke-Send {
   if (-not $Name -or -not $PromptFile) { Die 'dùng: crew send <terminal> "<tin>" [-Raw]' }
-  Send-CrewMessage $Name $PromptFile $Raw.IsPresent
+  # gọi trong repo crew và terminal mang tên crew này ⇒ kiểm chủ; tên khác / ngoài repo ⇒ gửi như cũ
+  $root = Get-MainRoot (Get-Location).Path
+  $guard = ''
+  if ($root -and (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) {
+    if ($Name -like "$(Get-CrewName $root (Get-Config $root))-*") { $guard = $root }
+    if ($guard) { try { $mv = Get-MoveInfo $root (Get-Config $root) } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint } }
+  }
+  Send-CrewMessage $Name $PromptFile $Raw.IsPresent $guard
 }
 
 # Repo chính, kể cả khi gọi từ trong worktree: thư mục cha của git common dir.
@@ -1536,7 +2198,7 @@ function Invoke-Review {
   $names = @($NameList)
   if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun]' }
   $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die 'chạy trong repo của crew.' }
-  $cfg = Get-Config $root; $slug = Get-Slug $root; $tasks = Get-Tasks $root
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
   $main = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
   if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." }
   $sel = @(foreach ($n in $names) {
@@ -1547,7 +2209,7 @@ function Invoke-Review {
   $rl = Get-ReviewLine $root $main $sel $cfg.review
   if ($rl.Error) { Die $rl.Error }
   if ($DryRun) { Write-Host $rl.Msg; return }
-  Send-CrewMessage "$slug-rev" $rl.Msg
+  Send-CrewMessage "$slug-rev" $rl.Msg $false $root
   # gửi được ⇒ đánh dấu chờ review (crew repair giao lại khi Rev bị đóng giữa chừng); +i ms giữ thứ tự gửi
   $now = [DateTime]::UtcNow
   for ($i = 0; $i -lt $sel.Count; $i++) {

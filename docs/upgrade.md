@@ -83,3 +83,5 @@ File không tồn tại thì dùng mặc định; JSON hỏng hoặc giá trị 
 trước khi sửa dự án, lỗi nêu khóa sai và giá trị cho phép. `crew init` không tự tạo file
 cấu hình cá nhân. Cấu hình này nằm ngoài repo, chỉ áp dụng khi init: init chép đội vào
 `.crew/config.json` của dự án, upgrade không đổi thiết lập đó.
+
+`.crew/config.json` còn có `"name"`: tên crew của dự án (tiền tố terminal `<tên>-planner`/`-w<N>`/`-rev`), chốt lúc init và ghi sổ `~/.crewline/projects.json`. Cạnh đó là `"idKey"`: khóa id space/tab herdr (`spcrew<idKey>`), mã hóa đơn ánh từ tên (`z`→`zz`, `-`→`zd`: `my-app`→`myzdapp`, `myapp`→`myapp`) để hai crew không dùng chung space. Dự án cũ thiếu `name`/`idKey`: `crew upgrade` ghi `name` = tên đang dùng và `idKey` = khóa cũ (tên bỏ `-`), nên không đổi tên terminal hay space/tab đang chạy; khóa cũ trùng project khác thì `crew up`/`doctor` báo; `-DryRun` chỉ in. Đổi tên: `crew init -Name <tên>` rồi `crew up` (terminal tên cũ không tự tắt).

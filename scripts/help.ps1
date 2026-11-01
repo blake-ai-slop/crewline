@@ -14,9 +14,9 @@ $commands = @(
     Examples = @('crew doctor')
   }
   @{
-    Name = 'init'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew init [-Path .] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]'; Short = 'tạo context và cấu hình project'
-    Details = @('Tạo context/, khối hướng dẫn agent và .crew/config.json; giữ file riêng, sao lưu trước khi sửa.', '-Path chọn project; -Team chọn mẫu đội; -Review chọn cấp review; -Access chọn quyền agent.', 'Thư mục chưa có git sẽ hỏi tạo; -GitInit đồng ý tạo git và commit đầu. -NoCommit bỏ commit khung.', 'Đội ưu tiên cờ dòng lệnh, rồi config cá nhân, rồi standard; quyền mặc định work, review lean.')
-    Examples = @('crew init', 'crew init -Path D:/Projects/demo -Team solo -GitInit -NoCommit')
+    Name = 'init'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew init [-Path .] [-Name <tên>] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]'; Short = 'tạo context và cấu hình project'
+    Details = @('Tạo context/, khối hướng dẫn agent và .crew/config.json; giữ file riêng, sao lưu trước khi sửa.', '-Path chọn project; -Team chọn mẫu đội; -Review chọn cấp review; -Access chọn quyền agent.', 'Thư mục chưa có git sẽ hỏi tạo; -GitInit đồng ý tạo git và commit đầu. -NoCommit bỏ commit khung.', 'Đội ưu tiên cờ dòng lệnh, rồi config cá nhân, rồi standard; quyền mặc định work, review lean.', 'Tên crew (tiền tố terminal <tên>-planner/-w<N>/-rev) chốt vào "name" của .crew/config.json và sổ ~/.crewline/projects.json; trùng project khác thì tự thêm -2, -3…', '-Name <tên> đặt tên crew: a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng -.', 'Chép thư mục project: crew init -Name <tên mới> dọn tasks.json và worktree chép theo chưa đăng ký trong git; không có -Name sẽ dừng.')
+    Examples = @('crew init', 'crew init -Name shop-web', 'crew init -Path D:/Projects/demo -Team solo -GitInit -NoCommit')
   }
   @{
     Name = 'upgrade'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew upgrade [-Path .] [-DryRun] [-NoCommit] [-Force]'; Short = 'cập nhật skeleton context'
@@ -30,7 +30,7 @@ $commands = @(
   }
   @{
     Name = 'repair'; Group = 'Dựng đội'; Syntax = 'crew repair [-Path .] [-DryRun]'; Short = 'khôi phục terminal và bàn worker thiếu'
-    Details = @('Chẩn đoán terminal, worktree w<N> và task của project -Path; -DryRun chỉ xem trước.', 'Sửa phần an toàn: prune worktree hỏng, tạo lại w<N>, bật terminal thiếu.', 'Worker vừa bật lại có task dở sẽ nhận lệnh tiếp tục; không xóa nhánh, thay đổi hay bản ghi.', 'Exit 1 nếu còn việc cần bạn quyết; đọc thông báo và xử lý trước khi chạy lại.')
+    Details = @('Chẩn đoán terminal, worktree w<N> và task của project -Path; -DryRun chỉ xem trước.', 'Sửa phần an toàn: prune worktree hỏng, tạo lại w<N>, bật terminal thiếu.', 'Worker vừa bật lại có task dở sẽ nhận lệnh tiếp tục; không xóa nhánh, thay đổi hay bản ghi.', 'repair cũng xử lý project đã đổi tên/chuyển thư mục (git worktree repair, tasks.json, sổ, bật lại terminal).', 'Exit 1 nếu còn việc cần bạn quyết; đọc thông báo và xử lý trước khi chạy lại.')
     Examples = @('crew repair -DryRun', 'crew repair')
   }
   @{
@@ -40,7 +40,7 @@ $commands = @(
   }
   @{
     Name = 'hot'; Group = 'Giao việc'; Syntax = 'crew hot [-Path .]'; Short = 'xem worktree, terminal và task'
-    Details = @('Hiện cấu hình đội, git worktree, terminal và task đang chạy tại project -Path.', 'Dùng khi tiếp quản phiên hoặc theo dõi tiến độ; terminal thiếu thì xem crew repair.')
+    Details = @('Hiện cấu hình đội, git worktree, terminal và task đang chạy tại project -Path.', 'Khối Cảnh báo hiện khi main chưa commit/merge dở, worker bẩn không có task, agent lạ ở root (có thể có planner thứ hai), hoặc project là bản chép.', 'Dùng khi tiếp quản phiên hoặc theo dõi tiến độ; terminal thiếu thì xem crew repair.')
     Examples = @('crew hot', 'crew hot -Path D:/Projects/demo')
   }
   @{

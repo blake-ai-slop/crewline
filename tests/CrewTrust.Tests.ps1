@@ -1,6 +1,7 @@
 ﻿# AST + hc giả; không gọi terminal thật.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot'
+$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot',
+  'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -97,7 +98,10 @@ Describe 'crew up với terminal giả' {
     $script:Path = $TestDrive; $script:Restart = ''; $script:Force = $false
     function Get-Root($p) { $p }
     function Get-Config($p) { [pscustomobject]@{ planner = 'none'; rev = 'none'; workers = @('claude', 'codex'); access = 'full' } }
-    function Get-Slug($p) { 'demo' }
+    function Get-CrewName($p, $c) { 'demo' }
+    function Get-NameConflict($p, $c) { '' }
+    function Get-CrewIdKey($p, $c) { 'demo' }
+    function Get-HerdrSpaces { @{ Ok = $true; Spaces = @() } }
     function Get-MainBranch($p) { 'main' }
     function Get-Ids($s) { @{ Space = 's'; Workers = { param($n) "w$n" } } }
     function Get-LiveTerminals { @([pscustomobject]@{ name = 'demo-old'; state = 'live' }) }
@@ -137,8 +141,10 @@ Describe 'crew hot đọc màn hình một lần cho agent idle/blocked' {
     $script:Path = $TestDrive
     function Get-Root($p) { $p }
     function Get-Config($p) { [pscustomobject]@{ workers = @(); planner = 'none'; rev = 'none'; access = 'full'; review = 'lean' } }
-    function Get-Slug($p) { 'demo' }
+    function Get-CrewName($p, $c) { 'demo' }
+    function Get-NameConflict($p, $c) { '' }
     function Get-Tasks($p) { ,@() }
+    function Get-HotWarnings { @() } # Ca này chỉ kiểm số lần đọc trust; cảnh báo được kiểm riêng.
     function git { }
     function Get-LiveTerminals {
       @(

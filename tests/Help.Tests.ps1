@@ -15,6 +15,12 @@ function Get-HelpParameters([string]$File) {
 }
 
 Describe 'crew help' {
+  It 'hướng dẫn bản chép, chuyển thư mục và cảnh báo hot' {
+    (Invoke-HelpPage 'init').Text | Should Match 'Chép thư mục.*crew init -Name'
+    (Invoke-HelpPage 'repair').Text | Should Match 'đổi tên/chuyển thư mục.*git worktree repair, tasks.json, sổ, bật lại terminal'
+    (Invoke-HelpPage 'hot').Text | Should Match 'Cảnh báo.*planner thứ hai'
+  }
+
   It 'dispatch crew help dùng help.ps1 thật cho danh sách, repair và topic lạ' {
     $crew = Join-Path $repo 'scripts/crew.ps1'
     $list = & pwsh -NoProfile -File $crew help 2>&1
@@ -65,7 +71,7 @@ Describe 'crew help' {
   It 'ghi đủ cờ theo hợp đồng, không bỏ sót khi thêm chi tiết' {
     $expected = @{
       task = @('Worker', 'Review'); up = @('Path', 'Restart', 'Force'); clean = @('Force')
-      init = @('Path', 'Team', 'Review', 'Access', 'GitInit', 'NoCommit')
+      init = @('Path', 'Name', 'Team', 'Review', 'Access', 'GitInit', 'NoCommit')
       upgrade = @('Path', 'DryRun', 'NoCommit', 'Force'); review = @('DryRun'); send = @('Raw')
       repair = @('Path', 'DryRun'); hot = @('Path'); limits = @('Path'); check = @('Path')
     }

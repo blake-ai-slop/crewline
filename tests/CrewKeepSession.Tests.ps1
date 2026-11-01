@@ -4,7 +4,8 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [r
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
   'Initialize-WorkerTree', 'Get-RestartTargets', 'Get-WorkerStartLine', 'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus',
   'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask',
-  'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord'
+  'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord',
+  'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }

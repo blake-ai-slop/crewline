@@ -127,8 +127,10 @@ Trước khi dùng cần có: herdr-app (đang mở), `claude` và `codex` đã 
 ```powershell
 cd <project>
 crew init          # khung context/, CLAUDE.md + AGENTS.md, .crew/config.json, commit
-crew up            # space crew:<repo> với tab planner / workers / rev
+crew up            # space crew:<tên crew> với tab planner / workers / rev
 ```
+
+**Tên crew.** `crew init` chốt một tên crew cho project vào `"name"` của `.crew/config.json` (từ tên thư mục, bỏ dấu, ≤12 ký tự) và ghi sổ `~/.crewline/projects.json`. Terminal mang tên `<tên>-planner`, `<tên>-w<N>`, `<tên>-rev`. Hai project trùng tên thư mục (`D:\work\app`, `E:\client\app`) sẽ thành `app` và `app-2`, nên chạy nhiều project song song không lẫn terminal. Muốn tự đặt: `crew init -Name <tên>` (a-z 0-9 -). `crew up`/`task`/`send`/`review`/`repair` dừng nếu terminal cùng tên đang chạy ở project khác; chép nguyên thư mục project thì `crew up`/`doctor` báo trùng và gợi ý đổi `name`. Project cũ chưa có `name` giữ tên cũ; `crew upgrade` ghi tên đó vào config.
 
 Sau đó sang tab **planner** và nói bằng lời việc muốn làm. Planner sẽ hỏi để điền `context/PROJECT.md`, chia việc, trình bảng chia cho bạn duyệt, rồi giao task:
 
@@ -142,7 +144,7 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 |---|---|
 | `crew doctor` | kiểm herdr/hc, agent, git identity, template |
 | `crew setup` | chọn đội, agent, số worker, Rev, review và quyền mặc định cá nhân |
-| `crew init [-Team standard\|solo\|large] [-Review lean\|fast\|full] [-Access work\|wide] [-GitInit] [-NoCommit]` | dựng khung, giữ nguyên file đã có, sao lưu `<file>.bak-<ngày>` trước khi sửa |
+| `crew init [-Name <tên>] [-Team standard\|solo\|large] [-Review lean\|fast\|full] [-Access work\|wide] [-GitInit] [-NoCommit]` | dựng khung, giữ nguyên file đã có, sao lưu `<file>.bak-<ngày>` trước khi sửa |
 | `crew upgrade [-DryRun] [-NoCommit] [-Force]` | cập nhật skeleton context của project, giữ cấu hình riêng |
 | `crew repair [-DryRun]` | chẩn đoán và khôi phục terminal/worktree thiếu, giữ nhánh và task |
 | `crew help [lệnh]` | xem bắt đầu nhanh, danh sách lệnh hoặc hướng dẫn chi tiết |
@@ -150,7 +152,7 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 | `crew up -Restart <w1\|…\|planner\|rev\|all>` | bật lại vai được chọn sau khi đổi agent/quyền |
 | `crew task <tên> <file-prompt> [-Worker N] [-Review fast\|lean\|full]` | kiểm bàn worker sạch, tạo nhánh `crew/<tên>` từ main, tự `/clear` hoặc `/new`, chờ rồi gửi prompt với cấp review của task |
 | `crew send <terminal> "<tin>"` | gửi tin, tự Enter nếu tin kẹt ở ô nhập và gửi lệnh trần tới shell |
-| `crew review <task,…> [-DryRun]` | soạn một dòng giao Rev merge các task theo thứ tự, gửi tới `<slug>-rev` |
+| `crew review <task,…> [-DryRun]` | soạn một dòng giao Rev merge các task theo thứ tự, gửi tới `<tên crew>-rev` |
 | `crew check <task>` | đối chiếu diff với "Được sửa", kiểm cú pháp và chạy test phần đó |
 | `crew selfcheck` | cài thử vào HOME giả, kiểm PS 5.1 (chỉ Windows) và init/upgrade trước khi push |
 | `crew hot` | tình hình nhanh cho planner |
@@ -160,6 +162,14 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 ## Lỡ đóng pane hoặc cả space
 
 Code và context nằm trên đĩa và trong git nên không mất khi đóng pane/space. Chạy `crew repair` để chẩn đoán và khôi phục phần an toàn; có thể xem trước bằng `crew repair -DryRun`. Nếu còn việc cần bạn quyết, lệnh sẽ báo để bạn xử lý.
+
+## Nhiều project, đổi tên, chép thư mục
+
+Mỗi project có một crew và tên riêng: `crew init -Name <tên>`. Đổi tên hoặc chuyển thư mục project thì chạy `crew repair` để sửa đường dẫn, sổ và bật lại terminal.
+
+Khi chép nguyên thư mục, chạy `crew init -Name <tên mới>` trong bản chép: crew dọn tasks.json và các thư mục worker chép theo không đăng ký trong git của bản chép, giữ nguyên bản gốc. Nên dùng `git clone` để tạo bản riêng sạch.
+
+Crew không tự chặn commit thẳng main lúc Rev merge, sửa file trong `.crew/worktrees`, hoặc tự mở planner thứ hai. `crew hot` cảnh báo khi root có thay đổi chưa commit/merge dở, worker bẩn không có task, agent lạ chạy ở root hoặc tên crew thuộc bản gốc còn tồn tại.
 
 ## Mẫu đội
 

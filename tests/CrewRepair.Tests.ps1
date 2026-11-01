@@ -4,7 +4,10 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [r
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
-  'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug'
+  'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
+  'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
+  'Get-MoveInfo', 'Get-MovedPath', 'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Get-Ids', 'Read-ProjectRegistry', 'Save-ProjectRegistry',
+  'Test-OtherAlive', 'Get-NameOwner', 'Get-IdKeyOwner', 'Register-CrewName'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -13,6 +16,8 @@ function Die($msg) { throw $msg }
 function Write-Host { }
 $script:HcCalls = 0
 function hc { $script:HcCalls++; throw 'gọi hc thật trong test' }
+# sổ tên crew trong $TestDrive, không bao giờ ~/.crewline thật
+function Get-ProjectsFile { Join-Path $TestDrive 'projects.json' }
 
 $Cfg = [pscustomobject]@{ planner = 'none'; workers = @('claude', 'claude'); rev = 'none'; access = 'work' }
 
@@ -418,7 +423,7 @@ function New-ReviewRepo {
 
 Describe 'crew review ghi reviewSentAt' {
   $script:ReviewSent = [Collections.Generic.List[string]]::new()
-  function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false) { $script:ReviewSent.Add("$term|$text") }
+  function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '') { $script:ReviewSent.Add("$term|$text") }
   BeforeEach { $script:ReviewSent.Clear() }
 
   It 'gửi OK -> tasks.json có reviewSentAt (ISO, theo thứ tự), không đổi trường khác' {
@@ -438,7 +443,7 @@ Describe 'crew review ghi reviewSentAt' {
     }
     $pend = Get-PendingReview $root $tasks
     (@($pend | ForEach-Object { $_.name }) -join ',') | Should Be 'b,a'
-    $script:ReviewSent[0] | Should Be ("$(Get-Slug $root)-rev|" + (Get-ReviewLine $root 'main' $pend 'lean').Msg)
+    $script:ReviewSent[0] | Should Be ("$(Get-LegacySlug $root)-rev|" + (Get-ReviewLine $root 'main' $pend 'lean').Msg)
   }
 
   It '-DryRun -> không gửi, không ghi reviewSentAt' {
