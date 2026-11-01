@@ -63,18 +63,19 @@ planner: crew selfcheck + CHANGELOG → push khi bạn cho phép
 - **Chia đều:** đội có 1–6 worker; việc được chấm S=1 / M=2 / L=3,
   tổng điểm mỗi worker chênh nhau ≤1, số task song song ≤ số worker.
   Bạn duyệt bảng chia trước khi planner giao việc.
-- **Cân theo limit:** lúc sắp giao task, planner chạy `crew limits` để đọc màn hình
-  terminal một lần qua `hc read`, không theo dõi liên tục. Mốc chỉ theo % 5h đã dùng,
+- **Cân theo limit:** lúc sắp giao task, planner chạy `crew limits` để hỏi số trực tiếp
+  từ Codex/Claude một lần, không tốn token, không theo dõi liên tục. Mốc chỉ theo % 5h đã dùng,
   chia 3 cấp: dưới 50% `ok`; 50–69% `theo dõi` (giao bình thường,
   planner đọc lại limit mỗi khi worker báo xong); 70–89% `hạn chế` (không nhận task L,
   chỉ việc nhỏ/vừa, ưu tiên agent khác); từ 90% `dừng` (không nhận task mới trừ khi bạn
   nói rõ "vẫn giao"; đang có task thì planner báo bạn ngay).
   % tuần không vào mốc; tuần ≥90% thì bảng có cảnh báo ⚠ và planner báo bạn trước khi
   giao cho agent đó (không tự chặn). Không đọc được 5h thì mốc là `không rõ`.
-  Codex luôn hiện limit; Claude chỉ đọc được nếu bạn tự bật status line có 5h/tuần,
-  crew không bật hộ. Không đọc được thì hiện `không rõ` và chia theo điểm như cũ.
+  Không hỏi được (thiếu CLI, chưa đăng nhập, đổi format) thì lấy từ màn hình terminal qua `hc read`,
+  bảng ghi `(màn hình, có thể cũ)`. Trên màn hình, Codex luôn hiện limit; Claude chỉ đọc được nếu bạn
+  tự bật status line có 5h/tuần, crew không bật hộ. Cũng không đọc được thì hiện `không rõ` và chia theo điểm như cũ.
   Limit tính theo tài khoản agent: các pane cùng agent dùng chung số (kể cả worker Codex và Rev Codex).
-  Pane hẹp không hiện limit thì `crew limits` lấy số từ pane khác cùng agent.
+  Khi phải lấy từ màn hình mà pane hẹp không hiện limit, `crew limits` lấy số từ pane khác cùng agent.
   Khi tài khoản Claude và Codex lệch limit, planner dồn việc sang agent còn nhiều trong đội trộn cả hai.
 - **Làn nhanh:** gom các task S hoặc dùng `crew task … -Review fast` để giảm lượt review.
 - **Gộp và dọn:** chỉ Rev merge ở repo chính và chạy full test theo cấp review.
@@ -156,7 +157,7 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 | `crew check <task>` | đối chiếu diff với "Được sửa", kiểm cú pháp và chạy test phần đó |
 | `crew selfcheck` | cài thử vào HOME giả, kiểm PS 5.1 (chỉ Windows) và init/upgrade trước khi push |
 | `crew hot` | tình hình nhanh cho planner |
-| `crew limits` | đọc limit một lần: terminal · agent · 5h dùng · tuần dùng · mốc theo 5h (`ok` / `theo dõi` / `hạn chế` / `dừng` / `không rõ`, thêm ⚠ khi tuần ≥90%) · task |
+| `crew limits` | hỏi limit trực tiếp từ Codex/Claude một lần, không tốn token; không hỏi được thì lấy từ màn hình, có thể cũ: terminal · agent · 5h dùng · tuần dùng · mốc theo 5h (`ok` / `theo dõi` / `hạn chế` / `dừng` / `không rõ`, thêm ⚠ khi tuần ≥90%) · reset 5h · task |
 | `crew clean <tên> [-Force]` | về main, xóa nhánh task, giữ agent + thư mục; chỉ dọn task có trong `.crew/tasks.json`, nhánh chưa merge thì từ chối nếu không có `-Force` |
 
 ## Lỡ đóng pane hoặc cả space

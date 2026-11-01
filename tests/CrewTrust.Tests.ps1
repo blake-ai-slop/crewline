@@ -1,7 +1,7 @@
 ﻿# AST + hc giả; không gọi terminal thật.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
 $want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot',
-  'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError'
+  'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-PendingInput'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -135,8 +135,8 @@ Describe 'crew up với terminal giả' {
   }
 }
 
-Describe 'crew hot đọc màn hình một lần cho agent idle/blocked' {
-  It 'hiện chờ trust, bỏ qua working và shell' {
+Describe 'crew hot đọc màn hình một lần cho agent live' {
+  It 'chỉ idle/blocked hiện chờ trust, working có chữ trust không báo nhầm; bỏ qua shell' {
     $script:Messages = [Collections.Generic.List[string]]::new()
     $script:Path = $TestDrive
     function Get-Root($p) { $p }
@@ -158,13 +158,16 @@ Describe 'crew hot đọc màn hình một lần cho agent idle/blocked' {
       param([Parameter(ValueFromPipeline = $true)]$Object)
       process { $script:Messages.Add([string]$Object) }
     }
-    $script:HotOps = New-TrustOps @{ 'demo-w1' = $ClaudeTrust; 'demo-w2' = $CodexTrust }
+    $script:HotOps = New-TrustOps @{ 'demo-w1' = $ClaudeTrust; 'demo-w2' = $CodexTrust; 'demo-w3' = $ClaudeTrust }
     function New-HcOps { $script:HotOps }
     Invoke-Hot
     @($script:Messages | Where-Object { $_ -match 'chờ trust' }).Count | Should Be 2
-    $script:HotOps.State.Reads.Count | Should Be 2
+    @($script:Messages | Where-Object { $_ -match 'demo-w3.*chờ trust' }).Count | Should Be 0
+    ($script:Messages -join "`n") | Should Match 'demo-w3\s+t3\s+working'
+    $script:HotOps.State.Reads.Count | Should Be 3
     $script:HotOps.State.Reads['demo-w1'] | Should Be 1
     $script:HotOps.State.Reads['demo-w2'] | Should Be 1
+    $script:HotOps.State.Reads['demo-w3'] | Should Be 1
     $script:HotOps.State.Keys | Should Be 0
   }
 }

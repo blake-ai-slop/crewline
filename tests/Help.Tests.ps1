@@ -19,6 +19,9 @@ Describe 'crew help' {
     (Invoke-HelpPage 'init').Text | Should Match 'Chép thư mục.*crew init -Name'
     (Invoke-HelpPage 'repair').Text | Should Match 'đổi tên/chuyển thư mục.*git worktree repair, tasks.json, sổ, bật lại terminal'
     (Invoke-HelpPage 'hot').Text | Should Match 'Cảnh báo.*planner thứ hai'
+    (Invoke-HelpPage '').Text | Should Match 'hiện pane có tin chờ'
+    (Invoke-HelpPage '').Text | Should Not Match 'tin chờ/kẹt ô nhập'
+    (Invoke-HelpPage 'hot').Text | Should Match 'Tin kẹt ở ô nhập chưa nhận diện được'
   }
 
   It 'dispatch crew help dùng help.ps1 thật cho danh sách, repair và topic lạ' {
@@ -58,6 +61,13 @@ Describe 'crew help' {
     foreach ($name in $commandNames) { $result.Text | Should Match ("(?m)^  crew " + $name + '\b') }
   }
 
+  It 'crew help send nói rõ agent bận thì tin nằm chờ' {
+    $result = Invoke-HelpPage 'send'
+    $result.ExitCode | Should Be 0
+    $result.Text | Should Match 'agent đang bận'
+    $result.Text | Should Match 'tin nằm chờ'
+  }
+
   foreach ($topic in @('task', 'up', 'clean', 'init', 'upgrade', 'review', 'send')) {
     It "mọi cờ của $topic khớp param thật crew.ps1 qua AST" {
       $parameters = Get-HelpParameters (Join-Path $repo 'scripts/crew.ps1')
@@ -66,6 +76,13 @@ Describe 'crew help' {
       $flags.Count -gt 0 | Should Be $true
       foreach ($flag in $flags) { ($parameters -contains $flag) | Should Be $true }
     }
+  }
+
+  It 'limits nói đúng nguồn số: trực tiếp, không tốn token, màn hình có thể cũ' {
+    $text = (Invoke-HelpPage 'limits').Text
+    $text | Should Match 'trực tiếp từ Codex/Claude'
+    $text | Should Match 'không tốn token'
+    $text | Should Match 'màn hình, có thể cũ'
   }
 
   It 'ghi đủ cờ theo hợp đồng, không bỏ sót khi thêm chi tiết' {

@@ -1,7 +1,7 @@
 ﻿# Test crew send/review/task -Review: trích hàm thuần bằng AST từ crew.ps1, không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord'
+$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $wanted }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -152,6 +152,61 @@ Describe 'Invoke-SendFlow (hc giả)' {
     (Invoke-SendFlow 't' 'Get-Location' $ops).Ok | Should Be $true
     $ops.State.Raw | Should Be $true
   }
+  It 'agent working trước gửi -> Ok, Queued, báo tin nằm chờ, 0 Enter' {
+    $ops = New-FakeOps @((New-Info -status 'working'), (New-Info -status 'working'))
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Ok | Should Be $true
+    $r.Queued | Should Be $true
+    $r.Message | Should Be 'đã gửi -> t nhưng agent đang bận: tin nằm chờ, agent đọc khi xong lượt (xem: crew hot)'
+    $ops.State.Keys | Should Be 0
+  }
+  It 'agent working trước gửi, turn đã tăng sau gửi -> báo như cũ (đã sang lượt mới)' {
+    $ops = New-FakeOps @((New-Info -status 'working' -turn 3), (New-Info -status 'working' -turn 4))
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Message | Should Be 'đã gửi -> t (working)'
+    $r.Queued | Should Be $null
+  }
+  It 'working trước gửi, xong lượt ngay sau gửi, Enter rồi working -> không báo chờ' {
+    $ops = New-FakeOps @((New-Info -status 'working'), (New-Info), (New-Info), (New-Info -status 'working'))
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Ok | Should Be $true
+    $r.Message | Should Be 'đã gửi -> t (working)'
+    $r.Queued | Should Be $null
+    $ops.State.Keys | Should Be 1
+  }
+  It 'working trước gửi, started:true nhưng đã idle -> báo cũ, không Queued' {
+    $ops = New-FakeOps @((New-Info -status 'working'), (New-Info)) '{"started":true}'
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Message | Should Be 'đã gửi -> t (idle)'
+    $r.Queued | Should Be $null
+    $ops.State.Keys | Should Be 0
+  }
+  It 'idle -> working sau gửi -> báo cũ, không Queued' {
+    $ops = New-FakeOps @((New-Info), (New-Info -status 'working'))
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Message | Should Be 'đã gửi -> t (working)'
+    $r.Queued | Should Be $null
+  }
+  It 'shell -> báo cũ, không Queued' {
+    $ops = New-FakeOps @((New-Info -app ''))
+    $r = Invoke-SendFlow 't' 'ls' $ops
+    $r.Message | Should Be 'đã gửi -> t (shell)'
+    $r.Queued | Should Be $null
+  }
+  It 'blocked trước gửi -> vẫn lỗi, 0 Enter, không Queued' {
+    $ops = New-FakeOps @((New-Info -status 'blocked'))
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Ok | Should Be $false
+    $r.Queued | Should Be $null
+    $ops.State.Keys | Should Be 0
+  }
+  It 'chế độ phiên mới không dùng báo chờ' {
+    $ops = New-FakeOps @((New-Info -status 'working'), (New-Info -status 'working'), (New-Info -status 'idle' -turn 4))
+    $ops.Read = { param($t) "❯ /clear`n`n❯ " }
+    $r = Invoke-SendFlow 't' '/clear' $ops 'claude' 3
+    $r.Queued | Should Be $null
+    $r.Message | Should Not Match 'tin nằm chờ'
+  }
   It 'hc send lỗi -> báo lỗi, không Enter' {
     $ops = New-FakeOps @((New-Info)) 'busy' 1
     (Invoke-SendFlow 't' 'tin' $ops).Message | Should Match 'thất bại'
@@ -192,5 +247,18 @@ Describe 'New-TaskRecord (-Review)' {
   It 'không -Review -> không có khóa review' {
     $r = New-TaskRecord 'x' 'crew/x' 'C:\wt' 1 's-w1' 'claude' ''
     ($r.PSObject.Properties.Name -contains 'review') | Should Be $false
+  }
+}
+
+Describe 'Send-CrewMessage (review tới Rev đang bận)' {
+  It 'Rev working -> in báo tin nằm chờ, không Die, 0 Enter' {
+    $script:said = @(); $script:died = $null
+    function Say($m) { $script:said += $m }
+    function Die($m) { $script:died = $m; throw "DIE: $m" }
+    $ops = New-FakeOps @((New-Info -status 'working'), (New-Info -status 'working'))
+    Send-CrewMessage 'demo-rev' 'Rev Gọn: merge crew/a (1111111).' $false '' $ops
+    $script:died | Should Be $null
+    ($script:said -join "`n") | Should Match 'demo-rev nhưng agent đang bận: tin nằm chờ'
+    $ops.State.Keys | Should Be 0
   }
 }

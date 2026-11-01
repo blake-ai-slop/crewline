@@ -39,13 +39,13 @@ $commands = @(
     Examples = @('crew task login .crew/prompts/login.md', 'crew task help .crew/prompts/help.md -Worker 2 -Review fast')
   }
   @{
-    Name = 'hot'; Group = 'Giao việc'; Syntax = 'crew hot [-Path .]'; Short = 'xem worktree, terminal và task'
-    Details = @('Hiện cấu hình đội, git worktree, terminal và task đang chạy tại project -Path.', 'Khối Cảnh báo hiện khi main chưa commit/merge dở, worker bẩn không có task, agent lạ ở root (có thể có planner thứ hai), hoặc project là bản chép.', 'Dùng khi tiếp quản phiên hoặc theo dõi tiến độ; terminal thiếu thì xem crew repair.')
+    Name = 'hot'; Group = 'Giao việc'; Syntax = 'crew hot [-Path .]'; Short = 'xem worktree, terminal và task; hiện pane có tin chờ'
+    Details = @('Hiện cấu hình đội, git worktree, terminal và task đang chạy tại project -Path.', 'Khối Cảnh báo hiện khi main chưa commit/merge dở, worker bẩn không có task, agent lạ ở root (có thể có planner thứ hai), hoặc project là bản chép.', 'Tin kẹt ở ô nhập chưa nhận diện được.', 'Dùng khi tiếp quản phiên hoặc theo dõi tiến độ; terminal thiếu thì xem crew repair.')
     Examples = @('crew hot', 'crew hot -Path D:/Projects/demo')
   }
   @{
-    Name = 'limits'; Group = 'Giao việc'; Syntax = 'crew limits [-Path .]'; Short = 'đọc limit tài khoản một lần'
-    Details = @('Đọc màn hình terminal của project -Path qua hc một lần, không theo dõi liên tục.', 'Hiện % đã dùng 5h/tuần; mốc chỉ theo 5h: ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Tuần không vào mốc; tuần ≥90% thì có cảnh báo ⚠: báo chủ dự án trước khi giao cho agent đó.', 'Pane thiếu số có thể mượn pane cùng agent; không đọc được thì hiện không rõ.')
+    Name = 'limits'; Group = 'Giao việc'; Syntax = 'crew limits [-Path .]'; Short = 'hỏi limit tài khoản một lần'
+    Details = @('Hỏi số trực tiếp từ Codex/Claude một lần cho mỗi loại agent trong config của project -Path, không tốn token, không theo dõi liên tục.', 'Không hỏi được (thiếu CLI, chưa đăng nhập, đổi format) thì lấy từ màn hình terminal qua hc và ghi (màn hình, có thể cũ); pane thiếu số có thể mượn pane cùng agent, không đọc được thì hiện không rõ.', 'Hiện % đã dùng 5h/tuần và giờ reset 5h; mốc chỉ theo 5h: ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Tuần không vào mốc; tuần ≥90% thì có cảnh báo ⚠: báo chủ dự án trước khi giao cho agent đó.')
     Examples = @('crew limits')
   }
   @{
@@ -59,8 +59,8 @@ $commands = @(
     Examples = @('crew review help -DryRun', 'crew review repair,help')
   }
   @{
-    Name = 'send'; Group = 'Giao việc'; Syntax = 'crew send <terminal> "<tin>" [-Raw]'; Short = 'gửi tin hoặc lệnh tới terminal'
-    Details = @('Gửi một dòng tới terminal; tự Enter nếu tin còn kẹt ở ô nhập và trạng thái cho phép.', 'Shell, lệnh /… và -Raw gửi trần; tin thông thường giữ metadata người gửi.', 'Không Enter khi blocked, dead hoặc gặp hộp thoại lạ; xử lý trạng thái terminal trước.')
+    Name = 'send'; Group = 'Giao việc'; Syntax = 'crew send <terminal> "<tin>" [-Raw]'; Short = 'gửi tin/lệnh tới terminal; agent bận ⇒ báo tin nằm chờ'
+    Details = @('Gửi một dòng tới terminal; tự Enter nếu tin còn kẹt ở ô nhập và trạng thái cho phép.', 'Shell, lệnh /… và -Raw gửi trần; tin thông thường giữ metadata người gửi.', 'Không Enter khi blocked, dead hoặc gặp hộp thoại lạ; xử lý trạng thái terminal trước.', 'Agent đang bận (working) ⇒ tin nằm chờ, agent đọc khi xong lượt; lệnh báo rõ (vẫn exit 0, xem: crew hot).')
     Examples = @('crew send demo-w1 "Tiếp tục task help theo prompt."', 'crew send demo-w1 "/model" -Raw')
   }
   @{
