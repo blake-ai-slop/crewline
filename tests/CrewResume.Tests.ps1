@@ -81,7 +81,7 @@ Describe 'Get-SessionPlan: quy tắc chọn phiên' {
     $p = Get-SessionPlan $b $root $c 'planner' 'claude' 'bật lại bằng -Restart'
     $p.Resume | Should Be $false; $p.Reason | Should Match 'Restart'; $p.Session.Id | Should Not Be $Id
   }
-  It 'cùng root khác dấu tách vẫn được khôi phục' {
+  It 'cùng root khác dấu tách vẫn được khôi phục' -Skip:($IsWindows -eq $false) {
     $b = New-Book @{ w1 = @{ agent = 'claude'; root = 'C:/p/' } }
     (Get-SessionPlan $b $root (New-Cfg) 'w1' 'claude').Resume | Should Be $true
   }

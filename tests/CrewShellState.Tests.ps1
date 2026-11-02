@@ -98,7 +98,7 @@ function Update-ConfigName($root, $dry) { }  # ghi sổ project cũ: test ở Cr
     ($script:ShellCalls -join ',') | Should Be 'ls,get,read,get,read,kill,rm'
     $script:ShellStarts | Should Be 1
   }
-  It 'ls đúng chủ nhưng get thuộc project khác: không kill/bật chồng' {
+  It 'ls đúng chủ nhưng get thuộc project khác: không kill/bật chồng' -Skip:($IsWindows -eq $false) {
     $script:ShellFirst.cwd = Join-Path $TestDrive 'OtherProject'; $script:ShellFresh.cwd = $script:ShellFirst.cwd
     Invoke-Up
     @($script:ShellCalls | Where-Object { $_ -eq 'kill' }).Count | Should Be 0
