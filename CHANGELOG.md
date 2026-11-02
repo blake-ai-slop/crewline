@@ -17,6 +17,7 @@ Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng,
 - **Sau khi khởi động lại máy:** `crew up` nhận ra pane chỉ còn shell trống và bật lại agent, đọc lại ngay trước khi tắt pane để không đụng nhầm.
 - **Pane chưa đặt tên trong herdr không còn làm `crew up` báo lỗi.**
 - **Chữ cũ trên màn hình** (như "Allow command" trong lịch sử) không còn bị nhận nhầm là hộp thoại khi xác định chắc được ô nhập.
+- **Mẫu giao việc của planner** yêu cầu đặt tên file trong backtick ở dòng `Được sửa:`, tránh `crew check` báo nhầm ngoài phạm vi. Project cũ nhận qua `crew upgrade`.
 
 ### Chưa kiểm
 - Khôi phục và mở lại hội thoại mới thử với `hc` giả, cộng thử riêng Claude/Codex thật ngoài herdr; chưa qua reboot thật. Tab vào hàng đợi: phím đã đo trên Codex thật, bản code cuối mới thử với `hc` giả. Linux/macOS chưa thử trên máy có giao diện.

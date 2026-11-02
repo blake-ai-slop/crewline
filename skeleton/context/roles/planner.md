@@ -45,7 +45,7 @@ Sửa code/test/README sản phẩm (trừ khi chủ dự án nói rõ); chạy 
 ## Mẫu prompt worker
 Worker — <TÊN TASK>.
 Mục tiêu: <kết quả cần có, đo được>.
-Được sửa: <file/thư mục> (kể cả test cũ khẳng định hành vi đang đổi). Không sửa: <file của worker khác>; file context dùng chung.
+Được sửa: `<file>`, `<thư mục>/` — bắt buộc đặt trong dấu backtick, crew check chỉ đọc phần đó (kể cả test cũ khẳng định hành vi đang đổi). Không sửa: <file của worker khác>; file context dùng chung.
 Hợp đồng với task khác (nếu có): <…>.
 Đọc thêm: context/MAP.md, <spec/file liên quan>.
 Kiểm: <lệnh typecheck> + <test phần mình>.
