@@ -1,7 +1,8 @@
 ﻿# AST + hc giả; không gọi terminal thật.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot',
+$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-PendingInput'
+$want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -41,6 +42,7 @@ function New-TrustOps($screens, $infos = @{}) {
 }
 function Say($msg) { $script:Messages.Add([string]$msg) }
 function Die($msg) { throw $msg }
+function Update-ConfigName($root, $dry) { }  # ghi sổ project cũ: test ở CrewRepairAll
 function hc { throw 'không được gọi hc thật' }
 
 Describe 'trust thư mục' {
@@ -132,6 +134,47 @@ Describe 'crew up với terminal giả' {
     $script:UpOps = New-TrustOps @{}
     Invoke-Up
     $script:UpOps.State.Reads.Count | Should Be 0
+  }
+
+  Context 'terminal cùng tên nhưng không còn agent' {
+    BeforeEach {
+      $script:Stopped = @(); $script:Started = @()
+      function Get-LiveTerminals { @([pscustomobject]@{ name = 'demo-w1'; state = 'live'; address = 't7' }, [pscustomobject]@{ name = 'demo-w2'; state = 'live'; address = 't8' }) }
+      function Stop-Term($a) { $script:Stopped += $a }
+      function Start-WorkerTerm($r, $c, $ids, $slug, $n, $m) { $script:Started += "w$n"; @{ address = "t$n" } }
+      function Get-Tasks($r) { , @() }
+    }
+    $lostInfo = [pscustomobject]@{ name = 'demo-w1'; cwd = [string]$TestDrive; state = 'live'; address = 't7'; status = $null; turn = 0; argv = @('pwsh.exe', '-NoExit', '-Command', '$global:__hc_prompt = $function:prompt; function global:prompt { }') }
+    $exitedInfo = [pscustomobject]@{ state = 'live'; address = 't7'; status = $null; turn = 0; argv = @('pwsh', '-NoLogo', '-NoExit', '-EncodedCommand', 'abc') }
+    $okInfo = New-TrustInfo codex
+
+    It 'shell trống sau reboot: tắt đúng terminal đó rồi bật lại agent, không đụng agent còn sống' -Skip:($IsWindows -eq $false) {
+      $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' } @{ 'demo-w1' = $lostInfo; 'demo-w2' = $okInfo }
+      Invoke-Up
+      $script:Stopped | Should Be 't7'
+      $script:Started | Should Be 'w1'
+      ($script:Messages -join "`n") | Should Match 'demo-w1 chỉ còn shell trống'
+      $script:UpOps.State.Keys | Should Be 0
+    }
+    It 'task dở trên worker mất agent: không còn nhắc lệnh khác (crew up tự giao lại)' -Skip:($IsWindows -eq $false) {
+      function Get-Tasks($r) { , @([pscustomobject]@{ name = 'dang-lam'; worker = 1 }) }
+      $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' } @{ 'demo-w1' = $lostInfo; 'demo-w2' = $okInfo }
+      Invoke-Up
+      ($script:Messages -join "`n") | Should Not Match 'crew repair'
+    }
+    It 'status null nhưng màn hình đang là TUI agent (chưa qua lượt đầu): không tắt' {
+      $tui = "❯ Try something`n─────`n  ⏵⏵ auto mode on (shift+tab to cycle)`n[hc] incomplete: older output may be missing"
+      $script:UpOps = New-TrustOps @{ 'demo-w1' = $tui; 'demo-w2' = '' } @{ 'demo-w1' = $lostInfo; 'demo-w2' = $okInfo }
+      Invoke-Up
+      @($script:Stopped).Count | Should Be 0
+      @($script:Started).Count | Should Be 0
+    }
+    It 'agent crew bật đã thoát: chỉ cảnh báo kèm lệnh bật lại, không tự tắt' {
+      $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' } @{ 'demo-w1' = $exitedInfo; 'demo-w2' = $okInfo }
+      Invoke-Up
+      @($script:Stopped).Count | Should Be 0
+      ($script:Messages -join "`n") | Should Match 'crew up -Restart w1'
+    }
   }
 }
 

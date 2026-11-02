@@ -2,12 +2,13 @@
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
-  'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Format-DirtyFiles',
+  'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
   'Get-MoveInfo', 'Get-MovedPath', 'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Get-Ids', 'Read-ProjectRegistry', 'Save-ProjectRegistry',
   'Test-OtherAlive', 'Get-NameOwner', 'Get-IdKeyOwner', 'Register-CrewName'
+$want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -78,6 +79,54 @@ Describe 'crew repair (hc giả)' {
     $ops.State.Up | Should Be 0
     $ops.State.Sent.Count | Should Be 0
     $script:HcCalls | Should Be 0
+  }
+
+  It 'shell trống sau reboot + có task -> bật lại qua Up rồi giao lại task, không còn CẦN NGƯỜI QUYẾT' -Skip:($IsWindows -eq $false) {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $lost = [pscustomobject]@{ name = 'x-w1'; state = 'live'; address = 't7'; status = $null; turn = 0; cwd = (Get-WorkerTree $root 1); argv = @('pwsh.exe', '-NoExit', '-Command', '$global:__hc_prompt = $function:prompt; function global:prompt { }') }
+    $ops = New-FakeOps @{ 'x-w1' = $lost; 'x-w2' = (New-Info) } @('PS C:\repo> ', '')
+    $st = $ops.State
+    $fresh = New-Info
+    $ops.Up = { $st.Up++; $st.Terms['x-w1'] = $fresh }.GetNewClosure()
+    $res = Invoke-Rep $root $ops
+    $st.Up | Should Be 1
+    $st.Sent.Count | Should Be 1
+    $st.Sent[0] | Should Match 'a'
+    @($res.Human).Count | Should Be 0
+    $st.Keys | Should Be 0
+  }
+
+  It 'shell trống sau reboot, DryRun -> chỉ báo sẽ bật, không Up, không gửi' -Skip:($IsWindows -eq $false) {
+    $root = New-RepairRepo
+    $lost = [pscustomobject]@{ name = 'x-w1'; state = 'live'; address = 't7'; status = $null; turn = 0; cwd = (Get-WorkerTree $root 1); argv = @('pwsh.exe', '-NoExit', '-Command', '$global:__hc_prompt = $function:prompt; function global:prompt { }') }
+    $ops = New-FakeOps @{ 'x-w1' = $lost; 'x-w2' = (New-Info) } @('PS C:\repo> ')
+    $res = Invoke-Rep $root $ops $true
+    $ops.State.Up | Should Be 0
+    (@($res.Done) -join "`n") | Should Match 'bật terminal thiếu.*x-w1'
+  }
+
+  It 'argv agent/shell chưa xác minh hoặc foreground agent không thành lost, không Up/Kill/gửi' {
+    $root = New-RepairRepo
+    foreach ($mode in 'claude', 'codex', 'node', 'shell', 'unix', 'foreground') {
+      $term = [pscustomobject]@{ name = 'x-w1'; state = 'live'; address = 't7'; status = $null; cwd = (Get-WorkerTree $root 1)
+        argv = @('pwsh.exe', '-NoExit', '-Command', '$global:__hc_prompt = $function:prompt') }
+      switch ($mode) {
+        shell { $term.argv = @('pwsh.exe', '-NoExit') }
+        unix { $term.argv[0] = '/bin/bash' }
+        foreground { $term | Add-Member foreground ([pscustomobject]@{ argv = @('claude') }) }
+        default { $term.argv = @($mode) }
+      }
+      $ops = New-FakeOps @{ 'x-w1' = $term; 'x-w2' = (New-Info) } @('PS C:\repo>')
+      $st = $ops.State; $st.Kills = 0
+      $ops.Kill = { param($t) $st.Kills++ }.GetNewClosure()
+      $res = Invoke-Rep $root $ops
+      ($res.Done -join ' ') | Should Not Match 'bật terminal thiếu'
+      $st.Up | Should Be 0
+      $st.Kills | Should Be 0
+      $st.Sent.Count | Should Be 0
+      $script:HcCalls | Should Be 0
+    }
   }
 
   It 'w1 thiếu terminal + có task -> bật lại qua Up, gửi đúng 1 dòng Tiếp tục task, 0 Enter' {

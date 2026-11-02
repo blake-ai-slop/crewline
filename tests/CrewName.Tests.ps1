@@ -8,10 +8,11 @@ $want = 'Get-LegacySlug', 'Get-Slug', 'Test-CrewName', 'Get-CrewName', 'ConvertT
   'Get-ForeignTermError', 'Read-ProjectRegistry', 'Save-ProjectRegistry', 'Get-NameOwner', 'Resolve-CrewName', 'Register-CrewName',
   'Get-NameConflict', 'Update-ConfigName', 'Get-Config', 'Invoke-Up', 'Invoke-Send', 'Send-CrewMessage', 'Get-MainRoot',
   'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
-  'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady',
-  'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask', 'Start-WorkerTask', 'New-TaskRecord',
+  'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady',
+  'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask', 'Start-WorkerTask', 'New-TaskRecord',
   'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Test-OtherAlive', 'Get-IdKeyOwner', 'Get-Ids',
   'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-TakenIdKeys'
+$want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -237,7 +238,7 @@ Describe 'crew up chặn terminal cùng tên của project khác' {
     function Stop-Term($a) { $script:Stopped++ }
     function Wait-Tab($t) { $false }
     function Show-StartupTrust($r, $o) { }
-    function New-HcOps { @{} }
+    function New-HcOps { @{ Get = { param($t) $null }; Read = { param($t) '' }; Sleep = { param($ms) } } }
   }
 
   It 'app-planner đang chạy ở project khác -> dừng, nêu tên + cwd kia, 0 bật/kill' {
@@ -297,7 +298,7 @@ Describe 'crew up chặn space/tab herdr trùng khóa id (project chưa vào s�
     function Stop-Term($a) { $script:Stopped++ }
     function Wait-Tab($t) { $false }
     function Show-StartupTrust($r, $o) { }
-    function New-HcOps { @{} }
+    function New-HcOps { @{ Get = { param($t) $null }; Read = { param($t) '' }; Sleep = { param($ms) } } }
     function Get-HerdrSpaces { $script:Herdr }
     # project mới myapp: name myapp, idKey myapp (mã hóa mới) — sổ chỉ biết nó
     $script:New = New-Project "sp-$([guid]::NewGuid().ToString('N').Substring(0, 6))/myapp" 'myapp'

@@ -3,7 +3,7 @@
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
-  'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Format-DirtyFiles',
+  'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Get-MainRoot', 'Get-Config',
   'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
@@ -11,12 +11,14 @@ $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-W
   'Save-ProjectRegistry', 'Test-OtherAlive', 'Get-NameOwner', 'Get-IdKeyOwner', 'Register-CrewName', 'Get-NameConflict',
   'Invoke-Up', 'Invoke-Task', 'Invoke-Send', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-CopySource', 'Quote',
   'Get-LiveTerminals', 'New-RepairOps', 'New-HcOps', 'Get-TermInfo', 'Stop-Term', 'Get-HerdrSpaces'
+$want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 $script:Said = [Collections.Generic.List[string]]::new()
 function Say($msg) { $script:Said.Add([string]$msg) }
 function Die($msg) { throw $msg }
+function Update-ConfigName($root, $dry) { }  # ghi sổ project cũ: test ở CrewRepairAll
 function Write-Host { }
 $script:HcCalls = 0
 function hc { $script:HcCalls++; throw 'gọi hc thật trong test' }
@@ -518,6 +520,15 @@ Describe 'Get-LiveTerminals phân biệt thành công rỗng với lỗi' {
     @(Get-LiveTerminals).Count | Should Be 2
   }
 
+  It 'terminal chưa đặt tên (hc bỏ khóa name, như pane tự mở trong herdr) -> không lỗi, name = null' {
+    function hc { $global:LASTEXITCODE = 0; '{"hidden_finished":12,"terminals":[{"address":"t30","agent":"pwsh.exe","cwd":"C:\\x","state":"live","turn":0,"where":"Crewline / 1"},{"name":"a","state":"live","address":"t31"}]}' }
+    $r = @(Get-LiveTerminals)
+    $r.Count | Should Be 2
+    $r[0].PSObject.Properties.Name -contains 'name' | Should Be $true
+    $r[0].name | Should BeNullOrEmpty
+    $r[1].name | Should Be 'a'
+  }
+
   It 'exit 0 nhưng terminals không phải mảng / phần tử sai shape -> throw, không lọc thành rỗng' {
     $bad = @{
       '{"terminals": null}'                                                        = "'terminals' không phải mảng \(null"
@@ -529,7 +540,6 @@ Describe 'Get-LiveTerminals phân biệt thành công rỗng với lỗi' {
       '{"terminals": [{"name": "a", "state": "live"}]}'                            = "terminals\[0\] thiếu/sai 'address'"
       '{"terminals": [{"name": "a", "state": "live", "address": 7}]}'              = "thiếu/sai 'address'"
       '{"terminals": [{"name": "a", "state": "live", "address": ""}]}'             = "thiếu/sai 'address'"
-      '{"terminals": [{"state": "live", "address": "t1"}]}'                        = "thiếu/sai 'name'"
       '{"terminals": [{"name": {"x": 1}, "state": "live", "address": "t1"}]}'      = "thiếu/sai 'name'"
       '{"terminals": [{"name": "a", "state": "live", "address": "t1"}, {"x": 1}]}' = 'terminals\[1\]'
     }

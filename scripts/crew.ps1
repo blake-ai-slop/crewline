@@ -1,21 +1,22 @@
 ﻿<#
 crew (Crewline) - dựng và điều khiển "đội agent" trong herdr-app + hc (Windows, Linux, macOS; pwsh 7).
 
-  crew doctor                               kiểm môi trường: herdr, hc, agent, git identity
-  crew init  [-Path .] [-Name <tên>] [-Team standard|solo|large] [-Review lean|fast|full] [-Access work|wide] [-GitInit] [-NoCommit]
-  crew upgrade [-Path .] [-DryRun] [-NoCommit] [-Force] cập nhật skeleton context
-  crew up    [-Path .] [-Restart w1|…|planner|rev|all] [-Force]  dựng space/tab/agent theo .crew/config.json; worker chạy sẵn agent trong worktree cố định .crew/worktrees/w<N>; -Restart kill + bật lại đúng terminal đó theo config hiện tại (đổi agent/quyền), worker đang có task cần -Force
-  crew task  <tên> <file-prompt> [-Worker N] [-Review lean|fast|full] worker rảnh: nhánh crew/<tên> từ nhánh chính trong w<N> (phải sạch), chép prompt, /clear (Claude) hoặc /new (Codex) rồi giao việc; đổi model = /model trong pane, giữ qua task
-  crew hot   [-Path .]                      worktree, terminal, task đang chạy
-  crew limits [-Path .]                     hỏi 1 lần % limit 5h/tuần trực tiếp từ Codex/Claude, không tốn token; không hỏi được thì lấy từ màn hình, có thể cũ (mốc ok/theo dõi/hạn chế/dừng theo 5h; tuần ≥90% cảnh báo)
-  crew clean <tên> [-Force]                 w<N> về detached nhánh chính, xóa nhánh crew/<tên> + bản ghi; không kill agent, không xóa thư mục (task kiểu cũ .crew/worktrees/<tên>: gỡ worktree như trước)
-  crew send <terminal> "<tin>" [-Raw]       gửi tin; tin kẹt ở ô nhập thì tự Enter; shell, lệnh /… và -Raw gửi trần (không bọc <hc from>)
-  crew review <task>[,<task2>…] [-DryRun]  soạn 1 dòng giao Rev merge các task theo thứ tự, gửi tới <tên crew>-rev
-  crew check <task>                         đối chiếu diff với "Được sửa", parse, test phần đó
-  crew selfcheck                            cài thử vào HOME giả + PS 5.1 (chỉ Windows) + init/upgrade trước khi push
-  crew repair [-DryRun]  chẩn đoán + sửa an toàn sau khi lỡ xóa pane/agent, giao lại task dở
-  crew setup   chọn đội mặc định (agent, số worker, Rev, review, quyền)
-  crew help [lệnh]                          mọi lệnh theo nhóm (scripts/help.ps1)
+  Dùng hằng ngày
+  crew up                  dựng đội, khôi phục nếu mất (project mới: hỏi tạo)
+  crew up -All             như trên, cho mọi project (sau khi khởi động lại máy)
+  crew status [-Path .]     đội đang làm gì
+
+  Rồi sang tab planner và nói việc muốn làm.
+
+  Khi cần
+  crew up -Restart <vai>    bật lại agent (sau khi đổi agent hoặc quyền)
+  crew setup               đổi đội mặc định cho project mới
+  crew doctor              máy có thiếu gì không
+  crew upgrade             cập nhật khung context của project
+  crew init                tạo project với tùy chọn riêng (tên, đội)
+
+  Chi tiết: crew help <lệnh>   ·   Lệnh agent dùng: crew help agent
+  Tên cũ vẫn dùng được: crew hot [-Path .] = crew status.
 Khung context lấy từ <Crewline>/skeleton.
 #>
 param(
@@ -32,7 +33,8 @@ param(
   [switch]$NoCommit,
   [switch]$DryRun,
   [switch]$Force,
-  [switch]$Raw
+  [switch]$Raw,
+  [switch]$All
 )
 
 # Chốt chặn: crew cần pwsh 7. Gọi bằng Windows PowerShell 5.1 (powershell.exe) thì chạy lại chính file này bằng pwsh.
@@ -452,9 +454,144 @@ function Quote([string]$s) { "'" + ($s -replace "'", "''") + "'" }
 
 # dòng lệnh bật agent dùng chung cho planner, worker, Rev; cờ quyền theo access (codex đã có --no-daemon trong Get-Flags).
 # Một đường cho mọi hệ: lệnh chạy trong pwsh (Start-Term); pwsh tự tìm claude/codex trên PATH (npm shim .cmd/.ps1 trên Windows, file thực thi trên Unix).
-function Get-AgentCommand([string]$kind, [string]$access, [string]$line) {
+# $session (Get-SessionPlan): resume-id / continue / resume-last mở lại phiên, KHÔNG kèm prompt để agent không tự chạy; new-id = hội thoại mới có id do crew đặt.
+function Get-AgentCommand([string]$kind, [string]$access, [string]$line, $session = $null) {
   $exe = if ($kind -eq 'codex') { 'codex' } else { 'claude' }
-  "$exe $(Get-Flags $kind $access) $(Quote $line)"
+  $flags = Get-Flags $kind $access
+  switch ($(if ($session) { $session.Mode } else { '' })) {
+    'resume-id' { return "$exe $flags --resume $($session.Id)" }
+    'continue' { return "$exe $flags --continue" }
+    'resume-last' { return "$exe resume --last $flags" }
+    'new-id' { return "$exe $flags --session-id $($session.Id) $(Quote $line)" }
+  }
+  "$exe $flags $(Quote $line)"
+}
+
+# ---------------- sổ phiên (.crew/sessions.json) ----------------
+# Chỉ ghi điều crew tự biết: vai, loại agent, root, UUID crew tạo. KHÔNG đọc file sessions/history của agent.
+# roles.<vai> = { agent; root; sessionId? }. codexRootRoles = các vai đã chạy Codex ở gốc từ lần cuối gốc chỉ có một vai Codex:
+# `resume --last` lấy phiên mới nhất theo thư mục, nên còn dấu vết vai khác là không phân biệt được.
+function Get-SessionsFile([string]$root) { Join-Path $root '.crew/sessions.json' }
+function New-SessionBook { @{ Roles = @{}; CodexRootRoles = @(); Warning = '' } }
+function Test-SessionId($id) { $id -is [string] -and $id -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' }
+
+# Không throw: thiếu file ⇒ sổ trống; hỏng ⇒ sổ trống + Warning. Mục sai dạng ⇒ coi như chưa ghi nhận.
+function Read-SessionBook([string]$root) {
+  $book = New-SessionBook
+  $file = Get-SessionsFile $root
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $book }
+  try {
+    $j = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+    if ($j -isnot [pscustomobject] -or $j.roles -isnot [pscustomobject]) { throw 'thiếu roles' }
+    foreach ($p in $j.roles.PSObject.Properties) {
+      $v = $p.Value
+      if ($v -isnot [pscustomobject] -or $v.agent -isnot [string] -or $v.root -isnot [string]) { continue }
+      $book.Roles[$p.Name] = @{ agent = $v.agent; root = $v.root; sessionId = $v.sessionId }
+    }
+    $book.CodexRootRoles = @($j.codexRootRoles | Where-Object { $_ -is [string] })
+  } catch {
+    $book = New-SessionBook
+    $book.Warning = "sổ phiên $file hỏng, coi như chưa có ghi nhận ($($_.Exception.Message))."
+  }
+  $book
+}
+
+# Ghi nguyên tử; lỗi ⇒ chỉ cảnh báo (mất ghi nhận thì lần sau mở hội thoại mới, không hỏng gì).
+function Save-SessionBook([string]$root, $book) {
+  $file = Get-SessionsFile $root
+  try {
+    New-Item -ItemType Directory -Force (Split-Path $file) -ErrorAction Stop | Out-Null
+    $roles = [ordered]@{}
+    foreach ($k in @($book.Roles.Keys | Sort-Object)) {
+      $r = $book.Roles[$k]
+      $o = [ordered]@{ agent = $r.agent; root = $r.root }
+      if ($r.sessionId) { $o.sessionId = $r.sessionId }
+      $roles[$k] = $o
+    }
+    $text = ConvertTo-Json -InputObject ([ordered]@{ version = 1; roles = $roles; codexRootRoles = @($book.CodexRootRoles) }) -Depth 5
+    $tmp = "$file.tmp"
+    [IO.File]::WriteAllText($tmp, $text, [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $tmp -Destination $file -Force -ErrorAction Stop
+  } catch { Say "cảnh báo: không ghi được sổ phiên $file ($($_.Exception.Message)); lần khôi phục sau sẽ mở hội thoại mới." }
+}
+
+# Vai vừa bật hội thoại mới. Hội thoại mới của vai Codex duy nhất ở gốc là phiên mới nhất ở đó nên xóa được dấu vết vai cũ.
+function Set-SessionRecord($book, [string]$root, $cfg, [string]$role, [string]$kind, $session) {
+  $rec = @{ agent = $kind; root = $root }
+  if ($session -and $session.Id) { $rec.sessionId = $session.Id }
+  $book.Roles[$role] = $rec
+  if ($role -notlike 'w*' -and $kind -eq 'codex') {
+    $count = @(@($cfg.planner, $cfg.rev) | Where-Object { $_ -eq 'codex' }).Count
+    $book.CodexRootRoles = if ($count -le 1) { @($role) } else { @(@($book.CodexRootRoles) + $role | Select-Object -Unique) }
+  }
+}
+
+function Get-NewSessionPlan([string]$role, [string]$kind, [string]$reason, [bool]$warn = $false) {
+  $session = if ($role -notlike 'w*' -and $kind -eq 'claude') { @{ Mode = 'new-id'; Id = [guid]::NewGuid().ToString() } } else { $null }
+  @{ Resume = $false; Session = $session; Reason = $reason; Warn = $warn }
+}
+
+# Chọn phiên cho một vai sắp bật. $blocked khác rỗng ⇒ tình huống không khôi phục (-Restart), là lý do. Không ghi gì (DryRun dùng chung).
+function Get-SessionPlan($book, [string]$root, $cfg, [string]$role, [string]$kind, [string]$blocked = '') {
+  if ($blocked) { return Get-NewSessionPlan $role $kind $blocked }
+  $rec = $book.Roles[$role]
+  if (-not $rec) { return Get-NewSessionPlan $role $kind 'chưa có ghi nhận phiên' }
+  if ($rec.agent -cne $kind) { return Get-NewSessionPlan $role $kind "đã đổi agent $($rec.agent) sang $kind" }
+  if (-not (Test-SamePath $rec.root $root)) { return Get-NewSessionPlan $role $kind "sổ ghi root khác ($($rec.root))" }
+  $resume = { param($mode, $id, $why) @{ Resume = $true; Session = @{ Mode = $mode; Id = $id }; Reason = $why; Warn = $false } }
+  if ($role -like 'w*') {
+    if ($kind -eq 'codex') { return & $resume 'resume-last' $null 'phiên Codex mới nhất của worktree' }
+    return & $resume 'continue' $null 'phiên Claude mới nhất của worktree'
+  }
+  if ($kind -eq 'claude') {
+    if (Test-SessionId $rec.sessionId) { return & $resume 'resume-id' $rec.sessionId "phiên $($rec.sessionId)" }
+    return Get-NewSessionPlan $role $kind 'sổ không có id phiên hợp lệ' $true
+  }
+  $count = @(@($cfg.planner, $cfg.rev) | Where-Object { $_ -eq 'codex' }).Count
+  if ($count -gt 1) { return Get-NewSessionPlan $role $kind 'hai vai Codex cùng chạy ở thư mục gốc, không phân biệt được phiên' $true }
+  $others = @(@($book.CodexRootRoles) | Where-Object { $_ -cne $role })
+  if ($others.Count -or @($book.CodexRootRoles) -cnotcontains $role) { return Get-NewSessionPlan $role $kind 'thư mục gốc từng có vai Codex khác, không phân biệt được phiên' $true }
+  & $resume 'resume-last' $null 'vai Codex duy nhất ở thư mục gốc'
+}
+
+function Format-SessionPlan($plan) { "$(if ($plan.Resume) { 'mở lại hội thoại' } else { 'hội thoại mới' }) ($($plan.Reason))" }
+
+# Màn hình đang là TUI của agent? Sau khi mở lại phiên mà chưa có lượt mới, hc có thể chưa báo status.app.
+# Chân màn hình chỉ agent mới có; dòng cuối là dấu nhắc shell thì agent đã thoát dù chữ cũ còn trên màn hình.
+function Test-AgentScreen([string]$kind, [string]$screen) {
+  $last = @("$screen" -split '\r?\n' | Where-Object { $_.Trim() -and $_ -notmatch '^\[hc\]' }) | Select-Object -Last 1
+  if ("$last" -match '(^\s*PS .*>|[$#])\s*$') { return $false }
+  if ($kind -eq 'codex') { return "$screen" -match 'Context \d+% left' }
+  "$screen" -match '(accept edits|bypass permissions|auto mode|plan mode) on|shift\+tab to cycle'
+}
+
+# Trạng thái pane vừa mở lại phiên: 'ready' | 'exited' (CLI thoát, về shell) | 'dialog' (hộp thoại/chờ duyệt, không bấm) | '' (chưa rõ).
+function Get-ResumeState([string]$term, [string]$kind, $ops) {
+  $info = & $ops.Get $term
+  if (-not $info) { return '' }
+  if ($info.state -ne 'live') { return 'exited' }
+  $screen = & $ops.Read $term
+  if ((Get-TermStatus $info).State -eq 'blocked' -or (Get-ScreenDialog $screen)) { return 'dialog' }
+  if ((Get-TermShellState $info { $screen }) -eq 'exited') { return 'exited' }
+  $mode = (Get-WorkerMode $info $kind).Mode
+  if ($mode -eq 'agent' -or ($mode -eq 'shell' -and (Test-AgentScreen $kind $screen))) { return 'ready' }
+  ''
+}
+
+# Chờ các pane vừa mở lại phiên, tối đa ~30s, không gửi hay bấm phím. Trả map Term -> trạng thái cuối.
+function Wait-ResumeStates($roles, $ops, [int]$tries = 15) {
+  $out = @{}; $pending = @($roles)
+  for ($i = 0; $i -lt $tries -and $pending.Count; $i++) {
+    if ($i -gt 0) { & $ops.Sleep 2000 }
+    $next = @()
+    foreach ($role in $pending) {
+      $s = Get-ResumeState $role.Term $role.Kind $ops
+      $out[$role.Term] = $s
+      if (-not $s) { $next += $role }
+    }
+    $pending = $next
+  }
+  $out
 }
 
 # Terminal từ `hc ls --json`. Thành công rỗng (terminals: []) ⇒ @(); exit≠0, JSON hỏng hoặc thiếu mảng 'terminals' ⇒ throw
@@ -475,9 +612,36 @@ function Get-LiveTerminals {
     if ($t -isnot [pscustomobject]) { throw "hc ls --json: terminals[$i] không phải object (exit $code)" }
     $p = $t.PSObject.Properties.Name
     foreach ($k in 'address', 'state') { if ($p -notcontains $k -or $t.$k -isnot [string] -or -not $t.$k) { throw "hc ls --json: terminals[$i] thiếu/sai '$k' (exit $code)" } }
-    if ($p -notcontains 'name' -or ($null -ne $t.name -and $t.name -isnot [string])) { throw "hc ls --json: terminals[$i] thiếu/sai 'name' (exit $code)" }
+    # hc bỏ hẳn khóa name với terminal chưa đặt tên (mọi pane người dùng tự mở trong herdr) ⇒ coi như name = null.
+    if ($p -notcontains 'name') { $t | Add-Member -NotePropertyName name -NotePropertyValue $null }
+    elseif ($null -ne $t.name -and $t.name -isnot [string]) { throw "hc ls --json: terminals[$i] thiếu/sai 'name' (exit $code)" }
   }
   return @($arr)
+}
+
+# Terminal cùng tên còn live nhưng agent không còn trong đó? $info = object `hc get`; $read = scriptblock trả chữ màn hình (chỉ gọi khi cần).
+# 'lost'   = shell PowerShell do core tạo lại, có marker __hc_prompt và không còn -EncodedCommand.
+# 'exited' = crew bật nhưng agent đã thoát, pane còn shell của -NoExit.
+# ''       = còn agent hoặc không chắc. status null KHÔNG đủ: Claude chưa qua lượt đầu cũng null, nên phải thấy dấu nhắc shell ở dòng cuối.
+function Get-TermShellState($info, [scriptblock]$read) {
+  if (-not $info -or $info.state -ne 'live') { return '' }
+  $st = Get-TermStatus $info
+  if ($st.App -or $st.State -eq 'blocked') { return '' }
+  $argv = @($info.argv | Where-Object { $_ })
+  if (-not $argv.Count) { return '' }
+  # Chỉ tin shell PowerShell đã xác minh; foreground khác shell có thể là agent chưa báo status.
+  $shellName = { param($exe) (([string]$exe -split '[\\/]')[-1] -replace '(?i)\.exe$', '') -in 'pwsh', 'powershell' }
+  $foreground = @($info.foreground.argv | Where-Object { $_ })
+  if ($foreground.Count -and -not (& $shellName $foreground[0])) { return '' }
+  $encoded = $argv -contains '-EncodedCommand'
+  # Chưa xác minh shell core sau reboot trên Linux/macOS: không tự tắt ở các hệ đó.
+  if (-not $encoded -and $IsWindows -eq $false) { return '' }
+  if (-not $encoded -and (-not (& $shellName $argv[0]) -or ($argv -join ' ') -notmatch '__hc_prompt')) { return '' }
+  $last = @("$(& $read)" -split '\r?\n' | Where-Object { $_.Trim() -and $_ -notmatch '^\[hc\]' }) | Select-Object -Last 1
+  if ("$last" -notmatch '(^\s*PS .*>|[$#])\s*$') { return '' }
+  if ($encoded) { return 'exited' }
+  if ("$last" -notmatch '^\s*PS .*>\s*$') { return '' }
+  'lost'
 }
 
 # Id herdr của crew từ khóa id (Get-CrewIdKey) — không tự bỏ ký tự nào nữa.
@@ -490,7 +654,9 @@ function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [
   $argv = @('run', '--bg', '--json', '--name', $name, '--keep', '--outlive-parent', '--no-parent', '--no-notify',
     '--cwd', $cwd, '--label', "herdr.space=$space", '--label', "herdr.tab=$tab", '--', 'pwsh', '-NoLogo')
   if ($cmdline) {
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmdline))
+    # crew up chạy từ pane agent có thể truyền biến phiên cha; Claude thấy CLAUDE_CODE_CHILD_SESSION thì không lưu transcript nên không resume được.
+    $clean = "foreach (`$v in 'CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN') { Remove-Item `"Env:`$v`" -ErrorAction Ignore }; "
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($clean + $cmdline))
     $argv += @('-NoExit', '-EncodedCommand', $enc)
   }
   $out = hc @argv
@@ -566,11 +732,11 @@ function Get-WorkerStartLine([int]$n) {
 }
 
 # Bật agent của worker N ngay trong worktree cố định (cờ quyền theo access).
-function Start-WorkerTerm([string]$root, $cfg, $ids, [string]$slug, [int]$n, [string]$main) {
+function Start-WorkerTerm([string]$root, $cfg, $ids, [string]$slug, [int]$n, [string]$main, $session = $null) {
   $kind = @($cfg.workers)[$n - 1]
   $wt = Initialize-WorkerTree $root $n $main
   $tab = & $ids.Workers ([math]::Ceiling($n / 2))
-  Start-Term "$slug-w$n" $wt $ids.Space $tab (Get-AgentCommand $kind $cfg.access (Get-WorkerStartLine $n))
+  Start-Term "$slug-w$n" $wt $ids.Space $tab (Get-AgentCommand $kind $cfg.access (Get-WorkerStartLine $n) $session)
 }
 
 function Add-Block([string]$file, [string]$block) {
@@ -861,7 +1027,10 @@ function Update-ConfigName([string]$root, [bool]$dry) {
   foreach ($p in $cfg.PSObject.Properties) { if ($p.Name -notin 'name', 'idKey') { $o[$p.Name] = $p.Value } }
   $o | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $f -Encoding utf8
   Say "ghi $what vào $f (giữ tên terminal và space/tab hiện có)."
-  if ($reg.Ok) { Register-CrewName $n $root $k | Out-Null }
+  # Sổ còn ghi đúng tên + khóa này ở root cũ đã mất ⇒ project đã chuyển: giữ mục sổ làm dấu vết cho Get-MoveInfo, crew up/repair sẽ cập nhật.
+  $moved = $reg.Ok -and $reg.Map.Contains($n) -and $reg.Map[$n].IdKey -ceq $k -and -not (Test-SamePath ([string]$reg.Map[$n].Root) $root) -and -not (Test-Path -LiteralPath (Join-Path ([string]$reg.Map[$n].Root) '.crew/config.json'))
+  if ($moved) { Say "sổ còn ghi '$n' ở $($reg.Map[$n].Root) (không còn) — chưa ghi sổ, crew up sẽ xử lý chuyển thư mục." }
+  elseif ($reg.Ok) { Register-CrewName $n $root $k | Out-Null }
 }
 
 function Invoke-Upgrade {
@@ -953,7 +1122,9 @@ function Invoke-Upgrade {
 
 # ---------------- up ----------------
 function Invoke-Up {
-  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
+  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
+  # Invoke-Recover đã gọi trước khi gọi tới đây; project cũ được ghi tên vào config + sổ, tên terminal và space/tab giữ nguyên
+  if (-not $script:FromRepair) { Update-ConfigName $root $false }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $ids = Get-Ids (Get-CrewIdKey $root $cfg)
   $clash = Get-NameConflict $root $cfg
   if ($clash) { Die $clash }
@@ -972,7 +1143,10 @@ function Invoke-Up {
     if ($why) { Die $why }
   }
   $live = @($liveTerms | ForEach-Object { $_.name })
-  $made = @(); $started = @()
+  $made = [Collections.Generic.List[string]]::new(); $started = [Collections.Generic.List[object]]::new()
+  $targets = @(); $lostTerms = @()
+  $book = Read-SessionBook $root
+  if ($book.Warning) { Say "cảnh báo: $($book.Warning)" }
 
   # -Restart: kill đúng terminal đó (đã chạy thì) rồi để vòng dưới bật lại theo config hiện tại
   if ($Restart) {
@@ -991,25 +1165,116 @@ function Invoke-Up {
     }
   }
 
+  # Sau reboot/crash core giữ tên terminal nhưng chỉ còn shell trống ⇒ bật lại agent, mở lại hội thoại cũ nếu sổ phiên cho phép.
+  $shellOps = New-HcOps
+  foreach ($n in @($mine | Where-Object { $live -contains $_ })) {
+    try {
+      $info = & $shellOps.Get $n
+      if (-not $info) { throw 'hc get không trả terminal' }
+      $shell = Get-TermShellState $info { & $shellOps.Read $n }
+      if ($shell -eq 'lost') {
+        # Đọc lại ngay trước kill: tên/address/chủ và dấu hiệu shell phải còn đúng.
+        $fresh = & $shellOps.Get $n
+        if (-not $info.address -or $info.name -cne $n -or
+            -not (Test-TermOwner $fresh $root) -or $fresh.address -cne $info.address -or $fresh.name -cne $info.name -or
+            (Get-TermShellState $fresh { & $shellOps.Read $n }) -ne 'lost') {
+          throw 'không xác minh được chủ, tên/địa chỉ hoặc shell trống ở lần đọc mới'
+        }
+        Stop-Term $fresh.address
+        $live = @($live | Where-Object { $_ -ne $n })
+        $lostTerms += $n
+        Say "$n chỉ còn shell trống (máy khởi động lại hoặc core mất chương trình), bật lại agent."
+      }
+    } catch {
+      Say "cảnh báo: không tắt $n — $($_.Exception.Message); giữ pane, không bật agent chồng lên."
+      continue
+    }
+    if ($shell -eq 'exited') {
+      Say "cảnh báo: agent của $n đã thoát, pane chỉ còn shell. Bật lại: crew up -Restart $($n.Substring($slug.Length + 1))"
+    }
+  }
+
+  # Chỗ duy nhất trong crew up bật agent của một vai; lệnh theo $plan.Session.
+  $launch = {
+    param([string]$role, $plan)
+    $n = "$slug-$role"
+    switch ($role) {
+      'planner' { Start-Term $n $root $ids.Space $ids.Planner (Get-AgentCommand $cfg.planner $cfg.access 'Bạn là planner của crew này. Đọc context/README.md rồi context/roles/planner.md; làm đúng vai trò đó và chờ chủ dự án giao việc.' $plan.Session) }
+      'rev' { Start-Term $n $root $ids.Space $ids.Rev (Get-AgentCommand $cfg.rev $cfg.access 'Bạn là rev của crew này. Đọc context/README.md rồi context/roles/rev.md; làm đúng vai trò đó và chờ planner giao việc.' $plan.Session) }
+      default { Start-WorkerTerm $root $cfg $ids $slug ([int]$role.Substring(1)) $main $plan.Session }
+    }
+  }
+  # Hội thoại mới: báo + ghi sổ ngay, để vai bật sau lỗi vẫn còn ghi nhận.
+  $noteNew = {
+    param([string]$role, [string]$kind, $plan)
+    Say "$(if ($plan.Warn) { 'cảnh báo: ' })$slug-${role}: $(Format-SessionPlan $plan)"
+    Set-SessionRecord $book $root $cfg $role $kind $plan.Session
+    Save-SessionBook $root $book
+    $started.Add(@{ Term = "$slug-$role"; Kind = $kind })
+  }
+  $resuming = [Collections.Generic.List[object]]::new()
+  $startRole = {
+    param([string]$role, [string]$kind, [string]$suffix = '')
+    $n = "$slug-$role"
+    # Chỉ pane shell trống và terminal thiếu khi không có -Restart mới được khôi phục.
+    $blocked = if ($lostTerms -contains $n) { '' } elseif ($targets -contains $role) { 'bật lại bằng -Restart' } elseif ($Restart) { 'crew up -Restart không khôi phục terminal thiếu' } else { '' }
+    $plan = Get-SessionPlan $book $root $cfg $role $kind $blocked
+    $r = & $launch $role $plan
+    $made.Add("$n=$($r.address)$suffix")
+    if ($plan.Resume) { $resuming.Add(@{ Term = $n; Role = $role; Kind = $kind; Plan = $plan; Address = $r.address }) }
+    else { & $noteNew $role $kind $plan }
+  }
+
   if ($cfg.planner -ne 'none') {
     $n = "$slug-planner"
-    if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else {
-      $line = 'Bạn là planner của crew này. Đọc context/README.md rồi context/roles/planner.md; làm đúng vai trò đó và chờ chủ dự án giao việc.'
-      $r = Start-Term $n $root $ids.Space $ids.Planner (Get-AgentCommand $cfg.planner $cfg.access $line); $made += "$n=$($r.address)"; $started += @{ Term = $n; Kind = $cfg.planner }
-    }
+    if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else { & $startRole 'planner' $cfg.planner }
   }
   $wi = 0
   foreach ($kind in $cfg.workers) {
     $wi++; $n = "$slug-w$wi"
     $wt = Initialize-WorkerTree $root $wi $main
     if ($live -contains $n) { Say "$n đã chạy, bỏ qua."; continue }
-    $r = Start-WorkerTerm $root $cfg $ids $slug $wi $main; $made += "$n=$($r.address) ($kind trong $wt)"; $started += @{ Term = $n; Kind = $kind }
+    & $startRole "w$wi" $kind " ($kind trong $wt)"
   }
   if ($cfg.rev -ne 'none') {
     $n = "$slug-rev"
-    if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else {
-      $line = 'Bạn là rev của crew này. Đọc context/README.md rồi context/roles/rev.md; làm đúng vai trò đó và chờ planner giao việc.'
-      $r = Start-Term $n $root $ids.Space $ids.Rev (Get-AgentCommand $cfg.rev $cfg.access $line); $made += "$n=$($r.address)"; $started += @{ Term = $n; Kind = $cfg.rev }
+    if ($live -contains $n) { Say "$n đã chạy, bỏ qua." } else { & $startRole 'rev' $cfg.rev }
+  }
+
+  # Mở lại phiên: lệnh không kèm prompt nên chỉ quan sát, không gửi hay bấm phím. CLI thoát ⇒ hội thoại mới đúng một lần, không lặp.
+  if ($resuming.Count) {
+    $resumeOps = New-HcOps
+    $states = Wait-ResumeStates @($resuming) $resumeOps
+    foreach ($item in $resuming) {
+      $n = $item.Term
+      switch ($states[$n]) {
+        'ready' {
+          # Codex không báo lỗi khi thư mục chưa có phiên: mở phiên trống, thấy 'Context 100% left'.
+          if ($item.Kind -eq 'codex' -and (& $resumeOps.Read $n) -match 'Context 100% left') { Say "cảnh báo: ${n}: hội thoại mới (Codex không có phiên cũ để mở lại)" }
+          else { Say "${n}: $(Format-SessionPlan $item.Plan)" }
+        }
+        'exited' {
+          $fresh = & $resumeOps.Get $n
+          if (-not $fresh -or $fresh.address -cne $item.Address -or -not (Test-TermOwner $fresh $root) -or
+              ($fresh.state -eq 'live' -and (Get-TermShellState $fresh { & $resumeOps.Read $n }) -ne 'exited')) {
+            Say "cảnh báo: ${n}: không mở lại được hội thoại nhưng không xác minh được pane ở lần đọc mới; giữ pane, không bật chồng."
+            break
+          }
+          Stop-Term $fresh.address
+          $plan = Get-NewSessionPlan $item.Role $item.Kind 'không mở lại được hội thoại cũ, CLI đã thoát' $true
+          $r = & $launch $item.Role $plan
+          $made.Add("$n=$($r.address)")
+          & $noteNew $item.Role $item.Kind $plan
+        }
+        'dialog' {
+          Say "cảnh báo: ${n}: đang mở lại hội thoại nhưng pane hiện hộp thoại hoặc chờ duyệt; crew không bấm, xem: hc read $n --lines 20"
+          $started.Add(@{ Term = $n; Kind = $item.Kind })
+        }
+        default {
+          Say "cảnh báo: ${n}: chưa xác nhận được đã mở lại hội thoại (~30s); giữ pane, không bật chồng. Xem: hc read $n --lines 20"
+          $started.Add(@{ Term = $n; Kind = $item.Kind })
+        }
+      }
     }
   }
 
@@ -1037,7 +1302,7 @@ function Invoke-Up {
 
   if ($made.Count) { Say "đã bật: $($made -join '; ')" }
   Say "space 'crew:$slug' sẵn sàng."
-  if ($started.Count) { Show-StartupTrust $started (New-HcOps) }
+  if ($started.Count) { Show-StartupTrust @($started) (New-HcOps) }
 }
 
 # ---------------- task ----------------
@@ -1107,14 +1372,51 @@ function Show-StartupTrust($roles, $ops) {
   Say 'Trust một lần cho mỗi thư mục; lần sau không hỏi lại.'
 }
 
+# Hàm thuần: ô nhập thường ở cuối màn hình, nhận theo khung đã thấy thật. Không chắc ⇒ $null.
+# Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2), dòng trống, chân GPT-… hoặc Context N% left.
+# Ra @{ Kind = 'claude'|'codex'; Text = chữ trong ô ('' nếu trống/placeholder); Lines = các dòng của ô (chỉ Codex); After = các dòng dưới ô chưa rõ là gì }.
+function Get-InputBox([string]$screen) {
+  $lines = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' } | ForEach-Object { $_.TrimEnd() })
+  $n = $lines.Count - 1
+  while ($n -ge 0 -and -not $lines[$n]) { $n-- }
+  if ($n -lt 2) { return $null }
+  # Codex: dòng phụ dưới chân chỉ nhận các dạng đã thấy
+  $f = $n
+  if ($lines[$f] -match '^\s*(\? for shortcuts|tab to queue message)') { $f-- }
+  if ($f -ge 2 -and $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left' -and -not $lines[$f - 1]) {
+    $i = $f - 2; $text = @()
+    while ($i -ge 0 -and $f - $i -le 30 -and $lines[$i] -match '^\s{2,}\S' -and $lines[$i] -notmatch '^\s*›') { $text = @($lines[$i].Trim()) + $text; $i-- }
+    if ($i -ge 0 -and $f - $i -le 30 -and $lines[$i] -match '^\s*›(\s|$)' -and $lines[$i] -notmatch '^\s*›\s*\d+\.\s') {
+      $rows = @(($lines[$i] -replace '^\s*›\s*', '')) + $text
+      $joined = ($rows -join ' ').Trim()
+      if ($joined -eq 'Ask Codex to do anything') { $joined = ''; $rows = @() }
+      return @{ Kind = 'codex'; Text = $joined; Lines = @($rows); After = '' }
+    }
+    return $null
+  }
+  # Claude: đường kẻ đóng trong vài dòng cuối, có chân thật bên dưới, đường kẻ mở phía trên
+  for ($c = $n; $c -ge 0 -and $n - $c -le 6; $c--) { if ($lines[$c] -match '^\s*─{8,}$') { break } }
+  if ($c -lt 1 -or $n - $c -gt 6 -or $c -eq $n) { return $null }
+  $after = @($lines[($c + 1)..$n])
+  if (-not (@($after) -match '(accept edits|bypass permissions|auto mode|plan mode) on|shift\+tab to cycle|\? for shortcuts').Count) { return $null }
+  for ($o = $c - 1; $o -ge 0 -and $c - $o -le 30; $o--) { if ($lines[$o] -match '^\s*─{8,}$') { break } }
+  if ($o -lt 0 -or $c - $o -gt 30 -or $c - $o -lt 2) { return $null }
+  if ($lines[$o + 1] -notmatch '^\s*[>❯](\s|$)' -or $lines[$o + 1] -match '^\s*[>❯]\s*\d+\.\s') { return $null }
+  $inner = (@($lines[($o + 1)..($c - 1)]) -join ' ') -replace '^\s*[>❯]\s*', ''
+  @{ Kind = 'claude'; Text = $inner.Trim(); After = ($after -join "`n") }
+}
+
 # Hàm thuần: màn hình đang có hộp thoại? 'codex-new' = ĐÚNG hộp chọn của Codex /new với dòng 1 đang chọn (an toàn để Enter);
 # 'trust' = trust thư mục; 'other' = hộp khác (duyệt lệnh/quyền, …) — không bao giờ bấm; '' = không thấy hộp.
 # Hộp lạ thắng: chỉ trả 'codex-new' khi bỏ các dòng của hộp chọn đi, phần còn lại KHÔNG còn dấu hiệu hộp nào.
+# Cuối màn hình đúng là ô nhập thường (Get-InputBox) ⇒ chữ phía trên là lịch sử, không phải hộp; không chắc ⇒ quét cả màn hình như cũ.
 function Get-ScreenDialog([string]$screen) {
   $marks = 'Where should the new conversation run', 'Do you want to', 'Allow command', '(?m)^\s*Allow\b', '\(y/n\)', 'enter select',
     'esc back', 'Esc to cancel', '(?m)^\s*[›❯]\s*\d+\.\s', 'Yes, proceed'
   $hasMark = { param($t) foreach ($m in $marks) { if ($t -match $m) { return $true } } $false }
   $s = "$screen"
+  $box = Get-InputBox $s
+  if ($box -and -not (& $hasMark $box.After)) { return '' }
   $claudeTrust = $s -match 'Yes, I trust this folder'
   $codexTrust = $s -match 'Trust this folder\?' -and $s -match 'Trust and continue'
   if ($claudeTrust -or $codexTrust) {
@@ -1186,11 +1488,14 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
     'blocked' { throw "$term đang chờ duyệt — chủ dự án xử lý trước, không giao việc." }
     'wrong' { throw "$term đang chạy $($m.App), config w$n là $kind — chạy 'crew up -Restart w$n' để bật lại đúng agent." }
   }
+  # Phiên vừa mở lại chưa có lượt mới thì hc có thể chưa báo app: đừng gõ lệnh shell vào ô nhập của agent.
+  $mode = $m.Mode
+  if ($mode -eq 'shell' -and (Test-AgentScreen $kind (& $ops.Read $term))) { $mode = 'agent' }
   $wt = Initialize-TaskBranch $root $n $main $name $promptPath
   Save-Tasks $root $tasks
   $line = Get-TaskLine $wt "crew/$name"
-  if ($m.Mode -eq 'shell') { Say "bật $kind trong $term" } else { Say "phiên mới cho $kind trong $term" }
-  $r = Send-WorkerTask $term $kind $m.Mode $wt $line $access $ops
+  if ($mode -eq 'shell') { Say "bật $kind trong $term" } else { Say "phiên mới cho $kind trong $term" }
+  $r = Send-WorkerTask $term $kind $mode $wt $line $access $ops
   @{ Ok = $r.Ok; Message = $r.Message; Line = $line }
 }
 
@@ -1229,7 +1534,16 @@ function Invoke-Task {
 # ---------------- hot ----------------
 # hc read/get không có màu/thuộc tính ô nhập: chữ gợi ý có thể giống tin thật.
 # Chỉ nhận marker hàng đợi của UI ở ô nhập cuối màn hình; không đoán từ chữ sau ❯/›.
+# Tin kẹt: chỉ Codex rảnh, chữ nằm trong ô nhập thật. Claude bỏ qua: hc không phân biệt được gợi ý mờ với chữ thật, và Claude tự đọc tin khi xong lượt.
+function Get-StuckText([string]$app, [string]$state, [string]$screen) {
+  if ($app -ne 'codex' -or $state -notin 'idle', 'done') { return '' }
+  $box = Get-InputBox $screen
+  if ($box -and $box.Kind -eq 'codex') { return $box.Text }
+  ''
+}
+
 function Get-PendingInput([string]$app, [string]$state, [string]$screen) {
+  if (Get-StuckText $app $state $screen) { return 'stuck' }
   if ($state -ne 'working') { return '' }
   if ($app -in 'claude', 'claude-code') {
     $boxes = [regex]::Matches($screen, '(?m)^\s*─{8,}\s*\r?\n[>❯]\s*Press up to edit queued messages\s*\r?\n\s*─{8,}\s*$')
@@ -1244,7 +1558,7 @@ function Get-PendingInput([string]$app, [string]$state, [string]$screen) {
 
 function Get-HotWarnings([string]$root, $cfg, $tasks, $terminals, $pending = @{}) {
   foreach ($name in @($pending.Keys | Sort-Object)) {
-    if ($pending[$name] -eq 'stuck') { "${name}: tin còn trong ô nhập chưa Enter — xem hc read $name, gửi lại bằng crew send" }
+    if ($pending[$name] -eq 'stuck') { "${name}: tin kẹt ở ô nhập — sang pane ${name}: Enter để gửi hoặc xóa chữ" }
     elseif ($pending[$name] -eq 'queued') { "${name}: có tin chờ, agent đọc khi xong lượt" }
   }
   $status = Invoke-GitQuiet -C $root status --porcelain
@@ -1299,7 +1613,7 @@ function Invoke-Hot {
           $inputState = Get-PendingInput $app $st.State $screen
           if ($inputState) {
             $pending[$_.name] = $inputState
-            $status = if ($inputState -eq 'queued') { 'tin chờ' } else { 'kẹt ô nhập' }
+            $status = if ($inputState -eq 'queued') { 'tin chờ' } else { 'tin kẹt' }
           }
         }
       }
@@ -1382,6 +1696,7 @@ function Get-TreeState([string]$root, [string]$wt, $meta) {
 }
 
 # Chờ worker vừa bật sẵn sàng nhận tin: agent đúng loại, không working, không hộp thoại. Trả '' khi sẵn sàng, ngược lại lý do.
+# Phiên mở lại không có lượt đầu nên hc có thể chưa báo app ⇒ nhận thêm theo chân màn hình TUI (Test-AgentScreen).
 function Wait-WorkerReady([string]$term, [string]$kind, $ops, [int]$tries = 30) {
   $why = 'agent chưa sẵn sàng'
   for ($i = 0; $i -lt $tries; $i++) {
@@ -1389,7 +1704,8 @@ function Wait-WorkerReady([string]$term, [string]$kind, $ops, [int]$tries = 30) 
     $info = & $ops.Get $term
     $m = Get-WorkerMode $info $kind
     if ($m.Mode -eq 'wrong') { return "$term đang chạy $($m.App), config là $kind" }
-    $dlg = Get-ScreenDialog (& $ops.Read $term)
+    $screen = & $ops.Read $term
+    $dlg = Get-ScreenDialog $screen
     if ($dlg -eq 'trust') {
       $hint = if ($kind -eq 'claude') { '↓ rồi Enter' } else { 'Enter' }
       $keys = if ($kind -eq 'claude') { 'down enter' } else { 'enter' }
@@ -1398,6 +1714,7 @@ function Wait-WorkerReady([string]$term, [string]$kind, $ops, [int]$tries = 30) 
     if ($m.Mode -eq 'blocked') { return "$term đang chờ duyệt" }
     if ($dlg) { return "$term đang hiện hộp thoại" }
     if ($m.Mode -eq 'agent' -and (Get-TermStatus $info).State -ne 'working') { return '' }
+    if ($m.Mode -eq 'shell' -and (Test-AgentScreen $kind $screen)) { return '' }
     if ($m.Mode -eq 'dead') { $why = "$term không live" }
   }
   $why
@@ -1554,8 +1871,15 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     $why = Get-ForeignTermError $r.Term $ti $root
     if ($why) { $foreign += $why; Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, "KHÁC PROJECT (cwd $($ti.cwd))"); continue }
     $r.Mode = (Get-WorkerMode $ti $r.Kind).Mode
-    $r.Live = $r.Mode -ne 'dead'
-    $note = @{ dead = 'thiếu'; agent = 'live, đúng agent'; wrong = 'live, SAI agent'; shell = 'live, shell (agent đã thoát)'; blocked = 'live, chờ duyệt' }[$r.Mode]
+    # shell trống sau reboot ⇒ xử lý như terminal thiếu: crew up bật lại, task dở được giao lại ở dưới
+    if ($r.Mode -eq 'shell') {
+      $shellState = Get-TermShellState $ti { & $ops.Read $r.Term }
+      if ($shellState -eq 'lost') { $r.Mode = 'lost' }
+      # crew bật pane này, màn hình chưa về dấu nhắc shell ⇒ agent chưa báo status, không phải đã thoát (crew up chạy lại ngay sau khi bật)
+      elseif (-not $shellState -and @($ti.argv) -contains '-EncodedCommand') { $r.Mode = 'starting' }
+    }
+    $r.Live = $r.Mode -notin 'dead', 'lost'
+    $note = @{ dead = 'thiếu'; lost = 'shell trống sau reboot — bật lại'; agent = 'live, đúng agent'; starting = 'live, agent đang khởi động'; wrong = 'live, SAI agent'; shell = 'live, shell (agent đã thoát)'; blocked = 'live, chờ duyệt' }[$r.Mode]
     Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, $note)
   }
   # trùng tên với project khác ⇒ không sửa, không bật, không gửi gì
@@ -1727,7 +2051,12 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     elseif (-not $dry -and $ops.List -and $null -eq (& $readLive)) { $human.Add("chưa bật terminal thiếu ($(@($dead | ForEach-Object { $_.Term }) -join ', ')): không đọc lại được hc ls ngay trước crew up.") }
     else {
       & $will "bật terminal thiếu qua crew up: $(@($dead | ForEach-Object { $_.Term }) -join ', ')"
-      if ($dry) { $started = $dead }  # DryRun: coi như bật được, không gọi Up
+      if ($dry) {
+        $started = $dead  # DryRun: coi như bật được, không gọi Up
+        $book = Read-SessionBook $root
+        if ($book.Warning) { Write-Host "cảnh báo: $($book.Warning)" }
+        foreach ($r in $dead) { & $will "$($r.Term): $(Format-SessionPlan (Get-SessionPlan $book $root $cfg $r.Role $r.Kind))" }
+      }
       else {
         & $ops.Up
         foreach ($r in $dead) {
@@ -1801,7 +2130,7 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
 # Bảng hc/herdr THẬT cho crew repair: New-HcOps + Up + (cho project đã chuyển) terminal live, space herdr, kill, đóng space.
 # List ném lỗi khi hc ls lỗi (Get-LiveTerminals) — repair coi lỗi là dừng, không Kill/Close/Up/Send.
 function New-RepairOps {
-  $ops = New-HcOps; $ops.Up = { Invoke-Up }
+  $ops = New-HcOps; $ops.Up = { $script:FromRepair = $true; Invoke-Up }
   # cho Get-MoveInfo + sửa project đã chuyển: terminal live, space herdr, kill, đóng space cũ
   $ops.List = { @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) }
   $ops.Spaces = { Get-HerdrSpaces }
@@ -1814,9 +2143,42 @@ function New-RepairOps {
   $ops
 }
 
-function Invoke-Repair {
-  $root = Get-MainRoot (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
-  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $main = Get-MainBranch $root
+# Khôi phục một project — dùng chung cho crew up (không -Restart) và crew repair; dựng terminal thiếu qua $ops.Up = Invoke-Up.
+# $stopOnClash: crew up giữ chốt chặn cũ, tên/khóa id đã thuộc project khác còn tồn tại thì dừng trước khi đụng gì.
+function Invoke-Recover([bool]$stopOnClash) {
+  $p = (Resolve-Path $Path).Path
+  $root = Get-MainRoot $p
+  if ($stopOnClash -and $env:CREWLINE_UP_ALL_CHILD -ne '1' -and
+    (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.crew/config.json')))) {
+    if ($root -and -not (Test-SamePath (Get-Root $p) $root)) {
+      Die "repo chính $root chưa init; đang ở worktree phụ nên không tạo gì. Chạy crew up tại repo chính."
+    }
+    $initRoot = if ($root) { $root } else { $p }
+    $needsGit = -not $root -or (Invoke-GitQuiet -C $root rev-parse --verify -q HEAD).Code -ne 0
+    if ($needsGit -and ((Test-SamePath $initRoot $HOME) -or (Test-SamePath $initRoot ([IO.Path]::GetPathRoot($initRoot))))) {
+      Die "không init tại HOME hoặc gốc hệ thống tệp ($initRoot) khi chưa có commit; hãy chọn thư mục project con."
+    }
+    if ($DryRun) { Say 'project chưa init, crew up sẽ hỏi tạo'; exit 0 }
+    $answer = $null
+    if ($env:CREWLINE_DEFAULTS -ne '1') {
+      . (Join-Path $PSScriptRoot 'ui.ps1')
+      $title = "Project $initRoot chưa init. Tạo context/, CLAUDE.md, AGENTS.md, .crew/, sửa .gitignore và commit?"
+      if ($needsGit) { $title += ' Sẽ git init (nếu cần) và commit TẤT CẢ file đang có.' }
+      $options = @((New-Option 'yes' 'Có' -Alias 'y', 'yes'), (New-Option 'no' 'Thôi' -Alias 'n', 'no'))
+      $answer = Read-Choice $title $options $(if ($needsGit) { 'no' } else { 'yes' }) -NoStep -NullOnEof
+    }
+    if ($null -eq $answer) { Die "project chưa init; không hỏi được nên không tạo gì. Chạy crew init tại $initRoot." }
+    if ($answer -ne 'yes') { Say 'thôi, không tạo gì.'; exit 1 }
+    # Phạm vi cục bộ: bỏ câu hỏi git của init, giữ nguyên ưu tiên đội/cờ dòng lệnh.
+    $GitInit = [bool]$needsGit
+    Invoke-Init
+    $root = Get-MainRoot $p
+  }
+  if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
+  Update-ConfigName $root ([bool]$DryRun)
+  $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
+  if ($stopOnClash) { $clash = Get-NameConflict $root $cfg; if ($clash) { Die $clash } }
+  $main = Get-MainBranch $root
   $script:Path = $root  # crew up dựng theo repo chính, kể cả khi gọi từ worktree
   $ops = New-RepairOps
   $res = Invoke-RepairCore $root $cfg $slug $main ([bool]$DryRun) $ops
@@ -1824,6 +2186,84 @@ function Invoke-Repair {
   if ($res.Done.Count) { foreach ($d in $res.Done) { Write-Host "  đã làm: $d" } } else { Write-Host '  không có gì phải sửa.' }
   foreach ($h in $res.Human) { Write-Host "  CẦN NGƯỜI QUYẾT: $h" -ForegroundColor Yellow }
   if ($res.Human.Count) { exit 1 }
+  exit 0
+}
+
+# Danh sách project cho crew up -All (hàm thuần trừ kiểm thư mục): mục sổ theo thứ tự sổ, cộng $current (root đã init) nếu chưa có trong sổ.
+# Trả mảng @{ Name; Root; Skip } — Skip khác rỗng ⇒ bỏ qua, nêu lý do; không tạo/xóa gì.
+function Get-UpAllPlan($map, [string]$current) {
+  $plan = @(foreach ($n in @($map.Keys)) {
+      $r = [string]$map[$n].Root
+      $skip = if (-not (Test-Path -LiteralPath $r -PathType Container)) { 'thư mục không còn' }
+      elseif (-not (Test-Path -LiteralPath (Join-Path $r '.crew/config.json') -PathType Leaf)) { 'không còn .crew/config.json' }
+      else { '' }
+      @{ Name = [string]$n; Root = $r; Skip = $skip }
+    })
+  if ($current -and -not @($plan | Where-Object { Test-SamePath $_.Root $current }).Count) {
+    $plan += @{ Name = (Split-Path $current -Leaf); Root = $current; Skip = '' }
+  }
+  , @($plan)
+}
+
+# Kết quả một project từ exit code + output tiến trình con. crew up trả exit 1 cho cả hai trường hợp, chỉ dòng kết luận phân biệt được.
+function Get-UpChildResult([int]$code, [string]$text) {
+  if ($code -eq 0) { return 'ok' }
+  if ($text -match '(?m)^\s*CẦN NGƯỜI QUYẾT:') { return 'cần người quyết' }
+  'lỗi'
+}
+
+# Bảng tổng kết crew up -All. $rows: @{ Name; Root; Result; Note }. Trả các dòng.
+function Format-UpAllSummary($rows) {
+  $rows = @($rows)
+  $nw = (@('tên') + @($rows | ForEach-Object { $_.Name }) | ForEach-Object { "$_".Length } | Measure-Object -Maximum).Maximum
+  $pw = (@('đường dẫn') + @($rows | ForEach-Object { $_.Root }) | ForEach-Object { "$_".Length } | Measure-Object -Maximum).Maximum
+  $line = { param($a, $b, $c) ("{0}  {1}  {2}" -f "$a".PadRight($nw), "$b".PadRight($pw), $c) }
+  @(& $line 'tên' 'đường dẫn' 'kết quả') + @($rows | ForEach-Object {
+      & $line $_.Name $_.Root "$($_.Result)$(if ($_.Note) { ": $($_.Note)" })"
+    })
+}
+
+# Một tiến trình pwsh riêng cho mỗi project: Invoke-Recover và Die gọi exit, lại dùng $script:Path/$script:FromRepair.
+# In output của con khi nó chạy, trả @{ Code; Text }; không chạy được pwsh ⇒ Code = 1.
+function Invoke-UpChild([string]$root, [bool]$dry) {
+  $ErrorActionPreference = 'Continue'
+  # Get-Command trước: pwsh bản Store chỉ chạy được qua alias trong PATH, không qua đường dẫn của tiến trình
+  $exe = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $shell = if ($exe) { $exe.Source } else { (Get-Process -Id $PID).Path }
+  $argv = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $PSCommandPath, 'up', '-Path', $root)
+  if ($dry) { $argv += '-DryRun' }
+  $lines = [Collections.Generic.List[string]]::new()
+  $savedUpAllChild = $env:CREWLINE_UP_ALL_CHILD
+  try {
+    $env:CREWLINE_UP_ALL_CHILD = '1'
+    & $shell @argv 2>&1 | ForEach-Object {
+      $l = "$_" -replace "\x1b\[[0-9;]*m", ''
+      $lines.Add($l); Write-Host "  $l"
+    }
+    $code = $LASTEXITCODE
+  } catch { $lines.Add("không chạy được pwsh ($shell): $($_.Exception.Message)"); $code = 1 }
+  finally { $env:CREWLINE_UP_ALL_CHILD = $savedUpAllChild }
+  @{ Code = [int]$code; Text = ($lines -join "`n") }
+}
+
+function Invoke-UpAll {
+  $reg = Read-ProjectRegistry
+  if (-not $reg.Ok) { Die "$($reg.Error) — không khôi phục, không ghi đè sổ. Sửa hoặc xóa file đó rồi chạy lại." }
+  $current = try { Get-MainRoot (Resolve-Path $Path).Path } catch { $null }
+  if ($current -and -not (Test-Path -LiteralPath (Join-Path $current '.crew/config.json') -PathType Leaf)) { $current = $null }
+  $plan = Get-UpAllPlan $reg.Map $current
+  if (-not $plan.Count) { Say 'sổ chưa có project nào, thư mục hiện tại cũng chưa init: không có gì để khôi phục.'; exit 0 }
+  $rows = @(foreach ($p in $plan) {
+      if ($p.Skip) { @{ Name = $p.Name; Root = $p.Root; Result = 'bỏ qua'; Note = $p.Skip }; continue }
+      Write-Host "== $($p.Name) ($($p.Root))"
+      $r = Invoke-UpChild $p.Root ([bool]$DryRun)
+      $result = Get-UpChildResult $r.Code $r.Text
+      $note = if ($result -eq 'lỗi') { "exit $($r.Code), xem output ở trên" } else { '' }
+      @{ Name = $p.Name; Root = $p.Root; Result = $result; Note = $note }
+    })
+  Write-Host "== tổng kết crew up -All$(if ($DryRun) { ' (DryRun: không ghi, không bật, không gửi)' })"
+  Format-UpAllSummary $rows | ForEach-Object { Write-Host "  $_" }
+  if (@($rows | Where-Object { $_.Result -in 'lỗi', 'cần người quyết' }).Count) { exit 1 }
   exit 0
 }
 
@@ -2312,9 +2752,52 @@ function New-HcOps {
       @{ Code = $code; Text = (@($out) -join "`n").Trim() }
     }
     Keys  = { param($term) & { $ErrorActionPreference = 'Continue'; hc keys $term enter 2>&1 } | Out-Null }
+    Tab   = { param($term) & { $ErrorActionPreference = 'Continue'; hc keys $term tab 2>&1 } | Out-Null }
     Read  = { param($term) (@(& { $ErrorActionPreference = 'Continue'; hc read $term --lines 15 2>$null }) -join "`n") }
     Sleep = { param($ms) Start-Sleep -Milliseconds $ms }
   }
+}
+
+# Codex đang working: Enter của hc send có lúc bị nuốt, tin nằm ở ô nhập dù hc báo started:true (đo thật 2026-11-02, codex-cli 0.166).
+# Hàm thuần: ô nhập có ĐÚNG và CHỈ tin vừa gửi? Chỉ bỏ qua khoảng trắng tại chỗ xuống dòng của TUI, phân biệt hoa thường.
+# $bare = tin gửi trần ⇒ không chấp nhận vỏ <hc from=…>; tin thường có thể có hoặc không có vỏ (hc chỉ bọc khi gửi từ pane agent), vỏ chỉ bỏ một lớp bọc kín cả ô.
+function Test-SentInput([string[]]$lines, [string]$text, [bool]$bare = $false) {
+  $want = "$text".Trim()
+  if (-not $want -or -not @($lines).Count) { return $false }
+  $same = {
+    param($part)
+    $want -cmatch ('^' + (@($part -split "`n" | ForEach-Object { [regex]::Escape($_.Trim()) }) -join '\s*') + '$')
+  }
+  $raw = @($lines) -join "`n"
+  if (& $same $raw) { return $true }
+  if ($bare) { return $false }
+  $m = [regex]::Match($raw, '^<hc\s+from="[^"]*">(.*)</hc>$', 'Singleline')
+  $m.Success -and (& $same $m.Groups[1].Value)
+}
+
+# Ô nhập đúng và chỉ có tin vừa gửi (Test-SentInput) ⇒ Tab 1 lần để vào hàng đợi thật của Codex: Tab gửi cả ô, nên chữ thêm, chữ sửa, bản nháp cùng đầu tin ⇒ không bấm.
+# Đọc lại màn hình + trạng thái ngay trước phím; không live, không phải Codex, hết working, blocked, hộp thoại ⇒ không bấm.
+function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $false) {
+  $unsure = @{ Ok = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin có thể nằm lại ô nhập, xem crew hot" }
+  if (-not $ops.Read -or -not $ops.Tab) { return $unsure }
+  & $ops.Sleep 700
+  $screen = & $ops.Read $term
+  $info = & $ops.Get $term
+  $st = Get-TermStatus $info
+  if (-not $info -or $info.state -ne 'live' -or $st.App -ne 'codex' -or $st.State -ne 'working' -or (Get-ScreenDialog $screen)) { return $unsure }
+  $box = Get-InputBox $screen
+  if (-not $box -or $box.Kind -ne 'codex') { return $unsure }
+  if (-not $box.Text) { return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: Codex đang bận đã nhận tin khỏi ô nhập (xem: crew hot)" } }
+  if (-not (Test-SentInput $box.Lines $text $bare)) { return $unsure }
+  & $ops.Tab $term
+  for ($i = 0; $i -lt 3; $i++) {
+    & $ops.Sleep 500
+    $after = Get-InputBox (& $ops.Read $term)
+    if ($after -and $after.Kind -eq 'codex' -and -not $after.Text) {
+      return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: tin vào hàng đợi của Codex, chạy khi xong lượt (xem: crew hot)" }
+    }
+  }
+  $unsure
 }
 
 # Điều phối gửi tin (không Die, không in): trả @{ Ok; Message }.
@@ -2346,6 +2829,7 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
         # chỉ còn chờ khi vẫn working cùng lượt và chưa bấm Enter; turn tăng/đã Enter/hết working ⇒ agent đã nhận hoặc rảnh, báo như cũ
         $newTurn = $turn -ge 0 -and $null -ne $info.turn -and [int]$info.turn -gt $turn
         if ($busy -and $s.State -eq 'working' -and $enter -eq 0 -and -not $newTurn) {
+          if ($s.App -eq 'codex') { return Send-CodexQueue $term $text $ops $bare }
           return @{ Ok = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin nằm chờ, agent đọc khi xong lượt (xem: crew hot)" }
         }
         return @{ Ok = $true; Message = "đã gửi -> $term ($(if ($s.App) { $s.State } else { 'shell' }))" }
@@ -2411,6 +2895,15 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
   if ($root) {
     $why = Get-ForeignTermError $term (& $ops.Get $term) $root
     if ($why) { Die "$why Không gửi." }
+  }
+  # tin cũ còn ở ô nhập: gửi nữa sẽ dính vào nó, Enter sẽ gửi cả hai ⇒ để người quyết
+  $st = Get-TermStatus (& $ops.Get $term)
+  if ($ops.Read -and $st.App -eq 'codex' -and $st.State -in 'idle', 'done') {
+    $stuck = Get-StuckText $st.App $st.State (& $ops.Read $term)
+    if ($stuck) {
+      $shown = if ($stuck.Length -gt 200) { $stuck.Substring(0, 200) + '…' } else { $stuck }
+      Die "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+    }
   }
   $r = Invoke-SendFlow $term $text $ops '' 6 $raw
   if (-not $r.Ok) { Die $r.Message }
@@ -2493,13 +2986,18 @@ if ($Command -ne 'review' -and $NameList.Count -gt 1) { Die "crew $Command chỉ
 Remove-Variable -Name Name
 $Name = if ($NameList.Count) { [string]$NameList[0] } else { '' }
 
+if ($All -and $Command -ne 'up') { Die "-All chỉ dùng với crew up (crew up -All [-DryRun]), không dùng với crew $Command." }
+if ($Command -eq 'up' -and $Restart -and $All) { Die '-All không đi với -Restart: -Restart bật lại terminal của một project.' }
+if ($Command -eq 'up' -and $Restart -and $DryRun) { Die '-DryRun không đi với -Restart: -Restart luôn tắt và bật lại terminal.' }
+
 switch ($Command) {
   'setup' { & (Join-Path $PSScriptRoot 'setup.ps1'); exit $LASTEXITCODE }
   'doctor' { Invoke-Doctor }
-  'init' { Invoke-Init }
+  'init' { Invoke-Init; Say 'xong. Bật đội: crew up' }
   'upgrade' { Invoke-Upgrade }
-  'up' { Invoke-Up }
+  'up' { if ($All) { Invoke-UpAll } elseif ($Restart) { Invoke-Up } else { Invoke-Recover $true } }
   'task' { Invoke-Task }
+  'status' { Invoke-Hot }
   'hot' { Invoke-Hot }
   'limits' { Invoke-Limits }
   'clean' { Invoke-Clean }
@@ -2507,7 +3005,7 @@ switch ($Command) {
   'review' { Invoke-Review }
   'check' { & (Join-Path $PSScriptRoot 'check.ps1') -Name $Name -Path $Path; exit $LASTEXITCODE }
   'selfcheck' { & (Join-Path $PSScriptRoot 'selfcheck.ps1'); exit $LASTEXITCODE }
-  'repair' { Invoke-Repair }
+  'repair' { Invoke-Recover $false }
   default {
     # 'help' và lệnh lạ ⇒ scripts/help.ps1 (-Topic = tên đầu tiên hoặc rỗng)
     $helpScript = Join-Path $PSScriptRoot 'help.ps1'

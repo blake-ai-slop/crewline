@@ -30,12 +30,11 @@ crew:<repo>  (space trong herdr-app)
 3. **Bật crew cho một project** (chạy trong một pane của herdr-app, để `crew up` mở được tab):
    ```powershell
    cd <project>
-   crew init     # tạo context/ chung + .crew/config.json
-   crew up       # mở tab planner / workers / rev trong herdr
+   crew up       # dựng đội; project mới sẽ hỏi tạo
    ```
    Lần đầu ở project mới, mỗi agent hỏi trust thư mục; `crew up` liệt kê pane cần bạn bấm xác nhận.
-   Thư mục mới chưa có git: `crew init` sẽ hỏi có tạo repo git (git init + commit đầu) không, gõ `1` rồi Enter. Không muốn hỏi thì dùng `crew init -GitInit`.
-4. **Làm việc:** sang tab **planner**, nói việc muốn làm. Planner chia việc, đưa bảng chia cho bạn duyệt, rồi giao cho worker. Worker xong thì Rev review và merge. Theo dõi bằng `crew hot`.
+   Project mới: `crew up` hỏi tạo khung context và commit; nếu chưa có git/commit, lệnh hỏi tạo git và commit tất cả file (mặc định Thôi).
+4. **Làm việc:** sang tab **planner**, nói việc muốn làm. Planner chia việc, đưa bảng chia cho bạn duyệt, rồi giao cho worker. Worker xong thì Rev review và merge. Theo dõi bằng `crew status`.
 5. **Cập nhật Crewline:** chạy lại lệnh cài ở bước 2, rồi trong mỗi project chạy `crew upgrade`. Có gì mới: xem [`CHANGELOG.md`](CHANGELOG.md).
 
 Mặc định của riêng bạn (đội, cấp review, quyền agent) đặt trong `~/.crewline/config.json`, xem [`docs/upgrade.md`](docs/upgrade.md). Cấu hình, skill và memory của Claude/Codex vẫn là của riêng từng người, Crewline không đụng tới.
@@ -125,21 +124,20 @@ Trước khi dùng cần có: herdr-app (đang mở), `claude` và `codex` đã 
 
 ## Dùng cho một project
 
+Trong một pane của herdr-app:
+
 ```powershell
 cd <project>
-crew init          # khung context/, CLAUDE.md + AGENTS.md, .crew/config.json, commit
-crew up            # space crew:<tên crew> với tab planner / workers / rev
+crew up            # dựng đội hoặc khôi phục; project mới sẽ hỏi tạo
 ```
+
+Sau đó sang tab **planner** và nói việc muốn làm. Planner sẽ hỏi để điền `context/PROJECT.md`, chia việc, trình bảng chia cho bạn duyệt, rồi giao task.
+
+## Tùy chọn nâng cao
+
+Muốn tạo project với tùy chọn riêng, dùng `crew init -Name <tên>`; thư mục chưa có git có thể dùng `crew init -GitInit` để đồng ý tạo git và commit đầu.
 
 **Tên crew.** `crew init` chốt một tên crew cho project vào `"name"` của `.crew/config.json` (từ tên thư mục, bỏ dấu, ≤12 ký tự) và ghi sổ `~/.crewline/projects.json`. Terminal mang tên `<tên>-planner`, `<tên>-w<N>`, `<tên>-rev`. Hai project trùng tên thư mục (`D:\work\app`, `E:\client\app`) sẽ thành `app` và `app-2`, nên chạy nhiều project song song không lẫn terminal. Muốn tự đặt: `crew init -Name <tên>` (a-z 0-9 -). `crew up`/`task`/`send`/`review`/`repair` dừng nếu terminal cùng tên đang chạy ở project khác; chép nguyên thư mục project thì `crew up`/`doctor` báo trùng và gợi ý đổi `name`. Project cũ chưa có `name` giữ tên cũ; `crew upgrade` ghi tên đó vào config.
-
-Sau đó sang tab **planner** và nói bằng lời việc muốn làm. Planner sẽ hỏi để điền `context/PROJECT.md`, chia việc, trình bảng chia cho bạn duyệt, rồi giao task:
-
-```powershell
-crew task <tên> .crew/prompts/<tên>.md [-Worker N]   # nhánh mới trên bàn worker, làm mới hội thoại + gửi prompt
-crew hot                                            # worktree, terminal, task đang chạy
-crew clean <tên>                                    # sau khi Rev merge: về main, xóa nhánh, giữ agent + thư mục
-```
 
 | Lệnh | Tác dụng |
 |---|---|
@@ -156,13 +154,13 @@ crew clean <tên>                                    # sau khi Rev merge: về m
 | `crew review <task,…> [-DryRun]` | soạn một dòng giao Rev merge các task theo thứ tự, gửi tới `<tên crew>-rev` |
 | `crew check <task>` | đối chiếu diff với "Được sửa", kiểm cú pháp và chạy test phần đó |
 | `crew selfcheck` | cài thử vào HOME giả, kiểm PS 5.1 (chỉ Windows) và init/upgrade trước khi push |
-| `crew hot` | tình hình nhanh cho planner |
+| `crew status` | đội đang làm gì (`crew hot` là tên cũ) |
 | `crew limits` | hỏi limit trực tiếp từ Codex/Claude một lần, không tốn token; không hỏi được thì lấy từ màn hình, có thể cũ: terminal · agent · 5h dùng · tuần dùng · mốc theo 5h (`ok` / `theo dõi` / `hạn chế` / `dừng` / `không rõ`, thêm ⚠ khi tuần ≥90%) · reset 5h · task |
 | `crew clean <tên> [-Force]` | về main, xóa nhánh task, giữ agent + thư mục; chỉ dọn task có trong `.crew/tasks.json`, nhánh chưa merge thì từ chối nếu không có `-Force` |
 
 ## Lỡ đóng pane hoặc cả space
 
-Code và context nằm trên đĩa và trong git nên không mất khi đóng pane/space. Chạy `crew repair` để chẩn đoán và khôi phục phần an toàn; có thể xem trước bằng `crew repair -DryRun`. Nếu còn việc cần bạn quyết, lệnh sẽ báo để bạn xử lý.
+Code và context nằm trên đĩa và trong git nên không mất khi đóng pane/space. Chạy `crew up` trong pane herdr-app để khôi phục project hiện tại; sau khi khởi động lại máy, chạy `crew up -All` cho mọi project. Có thể xem trước bằng `crew up -DryRun` hoặc `crew up -All -DryRun`. Agent mở lại đúng hội thoại cũ khi chắc chắn, nếu không sẽ mở hội thoại mới; lệnh in rõ từng vai kèm lý do. Nếu còn việc cần bạn quyết, lệnh sẽ báo để bạn xử lý.
 
 ## Nhiều project, đổi tên, chép thư mục
 

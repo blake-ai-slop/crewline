@@ -1,7 +1,7 @@
 ﻿# Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
 # 2026-11-01: crewline-planner/w1/rev (chỉ đọc), hp-test-claude/codex (đã kill).
 $pendingAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$pendingFunctions = 'Get-PendingInput','Get-TermStatus','Get-ScreenDialog','Invoke-Hot','Get-HotWarnings'
+$pendingFunctions = 'Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot','Get-HotWarnings'
 foreach ($fn in $pendingAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $pendingFunctions }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -58,8 +58,11 @@ Describe 'Get-PendingInput bảo thủ với gợi ý và marker hàng đợi th
   It 'Codex placeholder và chữ ô nhập không đủ chứng minh' {
     foreach ($state in 'idle','done','working') {
       Get-PendingInput codex $state $CodexEmpty | Should Be ''
-      Get-PendingInput codex $state ($CodexEmpty.Replace('Ask Codex to do anything','HP_TEST queued, reply acknowledged after current list.')) | Should Be ''
+      Get-PendingInput codex $state ($CodexEmpty.Replace('Ask Codex to do anything','')) | Should Be ''
     }
+    # ô nhập thật còn chữ: rảnh là tin kẹt, working thì chưa (CrewSendStuck kiểm kỹ)
+    Get-PendingInput codex working ($CodexEmpty.Replace('Ask Codex to do anything','HP_TEST queued, reply acknowledged after current list.')) | Should Be ''
+    Get-PendingInput codex idle ($CodexEmpty.Replace('Ask Codex to do anything','HP_TEST queued, reply acknowledged after current list.')) | Should Be 'stuck'
   }
   It 'chỉ agent working có marker UI thật mới queued' {
     Get-PendingInput claude working $ClaudeQueued | Should Be 'queued'
@@ -118,7 +121,7 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
     $out | Should Match 'demo-w2\s+tin chờ'
     $out | Should Match 'demo-w1: có tin chờ, agent đọc khi xong lượt'
     $out | Should Match 'demo-w2: có tin chờ, agent đọc khi xong lượt'
-    $out | Should Not Match 'demo-w[34]: có tin chờ|kẹt ô nhập'
+    $out | Should Not Match 'demo-w[34]: có tin chờ|tin kẹt'
     $script:PendingReads.Count | Should Be 4
     foreach ($n in $script:PendingReads.Keys) { $script:PendingReads[$n] | Should Be 1 }
     $script:PendingSend | Should Be 0
@@ -128,19 +131,19 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
     $script:PendingScreens['demo-w1'] = $ClaudeEmpty
     $script:PendingScreens['demo-w2'] = $CodexEmpty
     $out = Invoke-Hot 6>&1 | Out-String
-    $out | Should Not Match 'tin chờ|kẹt ô nhập|== Cảnh báo'
+    $out | Should Not Match 'tin chờ|tin kẹt|== Cảnh báo'
     $script:PendingSend | Should Be 0
     $script:PendingKeys | Should Be 0
   }
   It 'cảnh báo stuck nhận từ map có chỉ dẫn xem và gửi lại' {
     $out = @(Get-HotWarnings $TestDrive @{} @() @() @{'demo-w1'='stuck'}) -join "`n"
-    $out | Should Match 'demo-w1: tin còn trong ô nhập chưa Enter — xem hc read demo-w1, gửi lại bằng crew send'
+    $out | Should Match 'demo-w1: tin kẹt ở ô nhập — sang pane demo-w1: Enter để gửi hoặc xóa chữ'
   }
   It 'plumbing stuck hiện đúng cột và cảnh báo khi bộ nhận diện trả stuck' {
     function Get-PendingInput($app, $state, $screen) { if ($app -eq 'claude-code') { 'stuck' } else { '' } }
     $out = Invoke-Hot 6>&1 | Out-String
-    $out | Should Match 'demo-w1\s+kẹt ô nhập'
-    $out | Should Match 'demo-w1: tin còn trong ô nhập chưa Enter'
+    $out | Should Match 'demo-w1\s+tin kẹt'
+    $out | Should Match 'demo-w1: tin kẹt ở ô nhập'
     $script:PendingSend | Should Be 0
     $script:PendingKeys | Should Be 0
   }

@@ -1,7 +1,7 @@
 ﻿# Test crew send/review/task -Review: trích hàm thuần bằng AST từ crew.ps1, không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady'
+$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $wanted }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }

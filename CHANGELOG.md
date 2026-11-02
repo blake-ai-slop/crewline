@@ -2,6 +2,25 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-02
+
+### Mới
+- **`crew up` là lệnh duy nhất cần nhớ:** tự dựng đội và khôi phục khi mất. Project chưa init thì hỏi tạo ngay trong cùng lệnh; thư mục chưa có git thì hỏi rõ trước khi `git init` và commit tất cả file (mặc định Thôi). Không chạy init ở thư mục HOME hay gốc ổ đĩa.
+- **`crew up -All`:** sau khi khởi động lại máy, khôi phục mọi project trong sổ.
+- **Mở lại đúng hội thoại:** `crew up` và `crew up -All` mở lại hội thoại cũ của từng vai và in rõ từng vai là "mở lại hội thoại" hay "hội thoại mới". Không chắc đúng phiên thì mở hội thoại mới, không đoán. Đội đang chạy từ trước bản này chưa có sổ phiên nên lần khôi phục đầu là hội thoại mới. Worker và Codex dùng phiên mới nhất của thư mục, nên phiên bạn tự mở ở đó có thể được chọn.
+- **`crew help` gọn lại:** trang chính chỉ còn lệnh người dùng cần, xếp theo việc; lệnh agent dùng chuyển sang `crew help agent`.
+- **`crew status`:** đội đang làm gì. `crew hot` vẫn chạy như tên cũ.
+- **Báo tin kẹt ở ô nhập Codex:** `crew status` hiện pane có tin kẹt; `crew send`/`crew review` không gửi chồng mà bảo sang pane đó bấm Enter hoặc xóa chữ. Chữ bạn đang gõ dở trong ô Codex cũng được tính là tin kẹt.
+- **Tin gửi cho Codex đang chạy vào hàng đợi thật:** crew bấm Tab, chỉ khi toàn bộ ô nhập đúng là tin vừa gửi.
+
+### Sửa
+- **Sau khi khởi động lại máy:** `crew up` nhận ra pane chỉ còn shell trống và bật lại agent, đọc lại ngay trước khi tắt pane để không đụng nhầm.
+- **Pane chưa đặt tên trong herdr không còn làm `crew up` báo lỗi.**
+- **Chữ cũ trên màn hình** (như "Allow command" trong lịch sử) không còn bị nhận nhầm là hộp thoại khi xác định chắc được ô nhập.
+
+### Chưa kiểm
+- Khôi phục và mở lại hội thoại mới thử với `hc` giả, cộng thử riêng Claude/Codex thật ngoài herdr; chưa qua reboot thật. Tab vào hàng đợi: phím đã đo trên Codex thật, bản code cuối mới thử với `hc` giả. Linux/macOS chưa thử trên máy có giao diện.
+
 ## 2026-11-01
 
 ### Mới

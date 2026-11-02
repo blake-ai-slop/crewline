@@ -27,7 +27,11 @@ function Get-TeamDesc($t) {
 if (Test-Path -LiteralPath $file) {
   if ($automatic) { Write-Host "Giữ config cá nhân: $file"; return }
   $keep = @((New-Option 'keep' 'Giữ nguyên' -Alias 'n', 'no'), (New-Option 'overwrite' 'Ghi đè' -Alias 'y', 'yes'))
-  if ((Read-Choice "Config cá nhân đã có: $file" $keep 'keep' -NoStep) -ne 'overwrite') { return }
+  if ((Read-Choice "Config cá nhân đã có: $file" $keep 'keep' -NoStep) -ne 'overwrite') {
+    Write-Host 'Giữ nguyên config. crew setup chỉ chọn đội mặc định, không dựng đội cho project.'
+    Write-Host 'Dựng đội cho thư mục hiện tại: crew init (chỉ lần đầu), rồi crew up'
+    return
+  }
 }
 $teams = Get-Content (Join-Path $PSScriptRoot 'teams.json') -Raw -Encoding utf8 | ConvertFrom-Json
 $available = @('claude', 'codex' | Where-Object { [bool](Get-Command $_ -ErrorAction SilentlyContinue) })
@@ -106,3 +110,4 @@ Write-Host "  Review   $review — $($reviewNames[$review])"
 Write-Host "  Quyền    $access — $($accessNames[$access])"
 Write-Host "Đã ghi config cá nhân: $file"
 Write-Host 'Đổi lại: crew setup'
+Write-Host 'Tiếp theo, trong thư mục project: crew init (chỉ lần đầu), rồi crew up'

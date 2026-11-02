@@ -3,9 +3,10 @@ $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
   'Initialize-WorkerTree', 'Get-RestartTargets', 'Get-WorkerStartLine', 'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus',
-  'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Test-SessionReady', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask',
+  'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask',
   'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError'
+$want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -278,6 +279,18 @@ Describe 'crew task trên worktree cố định (hc giả)' {
     $cmd | Should Match ([regex]::Escape("Set-Location -LiteralPath '$wt'"))
     $cmd | Should Match ([regex]::Escape((Get-AgentCommand 'claude' 'work' (Get-TaskLine $wt 'crew/a'))))
     $cmd | Should Not Match '/clear'
+  }
+
+  It 'phiên vừa mở lại chưa báo status, màn hình là TUI -> /clear rồi giao việc, không gõ lệnh shell vào ô nhập' {
+    $r = New-KeepRepo
+    $tui = "❯`n─────`n  ⏵⏵ accept edits on (shift+tab to cycle)"
+    $cleared = "❯ /clear`n❯`n─────`n  ⏵⏵ accept edits on (shift+tab to cycle)"
+    $ops = New-FakeOps @((New-Info '')) @($tui, $cleared)
+    $res = Start-Task $r 'a' $ops
+    $res.Ok | Should Be $true
+    $ops.State.Sent[0] | Should Be '/clear'
+    ($ops.State.Sent -join "`n") | Should Not Match 'Set-Location'
+    $ops.State.Sent[$ops.State.Sent.Count - 1] | Should Be (Get-TaskLine (Get-WorkerTree $r.Root 1) 'crew/a')
   }
 
   It 'terminal chạy sai loại agent -> lỗi gợi ý crew up -Restart w1, không tạo nhánh' {
