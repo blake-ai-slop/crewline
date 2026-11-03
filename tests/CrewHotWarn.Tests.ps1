@@ -1,7 +1,7 @@
 ﻿# Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
 $hotCrew = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $hotAst = [System.Management.Automation.Language.Parser]::ParseFile($hotCrew,[ref]$null,[ref]$null)
-$hotFunctions = 'Get-HotWarnings','Invoke-Hot','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
+$hotFunctions = 'Get-HotWarnings','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
 foreach ($fn in $hotAst.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $hotFunctions},$false)) { . ([scriptblock]::Create($fn.Extent.Text)) }
 function Read-ProjectRegistry { @{Ok=$true; Map=$script:hotRegistry} }
 function Get-ProjectsFile { Join-Path $TestDrive 'projects.json' }

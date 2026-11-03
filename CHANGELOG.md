@@ -2,6 +2,24 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-03
+
+### Mới
+- **Gõ `crew up` ngay trong tab của một vai:** sau khi khởi động lại máy, gõ `crew up` hoặc `crew up -All` trong tab planner (hay tab vai khác) là đủ. Crew bật xong các vai và project khác, báo vài giây, rồi tự thay tab đó bằng agent, mở lại hội thoại cũ. Chữ đã in trong tab mất theo; nếu có lỗi, xem `.crew/self-pane.log`. Linux/macOS chưa tự thay: crew in hướng dẫn mở tab khác rồi chạy lại.
+- **Planner tự giao việc:** không còn chờ bạn duyệt bảng chia, chỉ hỏi khi quyết định thuộc về bạn (đổi hành vi sản phẩm có nhiều hướng, dữ liệu nhạy cảm hoặc project thật, push/phát hành, limit ≥90%). Project cũ nhận qua `crew upgrade`.
+
+### Sửa
+- **`crew up -Restart` từ chính tab của vai đó không còn tự tắt giữa chừng:** tab shell được thay sau cùng; tab đang có agent sống thì crew từ chối và không tắt gì.
+- **Không giao lại task đã xong:** sau khi khởi động lại, worker đã commit xong và có ghi chú task không còn nhận "Tiếp tục task"; `crew status` hiện nhãn "đã xong, chờ planner".
+- **Cảnh báo "có thể có planner thứ hai"** không còn báo nhầm với tab shell thường.
+
+### Lưu ý
+- **`crew upgrade` ghi đè file role:** nếu bạn đã tự sửa `context/roles/`, phần sửa không còn trong role và không có cảnh báo; chỉ còn ở file `.bak-<ngày>` (không commit) và lịch sử git.
+
+### Chưa kiểm
+- Việc tự thay tab mới thử với `hc` thật và Claude, herdr-app giả, cộng bộ test giả; chưa qua herdr-app thật, Claude/Codex thật và reboot thật. Nếu tab không tự chuyển, mở tab khác rồi chạy lại `crew up`.
+- Máy cấm tiến trình tách khỏi job (như máy Windows của GitHub Actions): crew giữ nguyên tab, báo rõ và không tắt gì; mở tab khác rồi chạy lại `crew up`. CI Windows vì vậy không phủ đường tự thay tab thành công, phần này chỉ được test trên máy thật với `hc` giả.
+
 ## 2026-11-02
 
 ### Mới

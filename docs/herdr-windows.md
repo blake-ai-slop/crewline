@@ -38,6 +38,16 @@ Kiểm thực tế với herdr-app và hc 0.1.15 trên Windows 10 LTSC (ngày 20
 - Linux/macOS chưa xác minh nên crew không tự tắt shell trên các hệ này; dùng `crew up -Restart all`. Prompt shell tùy biến không khớp cũng cần bật lại bằng lệnh này.
 - `hc ls --json` bỏ hẳn khóa `name` với terminal chưa đặt tên, là mọi pane tự mở trong herdr. Crew coi đó là `name = null`.
 
+### Gõ `crew up` ngay trong pane shell trống của một vai
+Sau reboot, gõ `crew up` hoặc `crew up -All` trong tab của một vai (thường là planner) là đủ, không cần mở tab khác. Crew nhận pane của mình bằng `HC_TERMINAL_ID`, bật xong các vai và project khác, in bảng tổng kết, báo "tab này sắp chuyển thành <vai>", rồi một tiến trình nền thay pane. Chữ đã in mất cùng pane.
+- Tiến trình nền đợi lệnh crew xong và dấu nhắc trở lại, đợi thêm vài giây, đọc lại `hc get` + màn hình. Chỉ tắt khi tên, địa chỉ, chủ còn đúng và pane vẫn là shell trống. Bạn đã gõ lệnh khác thì giữ pane, không bật chồng.
+- Sau khi tắt, vai được bật lại trên đúng đường của `crew up`: mở lại hội thoại, ghi sổ phiên, giao lại task dở một lần, đặt tên và thứ tự tab, focus.
+- Lỗi hoặc giữ pane được ghi vào `.crew/self-pane.log`, không có gì in ra vì pane đã mất. `crew up` lần sau nhắc log một lần (đổi thành `self-pane.log.old`) và tự bật vai còn thiếu.
+- `crew up -Restart <vai|all>` từ pane của vai đó: pane là shell thì thay sau cùng, hội thoại mới. Pane còn agent (crew được gọi từ trong agent) thì dừng trước mọi kill, kể cả các vai khác; mở tab khác rồi chạy lại.
+- Pane crew bật mà agent đã thoát (`-EncodedCommand`): chỉ cảnh báo, thay khi có `-Restart`. `-DryRun` chỉ báo sẽ thay; `crew repair` chỉ hiện "pane hiện tại, shell trống". Linux/macOS không tự thay, in hướng dẫn mở tab khác, exit 0.
+- Hc đặt tiến trình con của pane vào một job, kill pane là chết cả job: `Start-Process` và `Process.Start` đều chết theo (đo trên hc 0.1.17). Crew dùng `CreateProcess` với `CREATE_BREAKAWAY_FROM_JOB | CREATE_NO_WINDOW`: sống sót, kế thừa môi trường, không thành terminal hc nên không hiện trong herdr. Không tạo được thì giữ pane và báo mở tab khác.
+- Máy chạy trong job cấm breakaway (đo trên runner `windows-latest` của GitHub Actions, run 41586954445): `CreateProcess` lỗi 5. Crew giữ pane, báo rõ và không kill; mở tab khác rồi chạy lại. Test e2e cần tiến trình nền dò năng lực này trên chính máy đó và chỉ bỏ qua khi bị cấm, nên CI Windows không phủ các e2e đó, phải chạy `tests/CrewSelfPane.Tests.ps1` trên máy thật.
+
 ## Mở lại hội thoại
 `crew up` và `crew up -All` mở lại hội thoại khi pane là shell trống sau reboot, hoặc terminal thiếu mà không có `-Restart`. `crew up -Restart` và lần dựng đầu luôn là hội thoại mới. `crew up` in từng vai "mở lại hội thoại" hay "hội thoại mới" kèm lý do; `-DryRun` chỉ báo, không ghi sổ.
 

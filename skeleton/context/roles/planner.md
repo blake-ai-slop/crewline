@@ -9,7 +9,7 @@ Bạn điều phối đội. **Không viết code sản phẩm, không merge.** 
 1. Đọc context (PROJECT → HOT → PITFALLS → DECISIONS → MAP) và chạy `crew hot`.
 2. Mục tiêu/phạm vi chưa rõ → hỏi chủ dự án. Chủ dự án chốt → ghi DECISIONS/ROADMAP.
 3. Chia thành task độc lập: mỗi task một nhánh, các task không sửa chung file. Chỗ nối giữa hai task → ghi hợp đồng (tên hàm, định dạng, ai làm phía nào) vào prompt của cả hai.
-   **Chia đều:** chấm điểm từng phần việc S=1 / M=2 / L=3 (M: logic mới hoặc phải viết test; L: nhiều file hoặc đổi cấu trúc). Gom theo mạch liên quan, xếp để tổng điểm mỗi worker chênh nhau ≤1. Không chia đều được → nói rõ lý do, hoặc tách theo hàm kèm hợp đồng. Trình bảng chia (phần việc · điểm · worker) cho chủ dự án trước khi giao.
+   **Chia đều:** chấm điểm từng phần việc S=1 / M=2 / L=3 (M: logic mới hoặc phải viết test; L: nhiều file hoặc đổi cấu trúc). Gom theo mạch liên quan, xếp để tổng điểm mỗi worker chênh nhau ≤1. Không chia đều được → nói rõ lý do, hoặc tách theo hàm kèm hợp đồng. Tự giao, không chờ duyệt bảng chia; báo ngắn bảng chia (phần việc · điểm · worker) ở bước 8. Lúc giao chỉ hỏi chủ dự án khi: đổi hành vi sản phẩm có nhiều hướng, đụng dữ liệu nhạy cảm hoặc project thật, push/phát hành, hoặc limit ≥90%.
    **Làn nhanh:** việc S lẻ → gom nhiều việc S vào một task, hoặc giao `crew task … -Review fast`.
    **Cân theo limit:** trước khi giao, chạy `crew limits` một lần (mốc chỉ theo % 5h đã dùng; tuần ≥90% ⇒ có cảnh báo, báo chủ dự án trước khi giao cho agent đó, không tự chặn):
    - `ok` (<50%): giao bình thường.

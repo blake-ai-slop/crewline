@@ -4,7 +4,7 @@ $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
-  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
+  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Format-TaskFinished', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Get-MainRoot', 'Get-Config',
   'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
   'Get-MoveInfo', 'Get-MovedPath', 'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Get-Ids', 'Read-ProjectRegistry',
@@ -12,6 +12,9 @@ $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-W
   'Invoke-Up', 'Invoke-Task', 'Invoke-Send', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-CopySource', 'Quote',
   'Get-LiveTerminals', 'New-RepairOps', 'New-HcOps', 'Get-TermInfo', 'Stop-Term', 'Get-HerdrSpaces'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
+$want += 'Get-SelfTerm', 'Get-SelfPaneState'
+# Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
+$env:HC_TERMINAL_ID = $null
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -225,6 +228,26 @@ Describe 'crew repair: project đã chuyển thư mục (git thật, hc giả)' 
     # sau repair: không còn coi là chuyển
     (Get-MoveInfo $new $Cfg @(& $ops.List) (& $ops.Spaces).Spaces).Moved | Should Be $false
     $script:HcCalls | Should Be 0
+  }
+
+  It 'task đã xong: DryRun nói rõ chưa đọc được bẩn/sạch trước repair; chạy thật không giao lại' {
+    $old = New-MoveRepo 'rpd'
+    $wt = Get-WorkerTree $old 1
+    New-Item -ItemType Directory -Force (Join-Path $wt 'context/tasks') | Out-Null
+    'note' | Set-Content -LiteralPath (Join-Path $wt 'context/tasks/a.md')
+    git -C $wt add -A
+    git -C $wt -c user.name=t -c user.email=t@t commit -q -m xong
+    $new = Move-Project $old
+    $dryOps = New-MoveOps $new (Get-OldLive $old) @(New-Space 'spcrewapp' $old @('t1', 't2'))
+    $dry = Invoke-RepairCore $new $Cfg 'app' 'main' $true $dryOps
+    (@($dry.Done) -join '|') | Should Match 'giao lại task a -> app-w1 nếu worktree bẩn'
+    @($dry.Finished).Count | Should Be 0
+    $dryOps.State.Sent.Count | Should Be 0
+    $ops = New-MoveOps $new (Get-OldLive $old) @(New-Space 'spcrewapp' $old @('t1', 't2'))
+    $res = Invoke-RepairCore $new $Cfg 'app' 'main' $false $ops
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
   }
 
   It '-DryRun: in đủ từng việc (sẽ làm), 0 thay đổi git/tasks/sổ, 0 Kill/Close/Up/Send/Keys' {

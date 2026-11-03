@@ -34,7 +34,7 @@ crew:<repo>  (space trong herdr-app)
    ```
    Lần đầu ở project mới, mỗi agent hỏi trust thư mục; `crew up` liệt kê pane cần bạn bấm xác nhận.
    Project mới: `crew up` hỏi tạo khung context và commit; nếu chưa có git/commit, lệnh hỏi tạo git và commit tất cả file (mặc định Thôi).
-4. **Làm việc:** sang tab **planner**, nói việc muốn làm. Planner chia việc, đưa bảng chia cho bạn duyệt, rồi giao cho worker. Worker xong thì Rev review và merge. Theo dõi bằng `crew status`.
+4. **Làm việc:** sang tab **planner**, nói việc muốn làm. Planner chia việc, tự giao cho worker rồi báo lại bảng chia; chỉ hỏi bạn khi quyết định thuộc về chủ dự án. Worker xong thì Rev review và merge. Theo dõi bằng `crew status`.
 5. **Cập nhật Crewline:** chạy lại lệnh cài ở bước 2, rồi trong mỗi project chạy `crew upgrade`. Có gì mới: xem [`CHANGELOG.md`](CHANGELOG.md).
 
 Mặc định của riêng bạn (đội, cấp review, quyền agent) đặt trong `~/.crewline/config.json`, xem [`docs/upgrade.md`](docs/upgrade.md). Cấu hình, skill và memory của Claude/Codex vẫn là của riêng từng người, Crewline không đụng tới.
@@ -61,7 +61,7 @@ planner: crew selfcheck + CHANGELOG → push khi bạn cho phép
   chỗ nối giữa hai task được ghi thành hợp đồng trong prompt của cả hai.
 - **Chia đều:** đội có 1–6 worker; việc được chấm S=1 / M=2 / L=3,
   tổng điểm mỗi worker chênh nhau ≤1, số task song song ≤ số worker.
-  Bạn duyệt bảng chia trước khi planner giao việc.
+  Planner tự giao rồi báo lại bảng chia; chỉ hỏi bạn khi quyết định thuộc về chủ dự án: đổi hành vi sản phẩm có nhiều hướng, đụng dữ liệu nhạy cảm hoặc project thật, push/phát hành, hoặc limit ≥90%.
 - **Cân theo limit:** lúc sắp giao task, planner chạy `crew limits` để hỏi số trực tiếp
   từ Codex/Claude một lần, không tốn token, không theo dõi liên tục. Mốc chỉ theo % 5h đã dùng,
   chia 3 cấp: dưới 50% `ok`; 50–69% `theo dõi` (giao bình thường,
@@ -131,7 +131,7 @@ cd <project>
 crew up            # dựng đội hoặc khôi phục; project mới sẽ hỏi tạo
 ```
 
-Sau đó sang tab **planner** và nói việc muốn làm. Planner sẽ hỏi để điền `context/PROJECT.md`, chia việc, trình bảng chia cho bạn duyệt, rồi giao task.
+Sau đó sang tab **planner** và nói việc muốn làm. Planner sẽ hỏi để điền `context/PROJECT.md`, chia việc, tự giao task rồi báo lại; chỉ hỏi bạn khi quyết định thuộc về chủ dự án.
 
 ## Tùy chọn nâng cao
 

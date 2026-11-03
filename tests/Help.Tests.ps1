@@ -28,6 +28,16 @@ Describe 'crew help' {
     (Invoke-HelpPage 'send').Text | Should Not Match 'Flush|Discard'
   }
 
+  It 'crew help up nói rõ hành vi gõ trong pane của một vai và task đã xong' {
+    $up = (Invoke-HelpPage 'up').Text
+    $up | Should Match 'tab tự chuyển thành agent sau vài giây'
+    $up | Should Match 'chữ đã in mất cùng pane'
+    $up | Should Match '\.crew/self-pane\.log'
+    $up | Should Match 'Linux/macOS.*mở tab khác rồi chạy lại'
+    $up | Should Match 'Task đã xong.*không giao lại'
+    (Invoke-HelpPage 'status').Text | Should Match 'đã xong, chờ planner'
+  }
+
   It 'dispatch crew help dùng help.ps1 thật cho danh sách, repair và topic lạ' {
     $crew = Join-Path $repo 'scripts/crew.ps1'
     $list = & pwsh -NoProfile -File $crew help 2>&1

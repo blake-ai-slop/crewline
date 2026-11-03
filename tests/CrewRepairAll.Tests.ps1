@@ -422,6 +422,53 @@ Describe 'crew up tự khôi phục (hc giả)' {
     @(Get-Sends $ctx).Count | Should Be 1
   }
 
+  It 'worker thiếu + task đã xong -> up/repair/DryRun không gửi, exit 0, báo rõ; status có nhãn, không đọc thêm pane' {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'xong' 'xong' 'xong'
+    Add-OpenTask $ctx $root 'xong' 'viec-xong'
+    $wt = Join-Path $root '.crew/worktrees/w1'
+    # chưa xong: status không có nhãn
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    @(Get-Sends $ctx).Count | Should Be 1
+    $readsOf = { @(Get-HcLog $ctx | Where-Object { $_ -match '^read ' }).Count }
+    $r0 = & $readsOf
+    (Invoke-Crew $ctx @('status') $root).Output | Should Not Match 'đã xong, chờ planner'
+    $perStatus = (& $readsOf) - $r0
+    New-Item -ItemType Directory -Force (Join-Path $wt 'context/tasks') | Out-Null
+    'note' | Set-Content -LiteralPath (Join-Path $wt 'context/tasks/viec-xong.md')
+    git -C $wt add -A
+    git -C $wt -c user.name=t -c user.email=t@t commit -q -m xong
+    $r1 = & $readsOf
+    (Invoke-Crew $ctx @('status') $root).Output | Should Match 'viec-xong.*đã xong, chờ planner'
+    ((& $readsOf) - $r1) | Should Be $perStatus
+    # đã gửi Rev: đang chờ Rev, không phải chờ planner
+    $tf = Join-Path $root '.crew/tasks.json'
+    $plain = Get-Content -LiteralPath $tf -Raw -Encoding utf8
+    $sentRec = @($plain | ConvertFrom-Json | ForEach-Object { $_ })
+    $sentRec[0] | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue '2026-11-03T00:00:00' -Force
+    ConvertTo-Json -InputObject $sentRec -Depth 5 | Set-Content -LiteralPath $tf -Encoding utf8
+    (Invoke-Crew $ctx @('status') $root).Output | Should Not Match 'đã xong, chờ planner'
+    Set-Content -LiteralPath $tf -Value $plain -Encoding utf8 -NoNewline
+    $sent = @(Get-Sends $ctx).Count
+    # mất terminal: cùng kết luận ở cả ba đường
+    Set-Terms $ctx @()
+    $dry = Invoke-Crew $ctx @('up', '-DryRun') $root
+    $dry.ExitCode | Should Be 0
+    $dry.Output | Should Match 'task viec-xong có vẻ đã xong, không giao lại; còn việc thì: crew send xong-w1'
+    $dry.Output | Should Not Match 'giao lại task viec-xong ->'
+    @(Get-Sends $ctx).Count | Should Be $sent
+    $up = Invoke-Crew $ctx @('up') $root
+    $up.ExitCode | Should Be 0
+    $up.Output | Should Match 'task viec-xong có vẻ đã xong'
+    $up.Output | Should Not Match 'CẦN NGƯỜI QUYẾT'
+    @(Get-Sends $ctx).Count | Should Be $sent
+    Set-Terms $ctx @()
+    $rep = Invoke-Crew $ctx @('repair') $root
+    $rep.ExitCode | Should Be 0
+    $rep.Output | Should Match 'task viec-xong có vẻ đã xong'
+    @(Get-Sends $ctx).Count | Should Be $sent
+  }
+
   It 'shell trống sau reboot + task dở -> tắt pane cũ, bật lại, giao lại đúng 1 tin' -Skip:(-not $OnWindows) {
     $ctx = New-Ctx
     $root = New-Repo $ctx 'reboot' 'reboot' 'reboot'

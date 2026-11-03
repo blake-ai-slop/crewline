@@ -1,8 +1,11 @@
 ﻿# AST + hc giả; không gọi terminal thật.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot',
+$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-PendingInput'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
+$want += 'Get-SelfTerm', 'Get-SelfPaneState'
+# Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
+$env:HC_TERMINAL_ID = $null
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }

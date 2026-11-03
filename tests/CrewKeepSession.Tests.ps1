@@ -7,6 +7,9 @@ $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-W
   'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
+$want += 'Get-SelfTerm', 'Get-SelfPaneState'
+# Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
+$env:HC_TERMINAL_ID = $null
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }

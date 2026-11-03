@@ -3,12 +3,15 @@ $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
-  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Invoke-RepairCore',
+  'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Format-TaskFinished', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
   'Get-MoveInfo', 'Get-MovedPath', 'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Get-Ids', 'Read-ProjectRegistry', 'Save-ProjectRegistry',
   'Test-OtherAlive', 'Get-NameOwner', 'Get-IdKeyOwner', 'Register-CrewName'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
+$want += 'Get-SelfTerm', 'Get-SelfPaneState'
+# Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
+$env:HC_TERMINAL_ID = $null
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -468,6 +471,212 @@ function New-ReviewRepo {
   Add-Task $root 'a' 1; Add-Commit $root 'a' 1
   Add-Task $root 'b' 2; Add-Commit $root 'b' 2
   $root
+}
+
+# Worker làm xong theo roles/worker.md: có commit, gồm task note, worktree sạch.
+function Set-TaskDone([string]$root, [string]$name, [int]$n) {
+  $wt = Get-WorkerTree $root $n
+  New-Item -ItemType Directory -Force (Join-Path $wt 'context/tasks') | Out-Null
+  'note' | Set-Content (Join-Path $wt "context/tasks/$name.md")
+  git -C $wt add -A; git -C $wt commit -q -m done
+}
+
+Describe 'Test-TaskFinished (hàm thuần)' {
+  $task = [pscustomobject]@{ name = 'a' }
+  It 'đủ ba điều kiện -> đã xong' { Test-TaskFinished $task @{ Ahead = 1; Clean = $true; HasNote = $true } | Should Be $true }
+  It 'thiếu commit, bẩn, không rõ bẩn/sạch hoặc thiếu note -> chưa xong' {
+    Test-TaskFinished $task @{ Ahead = 0; Clean = $true; HasNote = $true } | Should Be $false
+    Test-TaskFinished $task @{ Ahead = 2; Clean = $false; HasNote = $true } | Should Be $false
+    Test-TaskFinished $task @{ Ahead = 2; Clean = $null; HasNote = $true } | Should Be $false
+    Test-TaskFinished $task @{ Ahead = 2; Clean = $true; HasNote = $false } | Should Be $false
+  }
+  It 'đã giao Rev: xét cùng ba điều kiện' {
+    $sent = [pscustomobject]@{ name = 'a'; reviewSentAt = '2026-11-03T00:00:00' }
+    Test-TaskFinished $sent @{ Ahead = 1; Clean = $true; HasNote = $true } | Should Be $true
+    Test-TaskFinished $sent @{ Ahead = 1; Clean = $false; HasNote = $true } | Should Be $false
+    Test-TaskFinished $sent @{ Ahead = 1; Clean = $true; HasNote = $false } | Should Be $false
+  }
+  It 'Ahead 0: đã giao Rev (đã merge) thì xong khi sạch và có note; chưa giao Rev thì chưa xong' {
+    $sent = [pscustomobject]@{ name = 'a'; reviewSentAt = '2026-11-03T00:00:00' }
+    Test-TaskFinished $sent @{ Ahead = 0; Clean = $true; HasNote = $true } | Should Be $true
+    Test-TaskFinished $sent @{ Ahead = 0; Clean = $false; HasNote = $true } | Should Be $false
+    Test-TaskFinished $sent @{ Ahead = 0; Clean = $null; HasNote = $true } | Should Be $false
+    Test-TaskFinished $sent @{ Ahead = 0; Clean = $true; HasNote = $false } | Should Be $false
+    Test-TaskFinished ([pscustomobject]@{ name = 'a' }) @{ Ahead = 0; Clean = $true; HasNote = $true } | Should Be $false
+  }
+}
+
+Describe 'task đã xong không bị giao lại (hc giả)' {
+  It 'đủ điều kiện -> bật lại worker, 0 tin, báo rõ, không cần người' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
+    @($res.Human).Count | Should Be 0
+    @($res.Finished).Count | Should Be 1
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong, không giao lại; còn việc thì: crew send x-w1'
+    (@($res.Done) -join '|') | Should Not Match 'giao lại task'
+  }
+
+  It 'DryRun cùng kết luận với chạy thật, không bật, không gửi' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops $true
+    $ops.State.Up | Should Be 0
+    $ops.State.Sent.Count | Should Be 0
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    (@($res.Done) -join '|') | Should Not Match 'giao lại task'
+  }
+
+  It 'worktree mất: DryRun và chạy thật cùng kết luận đã xong' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    Remove-Item -LiteralPath (Get-WorkerTree $root 1) -Recurse -Force
+    $dryOps = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    (Invoke-Rep $root $dryOps $true).Finished[0] | Should Match 'task a có vẻ đã xong'
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    $ops.State.Sent.Count | Should Be 0
+  }
+
+  It 'thiếu một điều kiện -> giao lại như cũ' {
+    $cases = @{
+      'chưa commit' = { param($root) }
+      'có commit, thiếu note' = { param($root) $wt = Get-WorkerTree $root 1; 'x' | Set-Content (Join-Path $wt 'n.txt'); git -C $wt add -A; git -C $wt commit -q -m w }
+      'note chưa commit' = { param($root) $wt = Get-WorkerTree $root 1; 'x' | Set-Content (Join-Path $wt 'n.txt'); git -C $wt add -A; git -C $wt commit -q -m w; New-Item -ItemType Directory -Force (Join-Path $wt 'context/tasks') | Out-Null; 'note' | Set-Content (Join-Path $wt 'context/tasks/a.md') }
+      'bẩn sau khi xong' = { param($root) Set-TaskDone $root 'a' 1; 'x' | Set-Content (Join-Path (Get-WorkerTree $root 1) 'them.txt') }
+    }
+    foreach ($k in $cases.Keys) {
+      $root = New-RepairRepo; Add-Task $root 'a' 1; & $cases[$k] $root
+      $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+      $res = Invoke-Rep $root $ops
+      $ops.State.Sent.Count | Should Be 1
+      $ops.State.Sent[0] | Should Match 'Tiếp tục task a'
+      @($res.Finished).Count | Should Be 0
+    }
+  }
+
+  It 'worktree đứng nhánh khác -> không coi là xong, báo người như cũ' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    git -C (Get-WorkerTree $root 1) switch -q --detach
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    @($res.Finished).Count | Should Be 0
+    (@($res.Human) -join '|') | Should Match 'không ở crew/a'
+    $ops.State.Sent.Count | Should Be 0
+  }
+
+  It 'đã gửi Rev + đủ ba điều kiện, worker thiếu, Rev còn -> không giao lại worker, không gửi Rev' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    Set-ReviewSent $root @('a')
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    @($res.Human).Count | Should Be 0
+  }
+
+  It 'đã gửi Rev + đủ ba điều kiện, worker và Rev cùng thiếu -> chỉ Rev nhận đúng dòng Get-ReviewLine; DryRun cùng kết luận' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    Set-ReviewSent $root @('a')
+    $dryOps = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = $null }
+    $dry = Invoke-RepRev $root $dryOps $true
+    $dryOps.State.Sent.Count | Should Be 0
+    $dry.Finished[0] | Should Match 'task a có vẻ đã xong'
+    (@($dry.Done) -join '|') | Should Match ([regex]::Escape('(sẽ làm) giao lại review a -> x-rev'))
+    (@($dry.Done) -join '|') | Should Not Match 'giao lại task a'
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops
+    $want = (Get-ReviewLine $root 'main' @(Get-PendingReview $root (Get-Tasks $root)) 'lean' $false).Msg
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Be $want
+    $ops.State.Sent[0] | Should Not Match 'Tiếp tục task'
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    (@($res.Done) -join '|') | Should Match ([regex]::Escape('giao lại review a -> x-rev'))
+    @($res.Human).Count | Should Be 0
+    @((Get-Tasks $root) | ForEach-Object { $_ } | Where-Object { $_.reviewSentAt }).Count | Should Be 1
+  }
+
+  It 'Rev đã merge chưa clean, worker thiếu, Rev còn -> không giao lại worker; DryRun cùng kết luận' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    Set-ReviewSent $root @('a')
+    git -C $root merge -q crew/a
+    (git -C $root rev-list --count main..crew/a).Trim() | Should Be '0'
+    $dryOps = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+    $dry = Invoke-RepRev $root $dryOps $true
+    $dry.Finished[0] | Should Match 'task a có vẻ đã xong'
+    (@($dry.Done) -join '|') | Should Not Match 'giao lại task a'
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Up | Should Be 1
+    $ops.State.Sent.Count | Should Be 0
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+    @($res.Human).Count | Should Be 0
+  }
+
+  It 'Rev đã merge chưa clean, worker và Rev cùng thiếu -> chỉ Rev nhận dòng ghi đã merge' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    Set-ReviewSent $root @('a')
+    git -C $root merge -q crew/a
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = $null }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Be (Get-ReviewLine $root 'main' @(Get-PendingReview $root (Get-Tasks $root)) 'lean' $false).Msg
+    $ops.State.Sent[0] | Should Match 'đã merge'
+    $ops.State.Sent[0] | Should Not Match 'Tiếp tục task'
+    $res.Finished[0] | Should Match 'task a có vẻ đã xong'
+  }
+
+  It 'Ahead 0 đã gửi Rev nhưng bẩn hoặc thiếu note -> worker vẫn được giao lại' {
+    $dirty = New-RepairRepo; Add-Task $dirty 'a' 1; Set-TaskDone $dirty 'a' 1
+    Set-ReviewSent $dirty @('a')
+    git -C $dirty merge -q crew/a
+    'x' | Set-Content (Join-Path (Get-WorkerTree $dirty 1) 'them.txt')
+    $noNote = New-RepairRepo; Add-Task $noNote 'a' 1
+    Set-ReviewSent $noNote @('a')
+    foreach ($root in $dirty, $noNote) {
+      $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+      $res = Invoke-RepRev $root $ops
+      $ops.State.Sent.Count | Should Be 1
+      $ops.State.Sent[0] | Should Match 'Tiếp tục task a'
+      @($res.Finished).Count | Should Be 0
+    }
+  }
+
+  It 'chưa gửi Rev + Ahead 0 dù sạch và có note -> vẫn giao lại worker' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    git -C $root merge -q crew/a
+    (git -C $root rev-list --count main..crew/a).Trim() | Should Be '0'
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+    $res = Invoke-Rep $root $ops
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Match 'Tiếp tục task a'
+    @($res.Finished).Count | Should Be 0
+  }
+
+  It 'đã gửi Rev nhưng thiếu điều kiện (chưa có note) -> worker vẫn được giao lại như cũ' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Add-Commit $root 'a' 1
+    Set-ReviewSent $root @('a')
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info); 'x-rev' = (New-Info) }
+    $res = Invoke-RepRev $root $ops
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Sent[0] | Should Match 'Tiếp tục task a'
+    @($res.Finished).Count | Should Be 0
+  }
+
+  It 'worker là shell (agent đã thoát) + task xong -> vẫn báo người nhưng không khuyên gửi Tiếp tục' {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    $shell = [pscustomobject]@{ name = 'x-w1'; state = 'live'; address = 't7'; status = $null; cwd = (Get-WorkerTree $root 1); argv = @('pwsh') }
+    $ops = New-FakeOps @{ 'x-w1' = $shell; 'x-w2' = (New-Info) } @('chữ khác')
+    $res = Invoke-Rep $root $ops
+    $text = @($res.Human) -join '|'
+    $text | Should Match 'task có vẻ đã xong'
+    $text | Should Not Match 'Tiếp tục task'
+    $ops.State.Sent.Count | Should Be 0
+  }
 }
 
 Describe 'crew review ghi reviewSentAt' {
