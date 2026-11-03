@@ -161,7 +161,7 @@ Describe 'crew help' {
       task = @('Worker', 'Review'); up = @('Path', 'All', 'DryRun', 'Restart', 'Force'); clean = @('Force')
       init = @('Path', 'Name', 'Team', 'Review', 'Access', 'GitInit', 'NoCommit')
       upgrade = @('Path', 'DryRun', 'NoCommit', 'Force'); review = @('DryRun'); send = @('Raw')
-      repair = @('Path', 'DryRun'); status = @('Path'); hot = @('Path'); limits = @('Path'); check = @('Path')
+      repair = @('Path', 'DryRun'); status = @('Path'); hot = @('Path'); limits = @('Path'); check = @('Path', 'NoTest')
     }
     foreach ($topic in $expected.Keys) {
       $result = Invoke-HelpPage $topic

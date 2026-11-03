@@ -54,9 +54,9 @@ $commands = @(
     Examples = @('crew limits')
   }
   @{
-    Name = 'check'; Group = 'Giao việc'; Syntax = 'crew check <task> [-Path .]'; Short = 'kiểm phạm vi, cú pháp và test task'
-    Details = @('Đọc task trong project -Path và so diff với danh sách Được sửa của prompt.', 'Kiểm cú pháp PowerShell và chạy test phần thay đổi; trả lỗi khi có kiểm tra không đạt.')
-    Examples = @('crew check help', 'crew check help -Path D:/Projects/demo')
+    Name = 'check'; Group = 'Giao việc'; Syntax = 'crew check <task> [-Path .] [-NoTest]'; Short = 'kiểm phạm vi, cú pháp và test task'
+    Details = @('Đọc task trong project -Path và so diff với danh sách Được sửa của prompt.', 'Kiểm cú pháp PowerShell và chạy test phần thay đổi; trả lỗi khi có kiểm tra không đạt.', '-NoTest: chỉ kiểm phạm vi và cú pháp, mục test in bỏ qua, exit theo 2 mục kia. Không có cờ thì vẫn chạy test.')
+    Examples = @('crew check help', 'crew check help -NoTest', 'crew check help -Path D:/Projects/demo')
   }
   @{
     Name = 'review'; Group = 'Giao việc'; Syntax = 'crew review <task>[,<task2>…] [-DryRun]'; Short = 'gửi yêu cầu gộp task cho Rev'

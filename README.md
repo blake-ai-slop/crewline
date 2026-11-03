@@ -214,7 +214,7 @@ Nguyên tắc: thoáng bên trong worktree, chặt ở ranh giới (dữ liệu 
 ```
 bootstrap.ps1          cài 1 dòng (Windows): kiểm git/pwsh, clone hoặc pull, chạy install.ps1
 bootstrap.sh           cài 1 dòng (Linux/macOS): cài pwsh vào ~/.local nếu thiếu, clone/pull, chạy install.ps1
-.github/workflows/     CI: Windows + Linux mỗi push/PR; macOS chạy tay (repo public: cả khi phát hành)
+.github/workflows/     CI: repo dev chạy đủ test Windows + Linux mỗi push/PR, macOS chạy tay; repo public kiểm nhanh 3 hệ khi phát hành
 install.ps1            cài shim, template, jq, PATH, ~/.crewline/
 tests/                 Pester 3.4; TestHome.ps1 = HOME/APPDATA giả cho test
 scripts/crew.ps1       lệnh crew

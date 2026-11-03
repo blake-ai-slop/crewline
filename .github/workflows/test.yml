@@ -1,7 +1,8 @@
 name: test
 
-# Repo dev: Windows + Linux mỗi push/PR vào main; macOS chỉ chạy tay (workflow_dispatch).
-# Repo public (blake-ai-slop/crewline): push vào main (phát hành) chạy thêm macOS.
+# Repo dev: Windows + Linux đủ test mỗi push/PR vào main; macOS chỉ chạy tay (workflow_dispatch os=all).
+# Repo public (blake-ai-slop/crewline): push vào main (phát hành) chỉ kiểm nhanh trên 3 hệ, vì bản đó đã
+# qua full test ở repo dev; workflow_dispatch trên repo public vẫn chạy đủ khi cần.
 on:
   push:
     branches: [main]
@@ -15,23 +16,64 @@ on:
         options: [all, windows, ubuntu, macos]
         default: all
       test_file:
-        description: Chỉ chạy một file test (vd tests/CrewSelfPane.Tests.ps1); để trống là toàn bộ
+        description: Chỉ chạy một file test (vd tests/CrewSelfPane.Tests.ps1), một job mỗi hệ; để trống là toàn bộ
         type: string
         required: false
+      quick:
+        description: Chạy đúng phần kiểm nhanh như push vào main của repo public (bỏ qua test_file)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: ${{ matrix.shard == 'nhanh' && format('kiểm nhanh ({0})', matrix.os) || matrix.shard == 'file' && format('test ({0}, một file)', matrix.os) || format('test ({0}, shard {1}/3)', matrix.os, matrix.shard) }}
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && (inputs.os == 'all' && '["windows-latest","ubuntu-latest","macos-latest"]' || format('["{0}-latest"]', inputs.os)) || (github.event_name == 'push' && github.repository == 'blake-ai-slop/crewline') && '["windows-latest","ubuntu-latest","macos-latest"]' || '["windows-latest","ubuntu-latest"]') }}
+        # nhanh: push vào main của repo public hoặc input quick. file: input test_file. Còn lại: đủ test, chia 3 shard.
+        shard: ${{ fromJSON((github.event_name == 'push' && github.repository == 'blake-ai-slop/crewline' || inputs.quick) && '["nhanh"]' || inputs.test_file && '["file"]' || '["1","2","3"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # Chỉ khi thử kiểm nhanh trên repo dev: bỏ phần không phát hành để giống bản public.
+      - name: Bỏ phần không có trên repo public
+        if: matrix.shard == 'nhanh' && github.repository != 'blake-ai-slop/crewline'
+        shell: pwsh
+        run: |
+          foreach ($p in 'tools', 'context', 'CLAUDE.md', 'AGENTS.md') { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+          exit 0
+
+      # Mỗi hệ một lần: shard 2, 3 đã có shard 1 kiểm.
+      - name: Kiểm cú pháp .ps1
+        if: matrix.shard != '2' && matrix.shard != '3'
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -File -Filter *.ps1 | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' }) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "$($f.FullName):$($e.Extent.StartLineNumber): $($e.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+          exit 0
+
+      - name: Kiểm cú pháp bootstrap.sh
+        if: matrix.shard != '2' && matrix.shard != '3'
+        shell: bash
+        run: sh -n bootstrap.sh
+
+      # Đứng trước bước đặt git identity: selfcheck phải tự đủ, không cần config git toàn máy.
+      - name: Selfcheck
+        if: matrix.shard == 'nhanh'
+        shell: pwsh
+        run: |
+          & ./scripts/selfcheck.ps1
+          exit $LASTEXITCODE
 
       - name: Git identity cho test
         shell: pwsh
@@ -56,42 +98,78 @@ jobs:
           "PESTER_VERSION=$want" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           exit 0
 
-      - name: Kiểm cú pháp .ps1
+      - name: Chọn file test, kiểm không sót file
         shell: pwsh
+        env:
+          SHARD: ${{ matrix.shard }}
+          # Qua env, không chèn thẳng input vào script.
+          TEST_FILE: ${{ inputs.test_file }}
         run: |
-          $bad = 0
-          foreach ($f in Get-ChildItem -Recurse -File -Filter *.ps1 | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' }) {
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
-            foreach ($e in $errors) { Write-Host "$($f.FullName):$($e.Extent.StartLineNumber): $($e.Message)"; $bad++ }
+          if ($env:SHARD -eq 'nhanh') {
+            $selected = @('tests/Help.Tests.ps1', 'tests/Bootstrap.Tests.ps1')
+          } elseif ($env:SHARD -eq 'file') {
+            if (-not (Test-Path -LiteralPath $env:TEST_FILE -PathType Leaf)) { Write-Host "Không thấy file test: $env:TEST_FILE"; exit 1 }
+            $selected = @($env:TEST_FILE)
+          } else {
+            # Giây đo trên CI (Windows, Linux), từ run 41652098999, riêng CrewGitIdentity theo ci-fast-tests (Linux ước lượng); file không ghi ở đây tính 15 giây.
+            # Chỉ để cân tải: test mới hoặc số đo cũ vẫn được chạy, chỉ lệch thời gian.
+            $seconds = @{
+              'CrewGitIdentity.Tests.ps1' = 100, 200; 'CrewResume.Tests.ps1' = 70, 510; 'CrewRepairAll.Tests.ps1' = 75, 320
+              'CrewUpInit.Tests.ps1' = 30, 110; 'CrewSelfPane.Tests.ps1' = 85, 65; 'Publish.Tests.ps1' = 60, 30
+              'CrewRepair.Tests.ps1' = 60, 15; 'Help.Tests.ps1' = 35, 25; 'CrewUpgrade.Tests.ps1' = 30, 35
+              'CrewMove.Tests.ps1' = 30, 10; 'CrewCheck.Tests.ps1' = 30, 20; 'Prereq.Tests.ps1' = 25, 30
+              'CrewName.Tests.ps1' = 20, 30; 'CrewTeams.Tests.ps1' = 20, 25; 'CrewConfig.Tests.ps1' = 25, 15
+            }
+            $column = if ($IsWindows) { 0 } else { 1 }
+            $root = (Get-Location).Path
+            # Cùng cách Pester tìm file: đệ quy trong tests, thêm tools nếu có (repo public không có tools/).
+            $scripts = @('tests')
+            if (Test-Path tools) { $scripts += 'tools' }
+            [string[]]$files = @(Get-ChildItem -Recurse -File -Filter *.Tests.ps1 -Path $scripts |
+              ForEach-Object { [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/') })
+            [Array]::Sort($files, [StringComparer]::Ordinal)
+            $weight = { param($f) $s = $seconds[(Split-Path $f -Leaf)]; if ($s) { $s[$column] } else { 15 } }
+            # Nặng trước, mỗi file vào shard đang nhẹ nhất. Sắp ổn định sau Ordinal nên mọi shard cùng hệ ra cùng một cách chia.
+            $shards = @{ '1' = [Collections.Generic.List[string]]::new(); '2' = [Collections.Generic.List[string]]::new(); '3' = [Collections.Generic.List[string]]::new() }
+            $load = @{ '1' = 0; '2' = 0; '3' = 0 }
+            foreach ($f in @($files | Sort-Object -Stable { -(& $weight $_) })) {
+              $to = @('1', '2', '3' | Sort-Object -Stable { $load[$_] })[0]
+              $shards[$to].Add($f)
+              $load[$to] += & $weight $f
+            }
+            foreach ($k in '1', '2', '3') { Write-Host "shard ${k}: $($shards[$k].Count) file, ước $($load[$k]) giây" }
+            # Đếm độc lập bằng git: file test nằm ngoài tests/, tools/ hoặc bị rơi khỏi shard đều làm đỏ mọi shard.
+            $actual = @(git -c core.quotepath=false ls-files -- '*.Tests.ps1')
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $assigned = @($shards['1']) + @($shards['2']) + @($shards['3'])
+            $dup = @($assigned | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+            if ($assigned.Count -ne $actual.Count -or $dup.Count) {
+              Write-Host "Tổng file các shard ($($assigned.Count)) khác số file thực tế ($($actual.Count)); trùng: $($dup -join ', ')"
+              Compare-Object $assigned $actual | ForEach-Object { Write-Host "  $($_.SideIndicator) $($_.InputObject)" }
+              exit 1
+            }
+            $selected = @($shards[$env:SHARD])
           }
-          if ($bad) { exit 1 }
+          Write-Host "Job này chạy $($selected.Count) file:"
+          $selected | ForEach-Object { Write-Host "  $_" }
+          # Ghi ra file, không qua GITHUB_ENV: test_file do người chạy nhập, không được thành biến môi trường.
+          [IO.File]::WriteAllLines((Join-Path $env:RUNNER_TEMP 'test-files.txt'), [string[]]$selected)
           exit 0
 
-      - name: Kiểm cú pháp bootstrap.sh
-        shell: bash
-        run: sh -n bootstrap.sh
-
-      - name: Pester (tests, tools nếu có)
+      - name: Pester
         shell: pwsh
         env:
           # Pester 3.4 dựng TestDrive từ $env:TEMP, biến này không có sẵn trên Linux/macOS.
           # runner.* chỉ dùng được ở cấp step (không có ở jobs.<id>.env).
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-          # Qua env, không chèn thẳng input vào script.
-          TEST_FILE: ${{ inputs.test_file }}
         run: |
           Import-Module Pester -RequiredVersion $env:PESTER_VERSION -Force
           Write-Host "Pester đã nạp: $((Get-Module Pester).Version)"
-          # Repo public không có tools/ (ngoài danh sách phát hành): chỉ thêm khi có.
-          $scripts = @('tests')
-          if (Test-Path tools) { $scripts += 'tools' }
-          if ($env:TEST_FILE) {
-            if (-not (Test-Path -LiteralPath $env:TEST_FILE -PathType Leaf)) { Write-Host "Không thấy file test: $env:TEST_FILE"; exit 1 }
-            $scripts = @($env:TEST_FILE)
-          }
+          $scripts = @(Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'test-files.txt'))
+          if (-not $scripts.Count) { Write-Host 'Không có file test nào cho job này'; exit 1 }
           $r = Invoke-Pester -Script $scripts -PassThru
+          Write-Host "Tổng job: Passed $($r.PassedCount) Failed $($r.FailedCount) Skipped $($r.SkippedCount)"
           if ($r.FailedCount -gt 0) { exit 1 }
           # pwsh trả $LASTEXITCODE còn sót từ tiến trình con trong test nếu không exit tường minh.
           exit 0

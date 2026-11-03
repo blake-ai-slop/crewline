@@ -14,8 +14,8 @@ function Save-CheckFixture([hashtable]$Files, [string]$Rules = 'Được sửa: 
   Invoke-FixtureGit -C $taskTree add .
   Invoke-FixtureGit -C $taskTree -c user.name=Test -c user.email=test@example.invalid commit -qm task
 }
-function Run-FixtureCheck([string]$TaskName = 'sample') {
-  $output = & pwsh -NoProfile -File $CheckScript check -Name $TaskName -Path $fixture 2>&1 | ForEach-Object { "$_" }
+function Run-FixtureCheck([string]$TaskName = 'sample', [string[]]$Extra = @()) {
+  $output = & pwsh -NoProfile -File $CheckScript check -Name $TaskName -Path $fixture @Extra 2>&1 | ForEach-Object { "$_" }
   [pscustomobject]@{ Code = $LASTEXITCODE; Text = $output -join "`n" }
 }
 
@@ -102,5 +102,34 @@ Describe 'crew check committed task changes' {
     $r = Run-FixtureCheck
     $r.Code | Should Be 0
     $r.Text | Should Match 'test : OK'
+  }
+  It '-NoTest does not run a failing changed test and exits 0' {
+    Save-CheckFixture @{ 'tests/Example.Tests.ps1' = 'Describe "child" { It "failure" { 1 | Should Be 2 } }' }
+    $r = Run-FixtureCheck -Extra '-NoTest'
+    $r.Code | Should Be 0
+    $r.Text | Should Match 'phạm vi : OK'
+    $r.Text | Should Match 'parse : OK'
+    $r.Text | Should Match 'test : bỏ qua'
+    $r.Text | Should Not Match 'Passed:'
+  }
+  It '-NoTest still fails on scope errors' {
+    Save-CheckFixture @{ 'outside.txt' = 'no' }
+    $r = Run-FixtureCheck -Extra '-NoTest'
+    $r.Code | Should Be 1
+    $r.Text | Should Match 'phạm vi : LỖI'
+    $r.Text | Should Match 'test : bỏ qua'
+  }
+  It '-NoTest still fails on syntax errors' {
+    Save-CheckFixture @{ 'scripts/ok.ps1' = 'function Broken {' }
+    $r = Run-FixtureCheck -Extra '-NoTest'
+    $r.Code | Should Be 1
+    $r.Text | Should Match 'parse : LỖI'
+    $r.Text | Should Match 'test : bỏ qua'
+  }
+  It 'without -NoTest the default still runs a failing changed test' {
+    Save-CheckFixture @{ 'tests/Example.Tests.ps1' = 'Describe "child" { It "failure" { 1 | Should Be 2 } }' }
+    $r = Run-FixtureCheck
+    $r.Code | Should Be 1
+    $r.Text | Should Match 'test : LỖI'
   }
 }

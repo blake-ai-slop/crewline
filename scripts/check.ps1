@@ -1,4 +1,4 @@
-﻿param([string]$Name, [string]$Path = '.')
+﻿param([string]$Name, [string]$Path = '.', [switch]$NoTest)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 
@@ -80,7 +80,8 @@ if (`$errors.Count) { exit 1 }
     }
   }
   $tests = @($files | Where-Object { $_ -match '^tests/[^/]+\.Tests\.ps1$' -and (Test-Path -LiteralPath (Join-Path $worktree $_) -PathType Leaf) })
-  if ($tests.Count) {
+  if ($NoTest) { Write-Host 'bỏ qua test (-NoTest)' }
+  elseif ($tests.Count) {
     $list = ($tests | ForEach-Object { "'" + (Join-Path $worktree $_).Replace("'", "''") + "'" }) -join ','
     # Test cú pháp cũ (`Should Be`, không gạch) không chạy được trên Pester 5: khi đó ưu tiên bản Pester <5 mới nhất nếu có.
     $legacy = @($tests | Where-Object { [IO.File]::ReadAllText((Join-Path $worktree $_)) -match '\bShould\s+(Not\s+)?[A-Za-z]' }).Count -gt 0

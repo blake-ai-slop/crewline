@@ -19,4 +19,4 @@ Trang này ghi khác biệt đã biết so với Windows ([`herdr-windows.md`](h
 - `crew task` (`/clear`, `/new`), `crew limits` đọc màn hình, `crew repair` với agent thật — **chưa kiểm**.
 - Bootstrap trên máy trắng (không có pwsh) — **chưa kiểm** ngoài test giả lập.
 
-CI (`.github/workflows/test.yml`) chạy cú pháp + Pester trên Ubuntu mỗi push/PR và macOS khi chạy tay; CI không có herdr nên không thay cho smoke thật.
+CI (`.github/workflows/test.yml`) chạy cú pháp + Pester trên Ubuntu mỗi push/PR, macOS khi chạy tay; khi phát hành chỉ kiểm nhanh trên cả 3 hệ. CI không có herdr nên không thay cho smoke thật.

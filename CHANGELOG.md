@@ -2,6 +2,11 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-04
+
+### Mới
+- **`crew check <task> -NoTest`:** chỉ kiểm phạm vi file và cú pháp, không chạy test. `crew check <task>` không có cờ vẫn chạy test như cũ.
+
 ## 2026-11-03
 
 ### Mới

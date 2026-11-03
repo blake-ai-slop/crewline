@@ -11,6 +11,7 @@ $Explain = @(
 )
 
 # hc giả: trả danh sách terminal rỗng rồi nhận terminal mới; đủ để crew up chạy hết đường mà không chạm hc thật.
+# Ghi space/tab và app đúng vai cùng herdr-app giả báo lại chúng: thiếu thì Start-Term, Wait-Tab và Show-StartupTrust chờ hết hạn (~80 giây mỗi lần crew up).
 $FakeHc = @'
 #!/usr/bin/env pwsh
 $dir = $env:FAKE_HC_DIR
@@ -26,13 +27,17 @@ switch ($args[0]) {
   }
   'send' { '{"started":true}'; exit 0 }
   'run' {
-    $name = ''; $cwd = ''
+    $name = ''; $cwd = ''; $space = ''; $tab = ''
     for ($i = 1; $i -lt $args.Count; $i++) {
       if ($args[$i] -eq '--name') { $name = $args[$i + 1] }
       if ($args[$i] -eq '--cwd') { $cwd = $args[$i + 1] }
+      if ($args[$i] -eq '--label' -and $args[$i + 1] -like 'herdr.space=*') { $space = $args[$i + 1].Substring(12) }
+      if ($args[$i] -eq '--label' -and $args[$i + 1] -like 'herdr.tab=*') { $tab = $args[$i + 1].Substring(10) }
     }
+    $encIndex = [array]::IndexOf($args, '-EncodedCommand')
+    $commandLine = if ($encIndex -ge 0) { [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($args[$encIndex + 1])) } else { '' }
     $addr = "t$($terms.Count + 100)"
-    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; turn = 1; status = [pscustomobject]@{ app = 'claude-code'; state = 'idle' } }
+    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; space = $space; tab = $tab; turn = 1; status = [pscustomobject]@{ app = $(if ($commandLine -match '(^|\}; )codex ') { 'codex' } else { 'claude-code' }); state = 'idle' } }
     ConvertTo-Json -InputObject @($terms) -Depth 6 | Set-Content -LiteralPath $file -Encoding utf8
     [pscustomobject]@{ address = $addr; name = $name } | ConvertTo-Json; exit 0
   }
@@ -41,8 +46,11 @@ switch ($args[0]) {
 '@
 $FakeHerdr = @'
 #!/usr/bin/env pwsh
-if ($args[0] -eq 'ls') { '{"spaces":[]}' }
-exit 0
+if ($args[0] -ne 'ls') { exit 0 }
+$file = Join-Path $env:FAKE_HC_DIR 'terminals.json'
+$terms = @(if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json | ForEach-Object { $_ } })
+$spaces = @($terms | Where-Object { $_.space } | ForEach-Object { [ordered]@{ id = $_.space; tabs = @([ordered]@{ id = $_.tab; terminals = @([ordered]@{ terminal = $_.address }) }) } })
+ConvertTo-Json -InputObject ([ordered]@{ spaces = $spaces }) -Depth 8; exit 0
 '@
 
 function New-Ctx([string]$GlobalConfig = "[user]`n`tuseConfigOnly = true`n[core]`n`tautocrlf = false`n") {
@@ -76,13 +84,27 @@ function Run-Crew($c, [string[]]$argv, [string]$inputText = '', [hashtable]$extr
   $e = @{}
   foreach ($k in $c.Env.Keys) { $e[$k] = $c.Env[$k] }
   foreach ($k in $extra.Keys) { $e[$k] = $extra[$k] }
-  Invoke-InTestHome -TestHome $c.Home -File $crewScript -Arguments $argv -Env $e -InputText $inputText
+  Invoke-InTestHome -TestHome $c.Home -File $(if ($c.Script) { $c.Script } else { $crewScript }) -Arguments $argv -Env $e -InputText $inputText
+}
+# Từ đây $c chạy bản sao crew.ps1 chỉ khác Invoke-RepairCore (trích bằng AST, thay bằng hàm in dấu REPAIR-CORE).
+# Phần hỏi vẫn là code thật: dispatch, Invoke-UpAll, Invoke-UpChild (con cũng là bản sao này), Invoke-Recover, Invoke-Init, Confirm-GitIdentity.
+function Use-NoRepair($c) {
+  $text = [IO.File]::ReadAllText($crewScript)
+  $parsed = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
+  $fn = $parsed.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RepairCore' }, $true)
+  if (-not $fn) { throw 'crew.ps1 không còn Invoke-RepairCore' }
+  $stub = 'function Invoke-RepairCore { Write-Host ''REPAIR-CORE''; @{ Done = @(); Finished = @(); Human = @(); Self = $null } }'
+  $patched = $text.Substring(0, $fn.Extent.StartOffset) + $stub + $text.Substring($fn.Extent.EndOffset)
+  # Bản sao nằm ngoài scripts/ nên phải trỏ lại ui.ps1, platform.ps1, teams.json, skeleton thật.
+  $c.Script = Join-Path $c.Home.Home 'crew-norepair.ps1'
+  [IO.File]::WriteAllText($c.Script, $patched.Replace('$PSScriptRoot', '$env:CREW_TEST_SCRIPTS'), [Text.UTF8Encoding]::new($true))
+  $c.Env.CREW_TEST_SCRIPTS = Split-Path $crewScript -Parent
 }
 # stdin đóng hẳn (EOF ngay dòng đầu), khác với '' | pwsh gửi một dòng trống.
 function Run-CrewEof($c, [string[]]$argv) {
   $wrap = Join-Path $c.Home.Home 'eof.ps1'
   $quoted = @($argv | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
-  Set-Content $wrap "`$null | & (Get-Process -Id `$PID).Path -NoProfile -NonInteractive -File '$crewScript' $quoted; exit `$LASTEXITCODE"
+  Set-Content $wrap "`$null | & (Get-Process -Id `$PID).Path -NoProfile -NonInteractive -File '$(if ($c.Script) { $c.Script } else { $crewScript })' $quoted; exit `$LASTEXITCODE"
   $e = @{}
   foreach ($k in $c.Env.Keys) { $e[$k] = $c.Env[$k] }
   Invoke-InTestHome -TestHome $c.Home -File $wrap -Env $e
@@ -301,10 +323,21 @@ try {
     }
 
     It 'project mới: hỏi trước khi tạo, commit đúng tác giả' {
+      Use-NoRepair $c
       Init-Repo $c
       $r = Run-Crew $c @('up', '-Path', $c.Dir) "1`nAn`nan@example.invalid`n"
       $r.Output.IndexOf('Lựa chọn') | Should BeLessThan $r.Output.IndexOf($Explain[0])
       Get-Global $c 'user.name' | Should Be 'An'
+      git -C $c.Dir log -1 --format=%ae | Should Be 'an@example.invalid'
+      $r.Output | Should Match 'REPAIR-CORE'
+    }
+
+    It 'project mới, chưa có git: hỏi danh tính và lưu trước git init' {
+      Use-NoRepair $c
+      $r = Run-Crew $c @('up', '-Path', $c.Dir) "1`nAn`nan@example.invalid`n"
+      $r.Output.IndexOf('Lựa chọn') | Should BeLessThan $r.Output.IndexOf($Explain[0])
+      $r.Output.IndexOf('crew: git init') | Should Not Be -1
+      $r.Output.IndexOf('đã lưu') | Should BeLessThan $r.Output.IndexOf('crew: git init')
       git -C $c.Dir log -1 --format=%ae | Should Be 'an@example.invalid'
     }
 
@@ -316,11 +349,14 @@ try {
     }
 
     It 'đã init, có người: hỏi và lưu' {
+      Use-NoRepair $c
       Init-Project $c
       $r = Run-Crew $c @('up', '-Path', $c.Dir) "An`nan@example.invalid`n"
       Assert-Explained $r.Output
       Get-Global $c 'user.name' | Should Be 'An'
       Get-Global $c 'user.email' | Should Be 'an@example.invalid'
+      $r.Output.IndexOf('REPAIR-CORE') | Should Not Be -1
+      $r.Output.IndexOf('đã lưu') | Should BeLessThan $r.Output.IndexOf('REPAIR-CORE')
     }
 
     It 'đã init, stdin đóng: cảnh báo một dòng kèm 2 lệnh, vẫn chạy, exit như có danh tính' {
@@ -341,11 +377,13 @@ try {
     }
 
     It 'đã init, CREWLINE_DEFAULTS=1: cảnh báo, không đọc stdin' {
+      Use-NoRepair $c
       Init-Project $c
       $r = Run-Crew $c @('up', '-Path', $c.Dir) "An`nan@example.invalid`n" @{ CREWLINE_DEFAULTS = '1' }
       $r.Output | Should Match 'cảnh báo: git chưa có tên/email'
       Assert-Explained $r.Output $false
       Get-Global $c 'user.name' | Should Be ''
+      $r.Output | Should Match 'REPAIR-CORE'
     }
 
     It '-DryRun: không hỏi, không ghi, có báo' {
@@ -366,10 +404,12 @@ try {
     }
 
     It '-All, stdin đóng: một cảnh báo cho cả lượt, vẫn chạy' {
+      Use-NoRepair $c
       Init-Project $c
       $r = Run-CrewEof $c @('up', '-All', '-Path', $c.Dir)
       ([regex]::Matches($r.Output, 'cảnh báo: git chưa có tên/email')).Count | Should Be 1
       $r.Output | Should Match 'tổng kết crew up -All'
+      $r.Output | Should Match 'REPAIR-CORE'
     }
 
     It '-All -DryRun: không hỏi, không ghi' {

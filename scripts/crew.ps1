@@ -34,7 +34,8 @@ param(
   [switch]$DryRun,
   [switch]$Force,
   [switch]$Raw,
-  [switch]$All
+  [switch]$All,
+  [switch]$NoTest
 )
 
 # Chốt chặn: crew cần pwsh 7. Gọi bằng Windows PowerShell 5.1 (powershell.exe) thì chạy lại chính file này bằng pwsh.
@@ -3463,7 +3464,7 @@ switch ($Command) {
   'clean' { Invoke-Clean }
   'send' { Invoke-Send }
   'review' { Invoke-Review }
-  'check' { & (Join-Path $PSScriptRoot 'check.ps1') -Name $Name -Path $Path; exit $LASTEXITCODE }
+  'check' { & (Join-Path $PSScriptRoot 'check.ps1') -Name $Name -Path $Path -NoTest:$NoTest; exit $LASTEXITCODE }
   'selfcheck' { & (Join-Path $PSScriptRoot 'selfcheck.ps1'); exit $LASTEXITCODE }
   'repair' { Invoke-Recover $false }
   'self-pane-run' { Invoke-SelfPaneRun }
