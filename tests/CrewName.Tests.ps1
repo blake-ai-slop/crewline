@@ -4,6 +4,8 @@
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+# Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
+function Confirm-GitIdentity { }
 $want = 'Get-LegacySlug', 'Get-Slug', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
   'Get-ForeignTermError', 'Read-ProjectRegistry', 'Save-ProjectRegistry', 'Get-NameOwner', 'Resolve-CrewName', 'Register-CrewName',
   'Get-NameConflict', 'Update-ConfigName', 'Get-Config', 'Invoke-Up', 'Invoke-Send', 'Send-CrewMessage', 'Get-MainRoot',

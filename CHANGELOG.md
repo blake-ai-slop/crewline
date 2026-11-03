@@ -12,6 +12,7 @@ Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng,
 - **`crew up -Restart` từ chính tab của vai đó không còn tự tắt giữa chừng:** tab shell được thay sau cùng; tab đang có agent sống thì crew từ chối và không tắt gì.
 - **Không giao lại task đã xong:** sau khi khởi động lại, worker đã commit xong và có ghi chú task không còn nhận "Tiếp tục task"; `crew status` hiện nhãn "đã xong, chờ planner".
 - **Cảnh báo "có thể có planner thứ hai"** không còn báo nhầm với tab shell thường.
+- **Máy chưa đặt tên/email git không còn bị dừng với lỗi khó hiểu:** `crew init`, `crew up` và `crew upgrade` hỏi tên và email ngay trong lệnh, nói rõ đây là yêu cầu của git để commit, Crewline không thu thập gì, không cần là tài khoản thật. Giá trị được lưu vào cấu hình git toàn máy nên chỉ hỏi một lần. Bỏ trống hai lần thì lệnh dừng và không tạo gì; không có người để hỏi thì `crew init`/`crew upgrade` dừng kèm 2 lệnh tự đặt, `crew up` cảnh báo rồi chạy tiếp.
 
 ### Lưu ý
 - **`crew upgrade` ghi đè file role:** nếu bạn đã tự sửa `context/roles/`, phần sửa không còn trong role và không có cảnh báo; chỉ còn ở file `.bak-<ngày>` (không commit) và lịch sử git.

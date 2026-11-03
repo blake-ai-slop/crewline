@@ -184,6 +184,119 @@ function Read-GitInitChoice([string]$title, [string]$label) {
   Read-Choice $title $options 'yes' -NoStep -NullOnEof
 }
 
+# ---------------- danh tính git ----------------
+# Lỗi của git khi dựng danh tính, rỗng là commit được. Hỏi chính git, cần cả hai: chỉ có GIT_COMMITTER_* thì committer qua mà author vẫn lỗi.
+# $with: thêm '-c k=v' để thử giá trị chưa lưu.
+function Get-GitIdentityError([string]$dir, [string[]]$with = @()) {
+  $at = @(if ($dir) { '-C', $dir }) + $with
+  foreach ($v in 'GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT') {
+    $r = Invoke-GitQuiet @at var $v
+    if ($r.Code -ne 0) { return (@($r.Text -split '\r?\n' | Where-Object { $_.Trim() }) | Select-Object -Last 1) -replace '^fatal:\s*', '' }
+  }
+  ''
+}
+
+function Get-GitIdentityFix { @('git config --global user.name "Tên của bạn"', 'git config --global user.email "ban@example.com"') }
+
+# Dừng khi bắt buộc phải có danh tính mà không có: in đúng 2 lệnh tự đặt, không ghi gì.
+function Stop-GitIdentity([string]$why) {
+  Write-Host "crew: LỖI: $why Đặt bằng 2 lệnh này rồi chạy lại:" -ForegroundColor Red
+  Get-GitIdentityFix | ForEach-Object { Write-Host "  $_" }
+  exit 1
+}
+
+# Một dòng từ người dùng; $null khi stdin hết. Console Windows đọc theo code page nên chữ Việt thành '?' nếu không chuyển sang đọc Unicode.
+function Read-GitIdentityLine([string]$label) {
+  Write-Host "${label}: " -NoNewline
+  $saved = $null
+  try {
+    if ($IsWindows -ne $false -and -not [Console]::IsInputRedirected) {
+      $before = [Console]::InputEncoding
+      [Console]::InputEncoding = [Text.Encoding]::Unicode
+      $saved = $before
+    }
+  } catch { $saved = $null }
+  try { [Console]::ReadLine() }
+  finally { if ($saved) { try { [Console]::InputEncoding = $saved } catch { $null = $_ } } }
+}
+
+# Giá trị đã nhập; '' khi trống hai lần; $null khi stdin hết.
+function Read-GitIdentityField([string]$label) {
+  for ($i = 0; $i -lt 2; $i++) {
+    $line = Read-GitIdentityLine $label
+    if ($null -eq $line) { Write-Host ''; return $null }
+    if ($line.Trim()) { return $line.Trim() }
+    if ($i -eq 0) { Write-Host '  Không được bỏ trống, nhập lại.' }
+  }
+  ''
+}
+
+# Lưu các khóa vào cấu hình git toàn máy rồi kiểm lại bằng git. Trả lỗi hoặc ''; lỗi thì gỡ đúng những khóa vừa ghi (trước đó chúng còn thiếu).
+function Save-GitIdentity([string]$dir, $values) {
+  $written = @()
+  $why = ''
+  foreach ($k in @($values.Keys)) {
+    $r = Invoke-GitQuiet config --global $k $values[$k]
+    if ($r.Code -ne 0) { $why = $r.Text; break }
+    $written += $k
+  }
+  if (-not $why) { $why = Get-GitIdentityError $dir }
+  if ($why) { foreach ($k in $written) { Invoke-GitQuiet config --global --unset $k | Out-Null } }
+  $why
+}
+
+# Bảo đảm git có danh tính trước việc cần commit; gọi trước khi tạo/ghi bất cứ gì. Đã có ⇒ im lặng, không ghi.
+# $required: việc này commit ngay, không có danh tính thì dừng. Không $required (crew up project đã init): không có người thì cảnh báo và chạy tiếp.
+function Confirm-GitIdentity([string]$dir, [bool]$required, [bool]$dry) {
+  # Con của crew up -All không đọc được stdin qua pipe của cha; cha đã hỏi hoặc cảnh báo một lần cho cả lượt.
+  if (-not $required -and $env:CREWLINE_UP_ALL_CHILD -eq '1') { return }
+  if (-not (Get-GitIdentityError $dir)) { return }
+  if ($dry) { Say 'git chưa có tên/email: khi chạy thật crew sẽ hỏi rồi lưu vào cấu hình git toàn máy (DryRun không hỏi, không ghi).'; return }
+  $noOne = {
+    if ($required) { Stop-GitIdentity 'git chưa có tên/email để commit và không có người để hỏi, crew không tạo gì.' }
+    Say "cảnh báo: git chưa có tên/email nên agent chưa commit được; đặt bằng: $((Get-GitIdentityFix) -join ' ; ')"
+  }
+  # Tiến trình nền không có người ngồi trước màn hình, đọc stdin sẽ treo.
+  if ($env:CREWLINE_DEFAULTS -eq '1' -or $Command -like 'self-pane-*') { & $noOne; return }
+  $fields = [ordered]@{}
+  foreach ($k in 'user.name', 'user.email') {
+    $r = Invoke-GitQuiet -C $dir config --get $k
+    if ($r.Code -ne 0 -or -not $r.Text) { $fields[$k] = @{ 'user.name' = 'Tên'; 'user.email' = 'Email' }[$k] }
+  }
+  if (-not $fields.Count) {
+    # Config đã đủ mà git vẫn từ chối (giá trị hỏng, biến môi trường rỗng): không ghi đè giá trị có sẵn.
+    $why = "git từ chối danh tính hiện có: $(Get-GitIdentityError $dir)."
+    if ($required) { Stop-GitIdentity $why }
+    Say "cảnh báo: $why Agent chưa commit được."
+    return
+  }
+  Write-Host 'Git cần tên và email để ghi vào commit trong project này.'
+  Write-Host 'Đây là yêu cầu của git, không phải của Crewline: crew cần commit để'
+  Write-Host 'tạo worktree riêng cho từng worker. Crewline không thu thập hay gửi'
+  Write-Host 'thông tin này đi đâu. Tên và email không cần là tài khoản thật.'
+  for ($try = 1; ; $try++) {
+    $values = [ordered]@{}
+    $with = @()
+    foreach ($k in @($fields.Keys)) {
+      $v = Read-GitIdentityField $fields[$k]
+      if ($null -eq $v) { & $noOne; return }
+      if (-not $v) { Stop-GitIdentity 'chưa có tên/email (bỏ trống hai lần), crew không tạo gì.' }
+      $values[$k] = $v
+      $with += '-c', "$k=$v"
+    }
+    # Thử bằng -c trước để giá trị git loại không bao giờ nằm lại trong cấu hình toàn máy.
+    $why = Get-GitIdentityError $dir $with
+    if (-not $why) { $why = Save-GitIdentity $dir $values }
+    if (-not $why) {
+      Say "đã lưu $(@($values.Keys | ForEach-Object { "$_=$($values[$_])" }) -join ', ') vào cấu hình git toàn máy; đổi bằng git config --global user.name/user.email."
+      return
+    }
+    Write-Host "  Git không nhận giá trị này: $why" -ForegroundColor Yellow
+    if ($try -ge 3) { Stop-GitIdentity 'git từ chối các giá trị đã nhập, crew không tạo gì.' }
+    Write-Host '  Nhập lại.'
+  }
+}
+
 # ---------------- tên crew ----------------
 # Slug kiểu cũ (trước khi config có `name`): giữ Y HỆT để project cũ không đổi tên terminal đang chạy. Chỉ Get-CrewName/upgrade gọi.
 function Get-LegacySlug([string]$root) {
@@ -812,9 +925,12 @@ function Invoke-Doctor {
     }
     Check $p.Label (Test-Prereq $p) (Get-PrereqFix $p)
   }
-  $gitCfg = { param($k) $r = Invoke-GitQuiet config --global $k; if ($r.Code -eq 0) { $r.Text } }
-  $n = & $gitCfg user.name; $e = & $gitCfg user.email
-  Check "git identity ($n <$e>)" ([bool]($n -and $e)) 'git config --global user.name/user.email'
+  if (Get-GitIdentityError $root) {
+    Write-Host '  GHI CHÚ git identity: chưa có tên/email; git yêu cầu để ghi vào commit, crew sẽ hỏi khi cần commit.' -ForegroundColor DarkGray
+  } else {
+    $at = @(if ($root) { '-C', $root })
+    Check "git identity ($((Invoke-GitQuiet @at var GIT_AUTHOR_IDENT).Text -replace '\s+\d+\s+[+-]\d+$', ''))" $true ''
+  }
   $tdir = Get-HcTemplateDir
   $tpl = @(Get-ChildItem $tdir -Filter 'crew-*.md' -ErrorAction SilentlyContinue).Count
   Check "template hc ($tpl trong $tdir)" ($tpl -ge 4) 'chạy install.ps1'
@@ -955,6 +1071,7 @@ function Invoke-Init {
     if ($null -eq $answer) { Die $fail }
     if ($answer -ne 'yes') { Say 'thôi, không tạo gì.'; exit 1 }
   }
+  if (-not $hasHead -or -not $NoCommit) { Confirm-GitIdentity $(if ($root) { $root } else { $p }) $true $false }
   if (-not $root) {
     Say "git init $p"
     Invoke-GitOrDie 'git init' -C $p init -q -b main | Out-Null
@@ -1073,8 +1190,16 @@ function Invoke-Upgrade {
   if (Test-Path $versionFile) { $old = (Get-Content $versionFile -Raw -Encoding utf8).Trim() }
   Say "upgrade context v$old -> v$version"
   $changed = [Collections.Generic.List[string]]::new()
+  # Chỉ biết có commit khi gặp file đầu tiên cần ghi: hỏi danh tính ngay trước lần ghi đó.
+  $script:UpgradeWillWrite = $false
+  $needCommit = {
+    if ($script:UpgradeWillWrite) { return }
+    $script:UpgradeWillWrite = $true
+    if (-not $DryRun -and -not $NoCommit) { Confirm-GitIdentity $root $true $false }
+  }
   function Write-UpgradeFile([string]$file, [string]$content, [bool]$backup = $false) {
     if ((Test-Path -LiteralPath $file) -and [IO.File]::ReadAllText($file) -ceq $content) { return }
+    & $needCommit
     Say "$(if ($backup) { 'sao lưu + cập nhật' } else { 'ghi' }) $file"
     if ($DryRun) { return }
     if ($backup) {
@@ -1122,12 +1247,15 @@ function Invoke-Upgrade {
     Write-UpgradeFile $file $next
   }
   Write-UpgradeFile $versionFile "$version`n"
+  $gi = Join-Path $root '.gitignore'
+  $ignoreText = if (Test-Path -LiteralPath $gi) { [IO.File]::ReadAllText($gi) } else { '' }
+  $ignoreLines = @($ignoreText -split '\r?\n+' | ForEach-Object { $_.Trim() })
+  $ignoreMissing = $ignoreLines -cnotcontains '*.bak-*'
+  if ($ignoreMissing) { & $needCommit }
   Update-ConfigName $root ([bool]$DryRun)
   if ($DryRun) {
-    $gi = Join-Path $root '.gitignore'
-    $ignoreText = if (Test-Path -LiteralPath $gi) { [IO.File]::ReadAllText($gi) } else { '' }
-    $ignoreLines = @($ignoreText -split '\r?\n+' | ForEach-Object { $_.Trim() })
-    if ($ignoreLines -cnotcontains '*.bak-*') { Say 'sẽ thêm *.bak-* vào .gitignore.' }
+    if ($ignoreMissing) { Say 'sẽ thêm *.bak-* vào .gitignore.' }
+    if ($script:UpgradeWillWrite -and -not $NoCommit) { Confirm-GitIdentity $root $true $true }
     Say 'DryRun: không ghi file, không commit.'; return
   }
   if (Add-GitIgnoreLine $root '*.bak-*') {
@@ -1153,6 +1281,8 @@ function Invoke-Up {
   $clash = Get-NameConflict $root $cfg
   if ($clash) { Die $clash }
   try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint }
+  # Agent sẽ commit về sau. Đường qua Invoke-Recover và tiến trình nền (FromRepair) không hỏi ở đây.
+  if (-not $script:FromRepair) { Confirm-GitIdentity $root $false $false }
   $main = Get-MainBranch $root
   try { $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Die "$($_.Exception.Message) — không kiểm được terminal đang chạy nên không bật/kill gì. Kiểm hc (hc ls) rồi chạy lại." }
   # terminal cùng tên mà thuộc project khác ⇒ dừng trước mọi kill/bật/gửi
@@ -2489,6 +2619,7 @@ function Invoke-Recover([bool]$stopOnClash) {
   Update-ConfigName $root ([bool]$DryRun)
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
   if ($stopOnClash) { $clash = Get-NameConflict $root $cfg; if ($clash) { Die $clash } }
+  Confirm-GitIdentity $root $false ([bool]$DryRun)
   $main = Get-MainBranch $root
   $script:Path = $root  # crew up dựng theo repo chính, kể cả khi gọi từ worktree
   Show-SelfPaneLog $root ([bool]$DryRun)
@@ -2576,6 +2707,9 @@ function Invoke-UpAll {
   if ($current -and -not (Test-Path -LiteralPath (Join-Path $current '.crew/config.json') -PathType Leaf)) { $current = $null }
   $plan = Get-UpAllPlan $reg.Map $current
   if (-not $plan.Count) { Say 'sổ chưa có project nào, thư mục hiện tại cũng chưa init: không có gì để khôi phục.'; exit 0 }
+  # Hỏi một lần ở đây vì tiến trình con không đọc được stdin; lưu toàn máy nên đủ cho mọi project.
+  $noIdentity = @($plan | Where-Object { -not $_.Skip -and (Get-GitIdentityError $_.Root) } | Select-Object -First 1)
+  if ($noIdentity.Count) { Confirm-GitIdentity $noIdentity[0].Root $false ([bool]$DryRun) }
   $selfJob = $null
   $rows = @(foreach ($p in $plan) {
       if ($p.Skip) { @{ Name = $p.Name; Root = $p.Root; Result = 'bỏ qua'; Note = $p.Skip }; continue }

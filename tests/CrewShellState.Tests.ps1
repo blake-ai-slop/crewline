@@ -1,5 +1,7 @@
 ﻿# AST thật + adapter hc thật với lệnh hc giả; không đụng terminal người dùng.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
+# Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
+function Confirm-GitIdentity { }
 $want = 'Get-TermShellState', 'Get-TermStatus', 'Invoke-Up', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey',
   'Get-ForeignTermError', 'Get-TermInfo', 'New-HcOps', 'Stop-Term', 'Get-LiveTerminals'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'

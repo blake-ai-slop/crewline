@@ -120,7 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstr
 
 Nâng cấp context của dự án cũ khi Crewline đổi: xem [`docs/upgrade.md`](docs/upgrade.md).
 
-Trước khi dùng cần có: herdr-app (đang mở), `claude` và `codex` đã đăng nhập, `git` đã đặt `user.name` và `user.email`.
+Trước khi dùng cần có: herdr-app (đang mở), `claude` và `codex` đã đăng nhập, `git`. Chưa đặt tên/email cho git thì crew sẽ hỏi khi cần commit và lưu vào cấu hình git toàn máy.
 
 ## Dùng cho một project
 
