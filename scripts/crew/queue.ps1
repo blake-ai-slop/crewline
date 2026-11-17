@@ -9,16 +9,16 @@ function Get-QueuePromptPath([string]$root, [string]$name) { Join-Path $root ".c
 function Get-QueueItems([string]$root) {
   $f = Get-QueueFile $root
   if (-not (Test-Path -LiteralPath $f)) { return , @() }
-  $raw = Get-Content -LiteralPath $f -Raw -Encoding utf8
-  if (-not "$raw".Trim()) { return , @() }
-  try { $items = $raw | ConvertFrom-Json -ErrorAction Stop } catch { throw ".crew/queue.json hỏng: $($_.Exception.Message)" }
+  $items = Read-CrewState $f -ThrowOnError
   return , @($items | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
 }
 
 function Save-QueueItems([string]$root, $items) {
+  $f = Get-QueueFile $root
+  if (Test-Path -LiteralPath $f) { $null = Read-CrewState $f -ThrowOnError }
   $list = @($items | Where-Object { $null -ne $_ })
   New-Item -ItemType Directory -Force (Join-Path $root '.crew') | Out-Null
-  ConvertTo-Json -InputObject $list -Depth 5 | Set-Content -LiteralPath (Get-QueueFile $root) -Encoding utf8
+  ConvertTo-Json -InputObject $list -Depth 100 | Set-Content -LiteralPath (Get-QueueFile $root) -Encoding utf8
 }
 
 function New-QueueItem([string]$name, [string]$prompt, [int]$worker, [string]$review, [string]$after, [string]$size) {
@@ -66,7 +66,7 @@ function Get-QueueSpawnError([string]$text) {
 function Read-QueueConfig([string]$root) {
   $f = Join-Path $root '.crew/config.json'
   if (-not (Test-Path -LiteralPath $f)) { throw "chưa có .crew/config.json" }
-  Get-Content -LiteralPath $f -Raw -Encoding utf8 | ConvertFrom-Json
+  Read-CrewState $f -ThrowOnError
 }
 
 # Giao mọi mục giao được, theo thứ tự. Không Die (lỗi ⇒ throw). $manual: in "hàng đợi trống" khi rỗng. Trả số mục đã giao.
@@ -76,7 +76,7 @@ function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = 
   if (-not $ops) { $ops = New-QueueOps }
   $cfg = Read-QueueConfig $root
   $n = @($cfg.workers).Count
-  $tasks = Get-Tasks $root
+  $tasks = Get-Tasks $root -ThrowOnError
   $limits = @{}
   $keep = @(); $given = 0; $stopped = $false
   for ($ix = 0; $ix -lt $items.Count; $ix++) {
@@ -132,7 +132,7 @@ function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = 
     Say "$($item.name): đã giao → w$pick"
     Remove-Item -LiteralPath $prompt -Force -ErrorAction SilentlyContinue
     $given++
-    $tasks = Get-Tasks $root
+    $tasks = Get-Tasks $root -ThrowOnError
   }
   if (-not $dryRun) { Save-QueueItems $root $keep }
   if ($stopped) { Say 'dừng giao tiếp vì crew task lỗi; sửa rồi chạy: crew queue -Run' }
@@ -142,6 +142,7 @@ function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = 
 # Gọi tự động cuối crew clean / crew up: không -DryRun, im lặng khi trống, lỗi chỉ cảnh báo, không đổi exit code lệnh chính.
 # $where = thư mục trong repo (root hoặc worktree); giao theo repo chính.
 function Invoke-QueueAuto([string]$where) {
+  $savedExitCode = $global:LASTEXITCODE
   try {
     $at = Resolve-Path -LiteralPath $where -ErrorAction SilentlyContinue
     if (-not $at) { return }
@@ -149,6 +150,7 @@ function Invoke-QueueAuto([string]$where) {
     if (-not $root -or -not (Test-Path -LiteralPath (Get-QueueFile $root))) { return }
     Invoke-QueueRun $root $false $false | Out-Null
   } catch { Write-Host "crew: CẢNH BÁO: hàng đợi: $($_.Exception.Message)" -ForegroundColor Yellow }
+  finally { $global:LASTEXITCODE = $savedExitCode }
 }
 
 function Show-Queue([string]$root) {

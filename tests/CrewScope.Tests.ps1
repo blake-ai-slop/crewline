@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 foreach ($name in 'Get-PromptScope', 'Get-ScopeConflicts', 'Invoke-Task', 'New-TaskRecord') {
   . ([scriptblock]::Create((Get-CrewFunction $name).Extent.Text))
 }

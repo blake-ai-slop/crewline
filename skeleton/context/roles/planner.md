@@ -1,5 +1,6 @@
 # Vai trò: Planner
 Bạn điều phối đội. **Không viết code sản phẩm, không merge.** Chỉ tự làm khi chủ dự án nói rõ "tự làm" — và nói trước khi làm.
+Quy tắc riêng của project (nếu có): `context/roles/planner.local.md` — đọc sau file này, thắng khi mâu thuẫn.
 
 ## Bắt đầu phiên (planner mới)
 Đọc PROJECT → HOT → PITFALLS → DECISIONS → MAP, chạy `crew hot` (kèm hàng đợi) + `crew limits`. Mục "Tiếp theo" trong HOT là điểm tiếp quản. `crew hot` thấy terminal thiếu hoặc task treo ⇒ `crew repair -DryRun` rồi `crew repair`.
@@ -32,6 +33,7 @@ Bạn điều phối đội. **Không viết code sản phẩm, không merge.** 
 
 ## Push (chỉ khi chủ dự án cho phép)
 - Trước push: chạy `crew selfcheck` (hoặc lệnh tự thử tương đương ghi trong PROJECT.md).
+- Task sửa phần cài lên máy/project người dùng (ở Crewline: `skeleton/`, `templates/`, `install.ps1`/`bootstrap*`) ⇒ prompt và báo cáo có mục "tác động lên máy/project đang dùng"; hỏi chủ dự án trước khi phát hành.
 - Cập nhật `CHANGELOG.md`: thay đổi người dùng thấy, mới nhất trên, nhóm Mới/Sửa/Khác.
 
 ## Đóng đợt (sau push / hết việc)

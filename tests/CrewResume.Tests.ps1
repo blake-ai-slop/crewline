@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Mở lại hội thoại: trích hàm bằng AST + e2e qua crew.ps1 thật trong HOME giả với hc/herdr-app giả. hc giả không chạy agent nào; không gọi hc thật.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
@@ -9,6 +10,7 @@ $want = 'Get-Flags', 'Quote', 'Get-AgentCommand', 'ConvertTo-RootKey', 'Test-Sam
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
+function Die($msg) { throw $msg }
 function Say($msg) { $script:Said += , [string]$msg }
 function hc { throw 'không được gọi hc thật' }
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
@@ -99,7 +101,7 @@ Describe 'sổ .crew/sessions.json' {
     Save-SessionBook $root $b
     $text = Get-Content (Get-SessionsFile $root) -Raw
     $j = $text | ConvertFrom-Json
-    @($j.PSObject.Properties.Name | Sort-Object) -join ',' | Should Be 'codexRootRoles,roles,version'
+    @($j.PSObject.Properties.Name | Sort-Object) -join ',' | Should Be 'codexRootRoles,roles,schema,version'
     @($j.roles.planner.PSObject.Properties.Name | Sort-Object) -join ',' | Should Be 'agent,root,sessionId'
     @($j.roles.w1.PSObject.Properties.Name | Sort-Object) -join ',' | Should Be 'agent,root'
     $back = Read-SessionBook $root
@@ -107,13 +109,12 @@ Describe 'sổ .crew/sessions.json' {
     $back.CodexRootRoles | Should Be 'rev'
     Test-Path "$(Get-SessionsFile $root).tmp" | Should Be $false
   }
-  It 'file hỏng dưới mọi dạng ⇒ coi như chưa có ghi nhận, cảnh báo, không throw' {
+  It 'file hỏng dưới mọi dạng ⇒ dừng, giữ nguyên file' {
     $root = Join-Path $TestDrive 'b'; New-Item -ItemType Directory -Force (Join-Path $root '.crew') | Out-Null
     foreach ($bad in '{', '', '[]', '1', '{"roles":3}', 'null') {
       [IO.File]::WriteAllText((Get-SessionsFile $root), $bad)
-      $b = Read-SessionBook $root
-      $b.Roles.Count | Should Be 0
-      $b.Warning | Should Match 'hỏng'
+      { Read-SessionBook $root } | Should Throw 'hỏng'
+      [IO.File]::ReadAllText((Get-SessionsFile $root)) | Should Be $bad
     }
   }
   It 'mục sai dạng ⇒ chỉ bỏ mục đó' {
@@ -423,16 +424,14 @@ Describe 'crew up: không chắc phiên thì hội thoại mới và nói rõ (h
     $r.Output | Should Match 'cảnh báo: hai-planner: hội thoại mới \(hai vai Codex'
     $r.Output | Should Match 'cảnh báo: hai-rev: hội thoại mới \(hai vai Codex'
   }
-  It 'sổ hỏng: cảnh báo, hội thoại mới, exit 0, sổ được ghi lại' {
+  It 'sổ hỏng: dừng, giữ nguyên sổ' {
     $ctx = New-Ctx
     $root = New-Repo $ctx 'hong' 'claude' 'none' @('claude')
     [IO.File]::WriteAllText((Join-Path $root '.crew/sessions.json'), '{hỏng')
     $r = Invoke-Crew $ctx @('up') $root
-    $r.ExitCode | Should Be 0
-    $r.Output | Should Match 'sổ phiên .* hỏng'
-    @(Get-Cmds $ctx 'hong-planner')[0] | Should Match '--session-id'
-    @(Get-Cmds $ctx 'hong-w1')[0] | Should Match "'Bạn là worker"
-    (Get-Book $root).roles.planner.agent | Should Be 'claude'
+    $r.ExitCode | Should Be 1
+    $r.Output | Should Match 'sessions.json hỏng'
+    [IO.File]::ReadAllText((Join-Path $root '.crew/sessions.json')) | Should Be '{hỏng'
   }
   It 'đổi agent trong config: hội thoại mới theo agent mới, sổ cập nhật; lần sau mở lại' {
     $ctx = New-Ctx
@@ -553,6 +552,22 @@ Describe 'crew up -Restart chặn planner/Rev đang làm (hc giả)' {
 }
 
 Describe 'crew up -Restart và -DryRun (hc giả)' {
+  It '-Restart với schema mới hơn dừng trước nâng tên, giữ nguyên byte và không gọi hc' {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'future' 'claude' 'none' @('claude')
+    $file = Join-Path $root '.crew/config.json'
+    $cfg = Get-Content $file -Raw | ConvertFrom-Json
+    $cfg.PSObject.Properties.Remove('idKey')
+    $cfg | Add-Member NoteProperty schema 99
+    $cfg | Add-Member NoteProperty unknown @{a=@{b=@{c=@{d=@{e=@{value=42}}}}}}
+    $cfg | ConvertTo-Json -Depth 100 | Set-Content $file -Encoding utf8
+    $before = (Get-FileHash $file).Hash
+    $r = Invoke-Crew $ctx @('up', '-Restart', 'planner', '-Force') $root
+    $r.ExitCode | Should Be 1
+    $r.Output | Should Match 'dữ liệu do bản crew mới hơn ghi — cập nhật crew'
+    (Get-FileHash $file).Hash | Should Be $before
+    @(Get-Log $ctx 'hc.log').Count | Should Be 0
+  }
   It '-Restart không resume dù sổ đủ; vai khác còn sống không đụng; UUID mới' {
     $ctx = New-Ctx
     $root = New-Repo $ctx 'rs' 'claude' 'none' @('claude')
@@ -601,13 +616,13 @@ Describe 'crew up -Restart và -DryRun (hc giả)' {
     @(Get-Sends $ctx).Count | Should Be 0
     (Get-Content -LiteralPath (Join-Path $root '.crew/sessions.json') -Raw) | Should BeExactly $before
   }
-  It '-DryRun với sổ hỏng: cảnh báo, không throw, không sửa file' {
+  It '-DryRun với sổ hỏng: dừng, không sửa file' {
     $ctx = New-Ctx
     $root = New-Repo $ctx 'dh' 'none' 'none' @('claude')
     [IO.File]::WriteAllText((Join-Path $root '.crew/sessions.json'), 'rác')
     $r = Invoke-Crew $ctx @('up', '-DryRun') $root
-    $r.ExitCode | Should Be 0
-    $r.Output | Should Match 'sổ phiên .* hỏng'
+    $r.ExitCode | Should Be 1
+    $r.Output | Should Match 'sessions.json hỏng'
     (Get-Content -LiteralPath (Join-Path $root '.crew/sessions.json') -Raw) | Should Be 'rác'
   }
 }

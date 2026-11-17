@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test crew limits: trích hàm bằng AST từ crew.ps1, hc và CLI đều giả; không gọi hc/codex/claude thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/platform.ps1')

@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tên crew duy nhất theo project: slug, sổ ~/.crewline/projects.json (HOME giả / file trong $TestDrive), kiểm chủ terminal theo cwd.
 # Hàm trích bằng AST từ crew.ps1, hc giả — không gọi hc thật. Init chạy e2e qua Invoke-InTestHome (HOME giả).
 . "$PSScriptRoot/TestHome.ps1"

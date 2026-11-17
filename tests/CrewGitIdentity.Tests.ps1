@@ -467,7 +467,8 @@ try {
       $role = Join-Path $c.Dir 'context/roles/worker.md'
     }
     function Make-Old($c) {
-      Set-Content (Join-Path $c.Dir 'context/roles/worker.md') 'old role'
+      # Version cũ tạo thay đổi tracked cần commit; role sửa tay giờ chỉ sinh .new.
+      [IO.File]::WriteAllText((Join-Path $c.Dir 'context/.skeleton-version'), '0')
       git -C $c.Dir add context
       git -C $c.Dir -c user.name=seed -c user.email=seed@example.invalid commit -qm old
     }
@@ -477,22 +478,26 @@ try {
       $r = Run-Crew $c @('upgrade', '-Path', $c.Dir) "An`nan@example.invalid`n"
       $r.ExitCode | Should Be 0
       Assert-Explained $r.Output
-      $r.Output.IndexOf('đã lưu') | Should BeLessThan $r.Output.IndexOf('sao lưu + cập nhật')
+      $writeAt = $r.Output.IndexOf("crew: ghi $(Join-Path $c.Dir 'context/.skeleton-version')")
+      $writeAt | Should BeGreaterThan -1
+      $r.Output.IndexOf('đã lưu') | Should BeLessThan $writeAt
       git -C $c.Dir log -1 --format=%ae | Should Be 'an@example.invalid'
     }
 
     It 'có commit, không có người: dừng trước khi ghi file' {
       Make-Old $c
+      $beforeRole = [IO.File]::ReadAllText($role)
       $r = Run-Crew $c @('upgrade', '-Path', $c.Dir) '' @{ CREWLINE_DEFAULTS = '1' }
       $r.ExitCode | Should Not Be 0
       $r.Output | Should Match 'git config --global user\.name "'
-      (Get-Content $role -Raw).Trim() | Should Be 'old role'
+      [IO.File]::ReadAllText($role) | Should BeExactly $beforeRole
+      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '0'
       @(Get-ChildItem "$role.bak-*" -ErrorAction Ignore).Count | Should Be 0
       git -C $c.Dir status --porcelain | Should BeNullOrEmpty
     }
 
     It 'không có gì để commit: không hỏi, exit 0' {
-      # Lần upgrade đầu sau init còn ghi lại .skeleton-version nên chạy một lần khi có danh tính.
+      # Cả lần đầu sau init lẫn lần lặp đều không hỏi khi không có tracked change.
       $noIdentity = [IO.File]::ReadAllText($c.Global)
       [IO.File]::AppendAllText($c.Global, "[user]`n`tname = seed`n`temail = seed@example.invalid`n")
       $first = Run-Crew $c @('upgrade', '-Path', $c.Dir) '' @{ CREWLINE_DEFAULTS = '1' }
@@ -513,13 +518,15 @@ try {
 
     It '-DryRun có việc: báo, không hỏi, không ghi' {
       Make-Old $c
+      $beforeRole = [IO.File]::ReadAllText($role)
       $before = [IO.File]::ReadAllText($c.Global)
       $r = Run-Crew $c @('upgrade', '-Path', $c.Dir, '-DryRun') "An`nan@example.invalid`n"
       $r.ExitCode | Should Be 0
       $r.Output | Should Match 'DryRun không hỏi, không ghi'
       Assert-Explained $r.Output $false
       [IO.File]::ReadAllText($c.Global) | Should Be $before
-      (Get-Content $role -Raw).Trim() | Should Be 'old role'
+      [IO.File]::ReadAllText($role) | Should BeExactly $beforeRole
+      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '0'
     }
   }
 

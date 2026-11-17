@@ -49,10 +49,19 @@ crew_bootstrap() {
     crew_branch=${CREWLINE_BRANCH:-main}
     if [ -f "$crew_dir/scripts/crew.ps1" ] && [ -f "$crew_dir/install.ps1" ]; then
         crew_dirty=$(git -C "$crew_dir" status --porcelain) || return 1
+        crew_before=$(git -C "$crew_dir" rev-parse --short HEAD) || return 1
+        crew_before_version=$(cat "$crew_dir/skeleton/VERSION" 2>/dev/null) || crew_before_version='?'
         if [ -n "$crew_dirty" ]; then
-            echo 'bootstrap: uncommitted changes; skip git pull, run install.'
+            echo "bootstrap: uncommitted changes; skip git pull, still on old version $crew_before (context v$crew_before_version), run install. Inspect: git -C \"$crew_dir\" status; save changes: git -C \"$crew_dir\" stash."
         else
             git -C "$crew_dir" pull --ff-only -q || return 1
+            crew_after=$(git -C "$crew_dir" rev-parse --short HEAD) || return 1
+            crew_after_version=$(cat "$crew_dir/skeleton/VERSION" 2>/dev/null) || crew_after_version='?'
+            if [ "$crew_before" = "$crew_after" ]; then
+                echo "bootstrap: da o ban moi nhat $crew_after (context v$crew_after_version)"
+            else
+                echo "bootstrap: cap nhat Crewline $crew_before -> $crew_after (context v$crew_before_version -> v$crew_after_version)"
+            fi
         fi
     elif [ ! -d "$crew_dir" ] || [ -z "$(ls -A "$crew_dir")" ]; then
         git clone -q --branch "$crew_branch" "$crew_repo" "$crew_dir" || return 1

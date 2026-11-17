@@ -102,7 +102,10 @@ function Read-ProjectRegistry {
       if ($v -is [string] -and $v) { $map[$p.Name] = @{ Root = $v; IdKey = (Get-LegacyIdKey $p.Name) }; continue }
       if ($v -isnot [pscustomobject] -or $v.root -isnot [string] -or -not $v.root) { throw "mục '$($p.Name)' cần root là đường dẫn" }
       $k = if ($v.idKey -is [string] -and $v.idKey) { $v.idKey } else { Get-LegacyIdKey $p.Name }
-      $map[$p.Name] = @{ Root = $v.root; IdKey = $k }
+      $entry = @{}
+      foreach ($field in $v.PSObject.Properties) { $entry[$field.Name] = $field.Value }
+      $entry.Root = $v.root; $entry.IdKey = $k
+      $map[$p.Name] = $entry
     }
     return @{ Ok = $true; Map = $map; Error = '' }
   } catch { return @{ Ok = $false; Map = [ordered]@{}; Error = "sổ tên crew $f hỏng ($($_.Exception.Message))" } }
@@ -112,8 +115,18 @@ function Save-ProjectRegistry($map) {
   $f = Get-ProjectsFile
   New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
   $o = [ordered]@{}
-  foreach ($k in @($map.Keys | Sort-Object)) { $o[$k] = [ordered]@{ root = $map[$k].Root; idKey = $map[$k].IdKey } }
-  [IO.File]::WriteAllText($f, ($o | ConvertTo-Json -Depth 3) + "`n", [Text.UTF8Encoding]::new($false))
+  $previous = Read-ProjectRegistry
+  if (-not $previous.Ok) { throw $previous.Error }
+  foreach ($k in @($map.Keys | Sort-Object)) {
+    $entry = [ordered]@{}
+    if ($previous.Map.Contains($k)) {
+      foreach ($field in $previous.Map[$k].Keys) { $entry[$field] = $previous.Map[$k][$field] }
+    }
+    foreach ($field in $map[$k].Keys) { $entry[$field] = $map[$k][$field] }
+    $entry['root'] = $map[$k].Root; $entry['idKey'] = $map[$k].IdKey
+    $o[$k] = $entry
+  }
+  [IO.File]::WriteAllText($f, ($o | ConvertTo-Json -Depth 100) + "`n", [Text.UTF8Encoding]::new($false))
 }
 
 # Mục sổ thuộc root khác còn tồn tại (có .crew/config.json)?

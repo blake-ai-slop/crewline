@@ -42,7 +42,7 @@ function Start-SelfPaneProcess($job) {
   $file = Get-SelfPaneFile $job.root 'json'
   $job.parentPid = $PID
   New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
-  [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $job), [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $job -Depth 100), [Text.UTF8Encoding]::new($false))
   try {
     $found = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $exe = if ($found) { $found.Source } else { (Get-Process -Id $PID).Path }
@@ -242,6 +242,8 @@ function Invoke-Recover([bool]$stopOnClash) {
     $root = Get-MainRoot $p
   }
   if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
+  # Kiểm schema/JSON trước bước nâng metadata tên (bước đó có thể ghi config).
+  $null = Get-Config $root
   Update-ConfigName $root ([bool]$DryRun)
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
   if ($stopOnClash) { $clash = Get-NameConflict $root $cfg; if ($clash) { Die $clash } }

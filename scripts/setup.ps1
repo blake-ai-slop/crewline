@@ -98,7 +98,7 @@ if (-not $automatic) {
 $config = [ordered]@{ team = $team; planner = $planner; workers = @($workers); rev = $rev; review = $review; access = $access }
 $parent = Split-Path -Parent $file
 if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-$config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $file -Encoding utf8
+$config | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file -Encoding utf8
 $show = { param($v) if ($v -eq 'none') { 'không dùng' } else { $v } }
 Write-Host ''
 Write-Host 'Đã chọn:'

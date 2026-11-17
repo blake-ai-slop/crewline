@@ -1,7 +1,7 @@
 ﻿<#
 Cài Crewline cho người dùng hiện tại (Windows/Linux/macOS, herdr-app + hc).
   - shim `crew` (Windows: PowerShell + Git Bash; Unix: pwsh thực thi) trong ~/.local/bin, trỏ về repo này
-  - template hc crew-* trong %APPDATA%/herdr-core/templates (Windows) hoặc $XDG_CONFIG_HOME/herdr-core/templates (~/.config mặc định trên Unix) (sao lưu bản khác trước khi ghi đè)
+  - template hc crew-* trong %APPDATA%/herdr-core/templates (Windows) hoặc $XDG_CONFIG_HOME/herdr-core/templates (~/.config mặc định trên Unix) (giữ bản đã sửa, ghi bản mới ra .new)
   - jq nếu thiếu trên Windows: tải GitHub; Unix: dùng jq của hệ
   - thêm ~/.local/bin vào PATH người dùng nếu chưa có
   - thư mục ~/.crewline/ và chọn đội mặc định khi chưa có config
@@ -22,6 +22,15 @@ $Bin = Get-UserBinDir
 $Today = Get-Date -Format 'yyyyMMdd'
 function Say($m) { Write-Host "install: $m" }
 
+$isUpdate = (Test-Path (Join-Path $Bin 'crew')) -or (Test-Path (Join-Path $Bin 'crew.ps1'))
+$updatedTemplates = @(); $keptTemplates = @()
+function Backup-CrewlineShim([string]$file) {
+  $backup = "$file.bak-$Today"
+  $n = 1
+  while (Test-Path -LiteralPath $backup) { $backup = "$file.bak-$Today-$n"; $n++ }
+  Copy-Item -LiteralPath $file $backup
+  Say "sao lưu $file -> $backup"
+}
 New-Item -ItemType Directory -Force $Bin | Out-Null
 
 # ~/.crewline: mặc định cá nhân
@@ -51,14 +60,18 @@ exit `$LASTEXITCODE
 
 $dst = Join-Path $Bin 'crew.ps1'
 if ((Test-Path $dst) -and ((Get-Content $dst -Raw) -ne $shim) -and -not ((Get-Content $dst -Raw) -match 'Crewline shim')) {
-  Copy-Item $dst "$dst.bak-$Today"; Say "sao lưu $dst -> crew.ps1.bak-$Today"
+  Backup-CrewlineShim $dst
 }
 [IO.File]::WriteAllText($dst, $shim, [Text.UTF8Encoding]::new($true))
 Say "shim $dst -> $crewPs1"
 
 # shim Git Bash (Claude Code chạy lệnh qua Git Bash)
 $bashShim = "#!/usr/bin/env bash`n# Crewline shim - sinh bởi install.ps1`nexec pwsh -NoLogo -NoProfile -File '$crewPs1' `"`$@`"`n"
-[IO.File]::WriteAllText((Join-Path $Bin 'crew'), $bashShim.Replace("`r`n", "`n"))
+$bashDst = Join-Path $Bin 'crew'
+if ((Test-Path $bashDst) -and ([IO.File]::ReadAllText($bashDst) -notmatch 'Crewline shim')) {
+  Backup-CrewlineShim $bashDst
+}
+[IO.File]::WriteAllText($bashDst, $bashShim.Replace("`r`n", "`n"))
 Say "shim $(Join-Path $Bin 'crew') (Git Bash)"
 
 } else {
@@ -68,7 +81,7 @@ Say "shim $(Join-Path $Bin 'crew') (Git Bash)"
   $shim = '#!/usr/bin/env pwsh' + "`n# Crewline shim - sinh boi install.ps1`n& '$crewQ' @args`nexit " + '$LASTEXITCODE' + "`n"
   $dst = Join-Path $Bin 'crew'
   if ((Test-Path $dst) -and ([IO.File]::ReadAllText($dst) -notmatch 'Crewline shim')) {
-    Copy-Item $dst "$dst.bak-$Today"
+    Backup-CrewlineShim $dst
   }
   [IO.File]::WriteAllText($dst, $shim, [Text.UTF8Encoding]::new($false))
   # PATH không có chmod (PATH tối giản): đặt +x qua .NET 7+ (UnixFileMode).
@@ -85,13 +98,30 @@ Say "shim $(Join-Path $Bin 'crew') (Git Bash)"
 # template hc
 $tdir = Get-HcTemplateDir
 New-Item -ItemType Directory -Force $tdir | Out-Null
-foreach ($t in Get-ChildItem (Join-Path $Repo 'templates') -Filter '*.md') {
-  $d = Join-Path $tdir $t.Name
-  if ((Test-Path $d) -and ((Get-FileHash $d).Hash -ne (Get-FileHash $t.FullName).Hash)) {
-    Copy-Item $d "$d.bak-$Today"; Say "sao lưu $($t.Name) -> $($t.Name).bak-$Today"
-  }
-  Copy-Item $t.FullName $d -Force
+$hashFile = Join-Path $HOME '.crewline/installed-hashes.json'
+$hashes = @{}
+if (Test-Path -LiteralPath $hashFile) {
+  try {
+    $saved = Get-Content -LiteralPath $hashFile -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $saved -or $saved.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'cần object' }
+    foreach ($p in $saved.PSObject.Properties) { $hashes[$p.Name] = $p.Value }
+  } catch { throw "Không đọc được $hashFile — sửa JSON hoặc khôi phục bản sao trước khi cài lại: $($_.Exception.Message)" }
 }
+foreach ($t in Get-ChildItem (Join-Path $Repo 'templates') -Filter 'crew-*.md') {
+  $d = Join-Path $tdir $t.Name
+  $newHash = (Get-FileHash -LiteralPath $t.FullName).Hash
+  $oldHash = if (Test-Path -LiteralPath $d) { (Get-FileHash -LiteralPath $d).Hash } else { '' }
+  if ($oldHash -and $oldHash -ne $newHash -and $oldHash -ne $hashes[$t.Name]) {
+    Copy-Item -LiteralPath $t.FullName "$d.new" -Force
+    $keptTemplates += $d
+    Say "CẢNH BÁO $d đã sửa — bản mới ở $d.new; gộp tay rồi xóa .new"
+    continue
+  }
+  Copy-Item -LiteralPath $t.FullName $d -Force
+  $hashes[$t.Name] = $newHash
+  $updatedTemplates += $t.Name
+}
+$hashes | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $hashFile -Encoding utf8
 Say "template hc -> $tdir"
 
 # jq
@@ -104,8 +134,9 @@ if ($env:CREWLINE_NO_JQ -eq '1') {
 
 # PATH
 $binPath = (Resolve-Path $Bin).Path
+$pathAdded = $false
 if ($env:CREWLINE_NO_PATH -eq '1') { Say 'bỏ qua PATH người dùng (CREWLINE_NO_PATH=1)' }
-elseif (Add-UserPath $binPath) { Say "thêm $binPath vào PATH người dùng (mở terminal mới để nhận)." }
+elseif (Add-UserPath $binPath) { $pathAdded = $true; Say "thêm $binPath vào PATH người dùng (mở terminal mới để nhận)." }
 $separator = [IO.Path]::PathSeparator
 if (-not (($env:Path -split [regex]::Escape("$separator")) -contains $binPath)) { $env:Path = "$binPath$separator$env:Path" }
 $configFile = if ($env:CREWLINE_USER_CONFIG) { $env:CREWLINE_USER_CONFIG } else { Join-Path $HOME '.crewline/config.json' }
@@ -113,6 +144,43 @@ if (Test-Path -LiteralPath $configFile) {
   Say "đã có config cá nhân, chạy 'crew setup' để đổi"
 } elseif ($env:CREWLINE_DEFAULTS -ne '1') {
   & (Join-Path $Repo 'scripts/setup.ps1')
+}
+
+if ($isUpdate) {
+  Write-Host '== Cập nhật Crewline'
+  Write-Host "Đã cập nhật: lệnh crew, template hc $($updatedTemplates -join ', ')"
+  if ($keptTemplates.Count) {
+    Write-Host 'Giữ bản của bạn, bản mới ở .new:' -ForegroundColor Yellow
+    foreach ($file in $keptTemplates) { Write-Host "  $file -> $file.new" -ForegroundColor Yellow }
+    Write-Host 'Gộp tay rồi xóa .new.' -ForegroundColor Yellow
+  }
+  $pathStatus = if ($env:CREWLINE_NO_PATH -eq '1') { 'bỏ qua theo CREWLINE_NO_PATH' } elseif ($pathAdded) { 'đã thêm' } else { 'đã có' }
+  Write-Host "Giữ nguyên: config cá nhân $configFile; PATH ($pathStatus)"
+  $registryFile = Join-Path $HOME '.crewline/projects.json'
+  if (-not (Test-Path -LiteralPath $registryFile)) { Write-Host 'Project cần upgrade: bỏ qua (chưa có sổ projects.json).' }
+  else {
+    try {
+      $registry = Get-Content -LiteralPath $registryFile -Raw | ConvertFrom-Json -ErrorAction Stop
+      if ($null -eq $registry -or $registry.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'cần object' }
+      $versionFile = Join-Path $Repo 'skeleton/VERSION'
+      if (Test-Path -LiteralPath $versionFile) {
+        $version = [int]([IO.File]::ReadAllText($versionFile).Trim())
+        Write-Host 'Project cần upgrade:'
+        $needUpgrade = $false
+        foreach ($entry in $registry.PSObject.Properties) {
+          $projectRoot = if ($entry.Value -is [string]) { $entry.Value } else { $entry.Value.root }
+          if (-not $projectRoot -or -not (Test-Path -LiteralPath $projectRoot -PathType Container)) { continue }
+          $stamp = Join-Path $projectRoot 'context/.skeleton-version'
+          $oldVersion = 0
+          if ((Test-Path -LiteralPath $stamp) -and [int]::TryParse(([IO.File]::ReadAllText($stamp)).Trim(), [ref]$oldVersion) -and $oldVersion -lt $version) {
+            Write-Host "  $($entry.Name) ($projectRoot) context v$oldVersion → chạy: crew upgrade -DryRun rồi crew upgrade trong thư mục đó"
+            $needUpgrade = $true
+          }
+        }
+        if (-not $needUpgrade) { Write-Host '  Không có project cũ cần upgrade.' }
+      }
+    } catch { Write-Host "Project cần upgrade: bỏ qua (không đọc được sổ projects.json: $($_.Exception.Message))." -ForegroundColor Yellow }
+  }
 }
 
 # Kiểm phần mềm: bắt buộc + agent theo đội (không có config => standard).

@@ -8,27 +8,63 @@ crew upgrade
 crew upgrade -Path C:\du-an -NoCommit
 ```
 
-`-DryRun` chỉ in thay đổi, gồm cả việc sẽ thêm `*.bak-*` vào `.gitignore` nếu thiếu, không ghi file hoặc commit.
-Upgrade thay khối crew trong `CLAUDE.md`/`AGENTS.md` bằng bản mới, giữ nguyên nội dung ngoài khối. Bình thường lệnh commit
+Nguyên tắc: **upgrade không bao giờ ghi đè thứ bạn đã sửa.** File/khối bạn đã sửa được giữ nguyên từng byte; bản mới
+ghi ra `<file>.new` bên cạnh (không commit), lệnh in `CẢNH BÁO: <file> đã sửa tay — bản mới ở <file>.new, gộp tay rồi xóa .new`.
+
+`-DryRun` không ghi file, không commit; cuối lệnh (thật hoặc `-DryRun`) in khối tóm tắt:
+
+```text
+== crew upgrade: context v10 -> v11
+Đã cập nhật (3): context/roles/rev.md, context/roles/worker.md, context/.skeleton-version (v10 -> v11)
+Giữ bản của bạn, bản mới ở .new (1): context/roles/planner.md -> context/roles/planner.md.new
+Giữ nguyên (3): context/README.md, CLAUDE.md (khối crew), AGENTS.md (khối crew)
+Việc cần làm: mở từng cặp <file> và <file>.new, gộp phần mới vào bản của bạn rồi xóa .new; …
+```
+
+Không có gì thay đổi ⇒ một dòng `context đã ở v<N>, không có gì để cập nhật.` Bình thường lệnh commit
 `chore: crew upgrade context -> v<N>`. `-NoCommit` để bạn kiểm tra và commit sau.
-Nếu `context/` có thay đổi chưa commit (kể cả file mới), lệnh từ chối;
-`-Force` cho phép tiếp tục. Hãy commit việc đang làm trước nếu muốn giữ lịch sử riêng.
-Commit upgrade chỉ chứa các file được lệnh thay đổi; file đã stage ngoài phạm vi được giữ lại.
+Nếu `context/` có thay đổi chưa commit (kể cả file mới, trừ `*.bak-*`/`*.new`), lệnh từ chối, nêu file và lệnh để làm tiếp;
+`-Force` cho phép tiếp tục. Commit upgrade chỉ chứa các file được lệnh thay đổi; file đã stage ngoài phạm vi được giữ lại.
+
+## Dấu bản mẫu
+
+`crew init`/`crew upgrade` ghi `context/.skeleton-hashes.json` (commit cùng): khóa là đường dẫn trong `context/`
+(`README.md`, `roles/planner.md`, …) hoặc `CLAUDE.md#crew` / `AGENTS.md#crew` (nội dung giữa `<!-- crew -->` và
+`<!-- /crew -->`), giá trị là sha256 của bản mẫu đã cài (CRLF chuẩn hóa thành LF). Upgrade với từng file/khối đó:
+
+| Hiện trạng | Kết quả |
+|---|---|
+| Giống hệt bản mới | Chỉ cập nhật dấu |
+| Khớp dấu đã lưu, hoặc khớp một bản Crewline đã phát hành (`skeleton/released-hashes.json`) | Thay bằng bản mới, cập nhật dấu |
+| Khác (bạn đã sửa), hoặc project cũ chưa có dấu mà không khớp bản phát hành nào | Không thay; ghi `<file>.new`; dấu giữ giá trị cũ |
+
+Project init bằng bản cũ (chưa có dấu) vẫn được cập nhật bình thường nếu file còn đúng một bản đã phát hành.
+Khi sửa `skeleton/context/README.md`, `roles/*.md` hoặc `Get-CrewBlock`: tăng `skeleton/VERSION` và thêm sha256 bản mới
+vào `skeleton/released-hashes.json` (`tests/UpgradeSafety.Tests.ps1` kiểm).
+
+## Quy tắc riêng: `*.local.md`
+
+Đừng sửa thẳng `context/roles/<vai>.md` để thêm luật của project; đặt chúng ở `context/roles/<vai>.local.md`
+(`planner.local.md`, `rev.local.md`, `worker.local.md`). Mỗi file vai nhắc agent đọc file `.local.md` sau nó, và
+file `.local.md` thắng khi mâu thuẫn. `crew init`/`crew upgrade` không tạo, không sửa, không xóa `*.local.md`, nên
+role chuẩn luôn cập nhật được. Đã lỡ sửa role: khi có `.new`, chuyển phần riêng sang `.local.md`, lấy bản `.new` thay
+file role rồi xóa `.new`.
 
 | File | Quy tắc |
 |---|---|
-| `context/README.md`, `context/roles/*.md` | Khác nội dung thì sao lưu `.bak-yyyyMMdd` rồi thay bằng skeleton; giống thì bỏ qua. Nếu trùng tên backup, thêm `-1`, `-2`, … |
+| `context/README.md`, `context/roles/*.md` | Theo dấu bản mẫu ở trên; không còn tạo `.bak` |
+| `context/roles/*.local.md` | Không bao giờ đụng |
 | `PROJECT.md`, `HOT.md`, `DECISIONS.md`, `PROGRESS.md`, `ROADMAP.md`, `MAP.md` | Giữ nguyên nội dung đã có |
 | `context/tasks/`, `context/archive/` | Không đụng |
 | `context/PITFALLS.md` | Chỉ thêm bullet `- …` chưa có, so sánh nguyên dòng sau trim, phân biệt hoa/thường; giữ nguyên mọi dòng cũ |
 | File skeleton mới mà dự án chưa có | Chép vào, trừ nội dung dưới `tasks/`, `archive/` |
-| `CLAUDE.md`, `AGENTS.md` | Thay riêng khối `<!-- crew -->` đến `<!-- /crew -->`, giữ phần còn lại; nhận cả khối do init cũ tạo. Chưa có khối thì thêm vào |
+| `CLAUDE.md`, `AGENTS.md` | Chỉ phần giữa `<!-- crew -->` và `<!-- /crew -->`, theo dấu bản mẫu; ngoài khối luôn giữ nguyên. Chưa có khối thì thêm vào. Có `<!-- crew -->` mà thiếu `<!-- /crew -->` (khối kiểu init cũ) ⇒ không ghi file đó, cảnh báo: thêm dòng `<!-- /crew -->` bằng tay ngay sau khối rồi chạy lại |
 | `context/.skeleton-version` | Ghi version hiện tại; dự án chưa có file được coi là version 0 |
 
-File `.bak-*` chỉ là bản sao cục bộ, KHÔNG commit (lịch sử git đã giữ bản cũ): `crew init`/`crew upgrade`
-thêm `*.bak-*` vào `.gitignore` nếu chưa có (upgrade commit kèm `.gitignore`). Lệnh không xóa file cũ đã biến mất
-khỏi skeleton. Khi sửa skeleton, tăng số nguyên trong `skeleton/VERSION` (bản đầu là `1`).
-`crew init` cũng ghi version vào dự án.
+File `.bak-*` và `.new` chỉ là bản cục bộ, KHÔNG commit: `crew init`/`crew upgrade` thêm vào `.gitignore` nếu chưa có
+(upgrade commit kèm `.gitignore`) `*.bak-*` và đúng các chỗ upgrade sinh `.new`: `context/**/*.new`, `/CLAUDE.md.new`,
+`/AGENTS.md.new` — không ignore `*.new` chung để file `.new` thật của project vẫn hiện. Project đã có dòng `*.new` thì giữ nguyên. Lệnh không xóa file cũ đã biến mất khỏi skeleton.
+`crew init` cũng ghi version và dấu bản mẫu vào dự án.
 
 ## Mặc định cá nhân
 

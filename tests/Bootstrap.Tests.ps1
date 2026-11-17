@@ -9,6 +9,8 @@ function New-FakeCrewlineRepo {
   New-Item -ItemType Directory -Force (Join-Path $src 'scripts') | Out-Null
   Set-Content (Join-Path $src 'scripts/crew.ps1') '# crew gia'
   Set-Content (Join-Path $src 'install.ps1') 'Add-Content (Join-Path $HOME "install-ran.txt") "ran"'
+  New-Item -ItemType Directory -Force (Join-Path $src 'skeleton') | Out-Null
+  Set-Content (Join-Path $src 'skeleton/VERSION') '10'
   git init -q -b main $src
   git -C $src config core.autocrlf false
   Invoke-Git $src add -A
@@ -41,13 +43,19 @@ Describe 'bootstrap.ps1' {
     }
 
     It 'chay lai thi git pull commit moi' {
+      $before = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
+      Set-Content (Join-Path $src 'skeleton/VERSION') '11'
       Set-Content (Join-Path $src 'new.txt') 'moi'
       Invoke-Git $src add -A
       Invoke-Git $src commit -q -m second
       $r2 = Invoke-InTestHome -TestHome $h -File $Bootstrap -Arguments '-Dir', $dir, '-Repo', $src
       $r2.ExitCode | Should Be 0
       Test-Path (Join-Path $dir 'new.txt') | Should Be $true
-      Get-InstallRuns $h | Should Be 2
+      $after = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
+      $r2.Output | Should Match "cap nhat Crewline $before -> $after \(context v10 -> v11\)"
+      $again = Invoke-InTestHome -TestHome $h -File $Bootstrap -Arguments '-Dir', $dir, '-Repo', $src
+      $again.Output | Should Match 'da o ban moi nhat .*context v11'
+      Get-InstallRuns $h | Should Be 3
     }
 
     It 'worktree ban thi khong pull, canh bao, van chay install' {
@@ -60,7 +68,9 @@ Describe 'bootstrap.ps1' {
       $r3.Output | Should Match 'bo qua git pull'
       Test-Path (Join-Path $dir 'third.txt') | Should Be $false
       (Get-Content (Join-Path $dir 'scripts/crew.ps1') -Raw).Trim() | Should Be '# sua tay'
-      Get-InstallRuns $h | Should Be 3
+      $r3.Output | Should Match 'may van o ban cu .*context v11'
+      $r3.Output | Should Match 'git -C .* status;.*git -C .* stash'
+      Get-InstallRuns $h | Should Be 4
     }
   }
 
@@ -163,6 +173,42 @@ Describe 'bootstrap.sh POSIX entrypoint' {
     $LASTEXITCODE | Should Be 0
     $bytes = [IO.File]::ReadAllBytes((Join-Path $RepoRoot 'bootstrap.sh'))
     @($bytes | Where-Object { $_ -gt 127 -or $_ -eq 13 }).Count | Should Be 0
+  }
+  It 'reports versions through shell with a local repo and fake installer' {
+    $src = New-FakeCrewlineRepo
+    $h = New-CrewTestHome
+    $dir = Join-Path $h.Home 'shell-crew'
+    $runner = Join-Path $TestDrive 'bootstrap-shell.ps1'
+    @'
+param($Shell, $Source, $Dir, $Repo)
+$env:CREWLINE_DIR = $Dir.Replace('\','/')
+$env:CREWLINE_REPO = $Repo.Replace('\','/')
+$sourcePath = $Source.Replace('\','/')
+# Fake installer: no child or access to the real user profile.
+$command = 'CREWLINE_BOOTSTRAP_LIBRARY=1; . "' + $sourcePath + '"; pwsh() { echo fake-install; }; crew_bootstrap'
+& $Shell -c $command
+exit $LASTEXITCODE
+'@ | Set-Content $runner -Encoding utf8BOM
+    $shellArgs = @($sh, (Join-Path $RepoRoot 'bootstrap.sh'), $dir, $src)
+    $first = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $first.ExitCode | Should Be 0
+    $before = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
+    Set-Content (Join-Path $src 'skeleton/VERSION') '11'
+    Invoke-Git $src add -A
+    Invoke-Git $src commit -qm update
+    $after = (git -C $src rev-parse --short HEAD | Out-String).Trim()
+    $second = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $second.ExitCode | Should Be 0
+    $second.Output | Should Match "cap nhat Crewline $before -> $after \(context v10 -> v11\)"
+    $third = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $third.ExitCode | Should Be 0
+    $third.Output | Should Match 'da o ban moi nhat .*context v11'
+    Set-Content (Join-Path $dir 'scripts/crew.ps1') 'user edits'
+    $dirty = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $dirty.ExitCode | Should Be 0
+    $dirty.Output | Should Match 'skip git pull, still on old version .*context v11'
+    $dirty.Output | Should Match 'git -C .* status;.*git -C .* stash'
+    (Get-Content (Join-Path $dir 'scripts/crew.ps1') -Raw).Trim() | Should Be 'user edits'
   }
   It 'selects the release asset using uname and rejects unsupported hosts' {
     $source = (Join-Path $RepoRoot 'bootstrap.sh').Replace('\', '/')

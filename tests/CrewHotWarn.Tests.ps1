@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
 $hotCrew = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
@@ -27,6 +28,28 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $cfg = [pscustomobject]@{name='demo'; workers=@('codex'); review='lean'; access='work'; planner='none'; rev='none'}
     $cfg | ConvertTo-Json | Set-Content (Join-Path $root '.crew/config.json')
     $Path = $root
+  }
+  It 'context cũ chỉ cảnh báo, không ghi; bằng hoặc mới hơn không cảnh báo' {
+    $Skeleton = Join-Path (Split-Path (Split-Path $hotCrew)) 'skeleton'
+    $current = [int](Get-SkeletonVersion)
+    New-Item -ItemType Directory -Force (Join-Path $root 'context') | Out-Null
+    $stamp = Join-Path $root 'context/.skeleton-version'
+    foreach ($version in @($current - 1), $current, ($current + 1)) {
+      [IO.File]::WriteAllText($stamp, "$version")
+      $before = (Get-FileHash $stamp).Hash
+      $output = Invoke-Hot 6>&1 | Out-String
+      if ($version -lt $current) { $output | Should Match "crew: context v$version cũ hơn crew v$current — chạy crew upgrade -DryRun rồi crew upgrade" }
+      else { $output | Should Not Match 'cũ hơn crew' }
+      (Get-FileHash $stamp).Hash | Should Be $before
+    }
+  }
+  It 'crew up kiểm schema trước bước có thể sửa metadata config' {
+    foreach ($fn in 'Invoke-Recover', 'Get-MainRoot') { . ([scriptblock]::Create((Get-CrewFunction $fn).Extent.Text)) }
+    $file = Join-Path $root '.crew/config.json'
+    [IO.File]::WriteAllText($file, '{"schema":99,"workers":[]}')
+    $before = (Get-FileHash $file).Hash
+    { Invoke-Recover $true } | Should Throw 'dữ liệu do bản crew mới hơn ghi — cập nhật crew'
+    (Get-FileHash $file).Hash | Should Be $before
   }
   It 'lint có cảnh báo chỉ in tóm tắt, không sửa context' {
     New-Item -ItemType Directory (Join-Path $root 'context') | Out-Null

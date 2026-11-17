@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 . "$PSScriptRoot/TestHome.ps1"
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 # crew queue: hàm của scripts/crew/queue.ps1 trích bằng AST, ops giả (không hc, không spawn) cho Invoke-QueueRun;
@@ -235,6 +236,37 @@ Describe 'Invoke-QueueAuto' {
     { Invoke-QueueAuto $root } | Should Not Throw
     { Invoke-QueueAuto (Join-Path $TestDrive 'khong-co') } | Should Not Throw
   }
+  It 'lỗi đọc queue/config/tasks chỉ cảnh báo, giữ exit code lệnh chính với Die thật' {
+    $h = New-CrewTestHome
+    foreach ($name in 'queue', 'config', 'tasks') {
+      foreach ($bad in '{broken', '{"schema":99}') {
+        $root = New-QueueRoot
+        Add-Q $root 'waiting'
+        $file = Join-Path $root ".crew/$name.json"
+        [IO.File]::WriteAllText($file, $bad)
+        $before = (Get-FileHash $file).Hash
+        $defs = @('Die','Get-CrewStateSchema','Read-CrewState','Get-Tasks','Get-QueueFile','Get-QueueItems','Read-QueueConfig','Invoke-QueueRun','Invoke-QueueAuto') | ForEach-Object { (Get-CrewFunction $_).Extent.Text }
+        $body = ($defs -join "`n") + @"
+function Get-MainRoot(`$at) { '$($root.Replace("'", "''"))' }
+function New-QueueOps { return @{ Limit = {}; Spawn = {} } }
+`$global:LASTEXITCODE = 7
+Invoke-QueueAuto '$($root.Replace("'", "''"))'
+Write-Host "MAIN CONTINUES `$global:LASTEXITCODE"
+exit `$global:LASTEXITCODE
+"@
+        $scriptFile = Join-Path $TestDrive 'queue-auto-state.ps1'
+        [IO.File]::WriteAllText($scriptFile, $body, [Text.UTF8Encoding]::new($true))
+        $r = Invoke-InTestHome -TestHome $h -File $scriptFile
+        $r.ExitCode | Should Be 7
+        $r.Output | Should Match 'crew: CẢNH BÁO: hàng đợi:'
+        $r.Output | Should Match "$name.json"
+        $r.Output | Should Match 'MAIN CONTINUES 7'
+        $r.Output | Should Not Match 'crew: LỖI:'
+        (Get-FileHash $file).Hash | Should Be $before
+      }
+    }
+  }
+
 }
 
 Describe 'nối vào crew.ps1, clean, up, hot (AST)' {
@@ -262,6 +294,7 @@ Describe 'nối vào crew.ps1, clean, up, hot (AST)' {
     param([string]$flags, [string]$child = '')
     $body = (& $clause 'up').Trim().TrimStart('{').TrimEnd('}')
     $script = @"
+function Get-MainRoot(`$p) { return `$null }
 function Invoke-Recover(`$x) { Write-Host 'RECOVER'; exit 1 }
 function Invoke-Up { Write-Host 'UP' }
 function Invoke-UpAll { Write-Host 'UPALL' }

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "sample",
+    "worker": 1,
+    "branch": "crew/sample",
+    "agent": "claude",
+    "worktree": ".crew/worktrees/w1",
+    "future": {
+      "nested": {
+        "value": 7
+      }
+    }
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "waiting",
+    "prompt": ".crew/queue/waiting.md",
+    "worker": 0,
+    "review": "lean",
+    "after": "sample",
+    "size": "S",
+    "added": "2026-11-17T21:29:13",
+    "hold": ""
+  }
+]

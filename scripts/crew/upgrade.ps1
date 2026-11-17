@@ -5,7 +5,7 @@
 function Update-ConfigName([string]$root, [bool]$dry) {
   $f = Join-Path $root '.crew/config.json'
   if (-not (Test-Path -LiteralPath $f)) { return }
-  $cfg = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+  $cfg = Read-CrewState $f
   $names = @($cfg.PSObject.Properties.Name)
   $hasName = $names -contains 'name' -and $cfg.name
   $hasKey = $names -contains 'idKey' -and $cfg.idKey
@@ -29,7 +29,7 @@ function Update-ConfigName([string]$root, [bool]$dry) {
   }
   $o = [ordered]@{ name = $n; idKey = $k }
   foreach ($p in $cfg.PSObject.Properties) { if ($p.Name -notin 'name', 'idKey') { $o[$p.Name] = $p.Value } }
-  $o | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $f -Encoding utf8
+  $o | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $f -Encoding utf8
   Say "ghi $what vào $f (giữ tên terminal và space/tab hiện có)."
   # Sổ còn ghi đúng tên + khóa này ở root cũ đã mất ⇒ project đã chuyển: giữ mục sổ làm dấu vết cho Get-MoveInfo, crew up/repair sẽ cập nhật.
   $moved = $reg.Ok -and $reg.Map.Contains($n) -and $reg.Map[$n].IdKey -ceq $k -and -not (Test-SamePath ([string]$reg.Map[$n].Root) $root) -and -not (Test-Path -LiteralPath (Join-Path ([string]$reg.Map[$n].Root) '.crew/config.json'))
@@ -37,22 +37,159 @@ function Update-ConfigName([string]$root, [bool]$dry) {
   elseif ($reg.Ok) { Register-CrewName $n $root $k | Out-Null }
 }
 
+# ---------------- dấu bản mẫu ----------------
+# context/.skeleton-hashes.json: khóa = đường dẫn trong context/ (README.md, roles/<vai>.md) hoặc CLAUDE.md#crew / AGENTS.md#crew,
+# giá trị = sha256 nội dung bản mẫu đã cài (CRLF→LF). Upgrade chỉ thay file/khối còn khớp dấu (hoặc khớp một bản đã phát hành
+# trong skeleton/released-hashes.json); đã sửa tay ⇒ ghi <file>.new, không bao giờ ghi đè. *.local.md không bao giờ bị đụng.
+function ConvertTo-Lf([string]$text) { $text -replace "`r`n", "`n" }
+
+function Get-TextHash([string]$text) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { -join ($sha.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-Lf $text))) | ForEach-Object { $_.ToString('x2') }) }
+  finally { $sha.Dispose() }
+}
+
+# File skeleton theo quy tắc dấu: README.md và roles/*.md (trừ *.local.md).
+function Test-HashedSkeletonPath([string]$rel) {
+  ($rel -ceq 'README.md' -or $rel -cmatch '^roles/[^/]+\.md$') -and $rel -notmatch '\.local\.md$'
+}
+
+function Test-NewPath([string]$p) { (Split-Path $p -Leaf) -like '*.new' }
+
+# .gitignore cho đúng các .new upgrade sinh ra (không ignore *.new chung: che file .new thật của project).
+# Project đã có dòng *.new (bản dev cũ) ⇒ coi như đủ, không thêm.
+function Get-NewIgnoreLines { @('context/**/*.new', '/CLAUDE.md.new', '/AGENTS.md.new') }
+
+function Read-SkeletonHashes([string]$root) {
+  $map = @{}
+  $f = Join-Path $root 'context/.skeleton-hashes.json'
+  if (-not (Test-Path -LiteralPath $f)) { return $map }
+  try {
+    $o = [IO.File]::ReadAllText($f) | ConvertFrom-Json
+    foreach ($p in $o.PSObject.Properties) { if ($p.Value -is [string] -and $p.Value -cmatch '^[0-9a-f]{64}$') { $map[$p.Name] = $p.Value } }
+  } catch { Say "cảnh báo: $f hỏng — coi như chưa có dấu bản mẫu." }
+  $map
+}
+
+function Format-SkeletonHashes([hashtable]$map) {
+  $keys = @($map.Keys | Sort-Object -CaseSensitive)
+  $lines = for ($i = 0; $i -lt $keys.Count; $i++) { "  `"$($keys[$i])`": `"$($map[$keys[$i]])`"$(if ($i -lt $keys.Count - 1) { ',' })" }
+  "{`n$(if ($keys.Count) { (@($lines) -join "`n") + "`n" })}`n"
+}
+
+function Test-SameHashes([hashtable]$a, [hashtable]$b) {
+  if ($a.Count -ne $b.Count) { return $false }
+  foreach ($k in $a.Keys) { if (-not $b.ContainsKey($k) -or $b[$k] -cne $a[$k]) { return $false } }
+  $true
+}
+
+# Ghi .skeleton-hashes.json khi bộ dấu đổi (so theo nội dung, không theo byte/CRLF). Trả $true nếu cần ghi; $dry ⇒ chỉ báo.
+function Write-SkeletonHashes([string]$root, [hashtable]$map, [bool]$dry = $false) {
+  if (Test-SameHashes (Read-SkeletonHashes $root) $map) { return $false }
+  if (-not $dry) { [IO.File]::WriteAllText((Join-Path $root 'context/.skeleton-hashes.json'), (Format-SkeletonHashes $map), [Text.UTF8Encoding]::new($false)) }
+  $true
+}
+
+# Hash các bản đã phát hành: skeleton/released-hashes.json { "<khóa>": ["<sha256>", …] } (khóa bắt đầu '_' là ghi chú).
+function Get-ReleasedHashes {
+  $map = @{}
+  $f = Join-Path $Skeleton 'released-hashes.json'
+  if (-not (Test-Path -LiteralPath $f)) { return $map }
+  $o = [IO.File]::ReadAllText($f) | ConvertFrom-Json
+  foreach ($p in $o.PSObject.Properties) { if ($p.Name -notlike '_*') { $map[$p.Name] = @($p.Value) } }
+  $map
+}
+
+# Khối crew: State none (chưa có <!-- crew -->), open (thiếu <!-- /crew -->), ok (Inner = nội dung giữa hai marker).
+function Find-CrewBlock([string]$text) {
+  $open = '<!-- crew -->'; $close = '<!-- /crew -->'
+  $i = $text.IndexOf($open, [StringComparison]::Ordinal)
+  if ($i -lt 0) { return @{ State = 'none' } }
+  $j = $text.IndexOf($close, $i + $open.Length, [StringComparison]::Ordinal)
+  if ($j -lt 0) { return @{ State = 'open' } }
+  @{ State = 'ok'; Index = $i; Length = $j + $close.Length - $i; Inner = $text.Substring($i + $open.Length, $j - $i - $open.Length) }
+}
+
+# same: giống bản mới; replace: còn đúng bản crew đã cài (khớp dấu hoặc một bản đã phát hành); manual: người dùng đã sửa.
+function Get-SkeletonAction([string]$key, [string]$current, [string]$new, [hashtable]$hashes, [hashtable]$released) {
+  if ((ConvertTo-Lf $current) -ceq (ConvertTo-Lf $new)) { return 'same' }
+  $h = Get-TextHash $current
+  if (($hashes.ContainsKey($key) -and $hashes[$key] -ceq $h) -or ($released.ContainsKey($key) -and @($released[$key]) -ccontains $h)) { return 'replace' }
+  'manual'
+}
+
+# init: ghi dấu cho file/khối đang giống hệt bản mẫu; giữ dấu cũ của file khác bản mẫu (người dùng đã sửa).
+function Update-InitSkeletonHashes([string]$root) {
+  $hashes = Read-SkeletonHashes $root
+  $src = Join-Path $Skeleton 'context'
+  foreach ($item in Get-ChildItem $src -Recurse -File -Force) {
+    $rel = $item.FullName.Substring($src.Length).TrimStart('\', '/') -replace '\\', '/'
+    if (-not (Test-HashedSkeletonPath $rel)) { continue }
+    $dst = Join-Path $root "context/$rel"
+    $new = [IO.File]::ReadAllText($item.FullName)
+    if ((Test-Path -LiteralPath $dst) -and (ConvertTo-Lf ([IO.File]::ReadAllText($dst))) -ceq (ConvertTo-Lf $new)) { $hashes[$rel] = Get-TextHash $new }
+  }
+  $inner = (Find-CrewBlock (Get-CrewBlock)).Inner
+  foreach ($name in 'CLAUDE.md', 'AGENTS.md') {
+    $file = Join-Path $root $name
+    if (-not (Test-Path -LiteralPath $file)) { continue }
+    $b = Find-CrewBlock ([IO.File]::ReadAllText($file))
+    if ($b.State -eq 'ok' -and (ConvertTo-Lf $b.Inner) -ceq (ConvertTo-Lf $inner)) { $hashes["$name#crew"] = Get-TextHash $inner }
+  }
+  Write-SkeletonHashes $root $hashes | Out-Null
+}
+
+# Khối tóm tắt cuối crew upgrade (thật và -DryRun).
+function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual, $keep, $openBlocks, [bool]$dry, [bool]$other) {
+  Write-Host ''
+  Write-Host "== crew upgrade$(if ($dry) { ' -DryRun' }): context v$old -> v$version"
+  if (-not $replace.Count -and -not $manual.Count -and -not $openBlocks.Count -and -not $other) {
+    Write-Host "context đã ở v$version, không có gì để cập nhật."
+    return
+  }
+  $join = { param($list) $s = @($list) -join ', '; if ($s.Length -gt 160) { $s.Substring(0, 157) + '...' } else { $s } }
+  Write-Host "$(if ($dry) { 'Sẽ cập nhật' } else { 'Đã cập nhật' }) ($($replace.Count)): $(if ($replace.Count) { & $join $replace } else { '-' })"
+  $pairs = @($manual | ForEach-Object { "$_ -> $_.new" })
+  Write-Host "Giữ bản của bạn, bản mới $(if ($dry) { 'sẽ ' })ở .new ($($manual.Count)): $(if ($pairs.Count) { $pairs -join ', ' } else { '-' })" -ForegroundColor $(if ($pairs.Count) { 'Yellow' } else { 'Gray' })
+  $kept = @($keep) + @($openBlocks | ForEach-Object { "$_ (thiếu <!-- /crew -->)" })
+  Write-Host "Giữ nguyên ($($kept.Count)): $(if ($kept.Count) { & $join $kept } else { '-' })"
+  $todo = @()
+  if ($manual.Count) { $todo += 'mở từng cặp <file> và <file>.new, gộp phần mới vào bản của bạn rồi xóa .new; quy tắc riêng nên chuyển sang context/roles/<vai>.local.md (upgrade không bao giờ đụng).' }
+  if ($openBlocks.Count) { $todo += "thêm dòng <!-- /crew --> ngay sau khối crew trong $(@($openBlocks) -join ', ') rồi chạy lại crew upgrade." }
+  if ($dry) { $todo += 'chạy crew upgrade (không -DryRun) để áp dụng.' }
+  if ($todo.Count) { Write-Host "Việc cần làm: $($todo -join ' ')" -ForegroundColor $(if ($manual.Count -or $openBlocks.Count) { 'Yellow' } else { 'Gray' }) }
+}
+
 function Invoke-Upgrade {
   $root = Get-Root (Resolve-Path $Path).Path
   if (-not $root) { Die 'không phải repo git.' }
   $context = Join-Path $root 'context'
   if (-not (Test-Path $context -PathType Container)) { Die "chưa có context/ — chạy 'crew init' trước." }
-  $st = Invoke-GitQuiet -C $root status --porcelain --untracked-files=all -- context
+  # Kiểm JSON/schema .crew/config.json trước mọi ghi (Update-ConfigName chạy sau khi đã ghi context).
+  $cfgFile = Join-Path $root '.crew/config.json'
+  if (Test-Path -LiteralPath $cfgFile) { $null = Read-CrewState $cfgFile }
+  $st =Invoke-GitQuiet -C $root status --porcelain --untracked-files=all -- context
   if ($st.Code -ne 0) { Die 'không kiểm tra được trạng thái context/.' }
-  # Bỏ qua file .bak-* (kể cả khi project chưa ignore chúng).
-  $dirty = @($st.Text -split '\r?\n+' | Where-Object { $_ -and -not (Test-BakPath ($_.Substring(3).Trim('"'))) })
-  if ($dirty.Count -and -not $Force) { Die 'context/ có thay đổi chưa commit; commit trước hoặc dùng -Force.' }
+  # Bỏ qua file .bak-* / .new (kể cả khi project chưa ignore chúng).
+  $dirty = @($st.Text -split '\r?\n+' | Where-Object { $_ } | ForEach-Object { $_.Substring(3).Trim('"') } | Where-Object { -not (Test-BakPath $_) -and -not (Test-NewPath $_) })
+  if ($dirty.Count -and -not $Force) {
+    $shown = @($dirty | Select-Object -First 5) -join ', '
+    if ($dirty.Count -gt 5) { $shown += ", … (+$($dirty.Count - 5))" }
+    Die "context/ có thay đổi chưa commit: $shown. Upgrade từ chối để không trộn việc của bạn vào commit upgrade. Làm tiếp: git -C `"$root`" add context; git -C `"$root`" commit -m `"context: việc đang làm`", rồi crew upgrade (xem trước: crew upgrade -DryRun). Hoặc crew upgrade -Force để chạy luôn."
+  }
   $version = Get-SkeletonVersion
   $old = '0'
   $versionFile = Join-Path $context '.skeleton-version'
   if (Test-Path $versionFile) { $old = (Get-Content $versionFile -Raw -Encoding utf8).Trim() }
   Say "upgrade context v$old -> v$version"
   $changed = [Collections.Generic.List[string]]::new()
+  $groupReplace = [Collections.Generic.List[string]]::new()
+  $groupManual = [Collections.Generic.List[string]]::new()
+  $groupKeep = [Collections.Generic.List[string]]::new()
+  $openBlocks = [Collections.Generic.List[string]]::new()
+  $hashes = Read-SkeletonHashes $root
+  $released = Get-ReleasedHashes
+  $relOf = { param($f) $f.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/' }
   # Chỉ biết có commit khi gặp file đầu tiên cần ghi: hỏi danh tính ngay trước lần ghi đó.
   $script:UpgradeWillWrite = $false
   $needCommit = {
@@ -60,33 +197,48 @@ function Invoke-Upgrade {
     $script:UpgradeWillWrite = $true
     if (-not $DryRun -and -not $NoCommit) { Confirm-GitIdentity $root $true $false }
   }
-  function Write-UpgradeFile([string]$file, [string]$content, [bool]$backup = $false) {
-    if ((Test-Path -LiteralPath $file) -and [IO.File]::ReadAllText($file) -ceq $content) { return }
+  function Write-UpgradeFile([string]$file, [string]$content) {
+    if ((Test-Path -LiteralPath $file) -and [IO.File]::ReadAllText($file) -ceq $content) { return $false }
     & $needCommit
-    Say "$(if ($backup) { 'sao lưu + cập nhật' } else { 'ghi' }) $file"
-    if ($DryRun) { return }
-    if ($backup) {
-      $bak = "$file.bak-$Today"
-      $n = 1
-      while (Test-Path -LiteralPath $bak) { $bak = "$file.bak-$Today-$n"; $n++ }
-      Copy-Item -LiteralPath $file -Destination $bak
-      Say "  bản sao lưu (không commit): $bak"
-    }
+    Say "$(if ($DryRun) { 'sẽ ghi' } else { 'ghi' }) $file"
+    if ($DryRun) { return $true }
     New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
     [IO.File]::WriteAllText($file, $content, [Text.UTF8Encoding]::new($false))
     $changed.Add($file)
+    $true
+  }
+  # Người dùng đã sửa: bản mới ra <file>.new (không commit), file gốc giữ nguyên từng byte.
+  function Write-NewCopy([string]$file, [string]$content) {
+    $rel = & $relOf $file
+    $groupManual.Add($rel)
+    if ($DryRun) { Write-Host "crew: CẢNH BÁO: $rel đã sửa tay — sẽ ghi bản mới ra $rel.new (DryRun chưa ghi), gộp tay rồi xóa .new" -ForegroundColor Yellow; return }
+    $new = "$file.new"
+    if (-not ((Test-Path -LiteralPath $new) -and [IO.File]::ReadAllText($new) -ceq $content)) {
+      [IO.File]::WriteAllText($new, $content, [Text.UTF8Encoding]::new($false))
+    }
+    Write-Host "crew: CẢNH BÁO: $rel đã sửa tay — bản mới ở $rel.new, gộp tay rồi xóa .new" -ForegroundColor Yellow
   }
   $src = Join-Path $Skeleton 'context'
   foreach ($item in Get-ChildItem $src -Recurse -File -Force) {
     $rel = $item.FullName.Substring($src.Length).TrimStart('\', '/') -replace '\\', '/'
     $dst = Join-Path $context $rel
     $exists = Test-Path -LiteralPath $dst
-    # tasks/archive và file riêng của dự án luôn được giữ nguyên, kể cả khi thiếu.
-    if ($rel -match '^(tasks|archive)/') { continue }
-    if (-not $exists) { Write-UpgradeFile $dst ([IO.File]::ReadAllText($item.FullName)); continue }
-    if ($rel -eq 'README.md' -or $rel -match '^roles/[^/]+\.md$') {
-      Write-UpgradeFile $dst ([IO.File]::ReadAllText($item.FullName)) $true
-    } elseif ($rel -eq 'PITFALLS.md') {
+    # tasks/archive và file riêng của dự án (*.local.md) luôn được giữ nguyên, kể cả khi thiếu.
+    if ($rel -match '^(tasks|archive)/' -or $rel -match '\.local\.md$') { continue }
+    $new = [IO.File]::ReadAllText($item.FullName)
+    if (Test-HashedSkeletonPath $rel) {
+      if (-not $exists) {
+        Write-UpgradeFile $dst $new | Out-Null; $groupReplace.Add("context/$rel (thêm)"); $hashes[$rel] = Get-TextHash $new; continue
+      }
+      switch (Get-SkeletonAction $rel ([IO.File]::ReadAllText($dst)) $new $hashes $released) {
+        'same' { $groupKeep.Add("context/$rel"); $hashes[$rel] = Get-TextHash $new }
+        'replace' { Write-UpgradeFile $dst $new | Out-Null; $groupReplace.Add("context/$rel"); $hashes[$rel] = Get-TextHash $new }
+        default { Write-NewCopy $dst $new }
+      }
+      continue
+    }
+    if (-not $exists) { if (Write-UpgradeFile $dst $new) { $groupReplace.Add("context/$rel (thêm)") }; continue }
+    if ($rel -eq 'PITFALLS.md') {
       $text = [IO.File]::ReadAllText($dst)
       $lines = @($text -split '\r?\n' | ForEach-Object { $_.Trim() })
       # Dòng đã chuyển sang context/archive/PITFALLS-*.md coi như đã có: không thêm lại. Dòng (trim) bằng hoặc bắt đầu bằng dòng skeleton (nguyên văn, phân biệt hoa thường) ⇒ đã có.
@@ -103,43 +255,78 @@ function Invoke-Upgrade {
         if (@($lines | Where-Object { $_.StartsWith($trimmed, [StringComparison]::Ordinal) }).Count) { continue }
         $add += $trimmed; $lines += $trimmed
       }
-      if ($add.Count) { Write-UpgradeFile $dst ($text + $(if ($text.EndsWith("`n")) { '' } else { "`n" }) + ($add -join "`n") + "`n") }
+      if ($add.Count) {
+        Write-UpgradeFile $dst ($text + $(if ($text.EndsWith("`n")) { '' } else { "`n" }) + ($add -join "`n") + "`n") | Out-Null
+        $groupReplace.Add("context/PITFALLS.md (thêm $($add.Count) dòng)")
+      }
     }
   }
+  # Khối crew: chỉ phần giữa <!-- crew --> và <!-- /crew -->; ngoài khối luôn giữ nguyên.
+  $block = Get-CrewBlock
+  $blockInner = (Find-CrewBlock $block).Inner
   foreach ($name in 'CLAUDE.md', 'AGENTS.md') {
     $file = Join-Path $root $name
-    $text = if (Test-Path $file) { [IO.File]::ReadAllText($file) } else { '' }
-    $block = Get-CrewBlock
-    # Bản mới có marker kết thúc; bản init cũ gồm heading, dòng đọc context và các bullet.
-    $pattern = '(?s)<!-- crew -->.*?<!-- /crew -->'
-    if ($text -notmatch $pattern) { $pattern = '<!-- crew -->\r?\n## [^\r\n]*\r?\n[^\r\n]*(?:\r?\n- [^\r\n]*)*' }
-    if ($text -match $pattern) { $next = [regex]::Replace($text, $pattern, [Text.RegularExpressions.MatchEvaluator]{ param($m) $block }, 1) }
-    elseif ($text.Contains('<!-- crew -->')) { Die "khối crew trong $name không nhận diện được; cần marker <!-- /crew -->." }
-    else { $next = $text + $(if ($text) { "`n" } else { '' }) + $block + "`n" }
-    Write-UpgradeFile $file $next
+    $key = "$name#crew"
+    $text = if (Test-Path -LiteralPath $file) { [IO.File]::ReadAllText($file) } else { '' }
+    $b = Find-CrewBlock $text
+    if ($b.State -eq 'open') {
+      $openBlocks.Add($name)
+      Write-Host "crew: CẢNH BÁO: $name có <!-- crew --> nhưng thiếu <!-- /crew --> — không sửa file này. Thêm dòng <!-- /crew --> bằng tay ngay sau khối crew rồi chạy lại crew upgrade." -ForegroundColor Yellow
+      continue
+    }
+    if ($b.State -eq 'none') {
+      Write-UpgradeFile $file ($text + $(if ($text) { "`n" } else { '' }) + $block + "`n") | Out-Null
+      $groupReplace.Add("$name (thêm khối crew)"); $hashes[$key] = Get-TextHash $blockInner; continue
+    }
+    $next = $text.Substring(0, $b.Index) + $block + $text.Substring($b.Index + $b.Length)
+    switch (Get-SkeletonAction $key $b.Inner $blockInner $hashes $released) {
+      'same' { $groupKeep.Add("$name (khối crew)"); $hashes[$key] = Get-TextHash $blockInner }
+      'replace' { Write-UpgradeFile $file $next | Out-Null; $groupReplace.Add("$name (khối crew)"); $hashes[$key] = Get-TextHash $blockInner }
+      default { Write-NewCopy $file $next }
+    }
   }
-  Write-UpgradeFile $versionFile "$version`n"
+  # Cùng version (kể cả file CRLF do init ghi) ⇒ không ghi lại.
+  $other = $false
+  if ($old -cne $version -or -not (Test-Path -LiteralPath $versionFile)) {
+    $other = Write-UpgradeFile $versionFile "$version`n"
+    if ($other) { $groupReplace.Add("context/.skeleton-version (v$old -> v$version)") }
+  }
+  $hashFile = Join-Path $context '.skeleton-hashes.json'
+  if (Write-SkeletonHashes $root $hashes $true) {
+    & $needCommit
+    $other = $true
+    $groupReplace.Add('context/.skeleton-hashes.json (dấu bản mẫu)')
+    Say "$(if ($DryRun) { 'sẽ ghi' } else { 'ghi' }) $hashFile"
+    if (-not $DryRun) { Write-SkeletonHashes $root $hashes | Out-Null; $changed.Add($hashFile) }
+  }
   $gi = Join-Path $root '.gitignore'
   $ignoreText = if (Test-Path -LiteralPath $gi) { [IO.File]::ReadAllText($gi) } else { '' }
   $ignoreLines = @($ignoreText -split '\r?\n+' | ForEach-Object { $_.Trim() })
-  $ignoreMissing = $ignoreLines -cnotcontains '*.bak-*'
-  if ($ignoreMissing) { & $needCommit }
+  $ignoreAdd = @(@('*.bak-*') + @(if ($ignoreLines -cnotcontains '*.new') { Get-NewIgnoreLines }) | Where-Object { $ignoreLines -cnotcontains $_ })
+  if ($ignoreAdd.Count) { & $needCommit; $other = $true; $groupReplace.Add(".gitignore (thêm $($ignoreAdd -join ', '))") }
   Update-ConfigName $root ([bool]$DryRun)
   if ($DryRun) {
-    if ($ignoreMissing) { Say 'sẽ thêm *.bak-* vào .gitignore.' }
+    foreach ($l in $ignoreAdd) { Say "sẽ thêm $l vào .gitignore." }
     if ($script:UpgradeWillWrite -and -not $NoCommit) { Confirm-GitIdentity $root $true $true }
-    Say 'DryRun: không ghi file, không commit.'; return
+    Say 'DryRun: không ghi file, không commit.'
+    Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $true ([bool]$other)
+    return
   }
-  if (Add-GitIgnoreLine $root '*.bak-*') {
-    $changed.Add((Join-Path $root '.gitignore'))
-    if ($NoCommit) { Say 'đã thêm *.bak-* vào .gitignore (chưa commit)' }
+  foreach ($l in $ignoreAdd) {
+    if (Add-GitIgnoreLine $root $l @(if ($l -ne '*.bak-*') { '*.new' })) {
+      if (-not $changed.Contains((Join-Path $root '.gitignore'))) { $changed.Add((Join-Path $root '.gitignore')) }
+      if ($NoCommit) { Say "đã thêm $l vào .gitignore (chưa commit)" }
+    }
   }
-  if ($NoCommit) { Say 'bỏ qua commit (-NoCommit).'; return }
-  # Phòng thủ: không bao giờ add file .bak-* hay file bị git ignore (chưa track).
+  # Phòng thủ: không bao giờ add file .bak-* / .new hay file bị git ignore (chưa track).
   $files = @($changed.ToArray() | Where-Object {
-      -not (Test-BakPath $_) -and (Invoke-GitQuiet -C $root check-ignore -q -- $_).Code -ne 0 })
-  if (-not $files.Count) { Say 'không có gì mới để commit.'; return }
-  Invoke-GitOrDie 'git add' -C $root add -- @files | Out-Null
-  # Chỉ commit file upgrade, không kéo theo các file đã stage ngoài phạm vi.
-  Invoke-GitOrDie 'commit upgrade' -C $root commit -q --only -m "chore: crew upgrade context -> v$version" -- @files | Out-Null
+      -not (Test-BakPath $_) -and -not (Test-NewPath $_) -and (Invoke-GitQuiet -C $root check-ignore -q -- $_).Code -ne 0 })
+  if ($NoCommit) { Say 'bỏ qua commit (-NoCommit).' }
+  elseif (-not $files.Count) { Say 'không có gì mới để commit.' }
+  else {
+    Invoke-GitOrDie 'git add' -C $root add -- @files | Out-Null
+    # Chỉ commit file upgrade, không kéo theo các file đã stage ngoài phạm vi.
+    Invoke-GitOrDie 'commit upgrade' -C $root commit -q --only -m "chore: crew upgrade context -> v$version" -- @files | Out-Null
+  }
+  Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $false ([bool]$other)
 }

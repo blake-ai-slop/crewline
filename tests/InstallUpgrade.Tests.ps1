@@ -1,4 +1,4 @@
-. "$PSScriptRoot/TestHome.ps1"
+﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 
 Describe 'real install -> personal config -> init -> upgrade' {
@@ -34,8 +34,10 @@ Describe 'real install -> personal config -> init -> upgrade' {
     git -C $repo commit -q -m old
     $r = Invoke-InTestHome -TestHome $h -File $shim -Arguments 'upgrade', '-Path', $repo
     if ($r.ExitCode -ne 0) { throw $r.Output }
-    [IO.File]::ReadAllText("$repo/context/roles/worker.md") | Should Be ([IO.File]::ReadAllText("$RepoRoot/skeleton/context/roles/worker.md"))
-    @(Get-ChildItem "$repo/context/roles/worker.md.bak-*").Count | Should Be 1
+    # role đã sửa tay: giữ nguyên, bản mới ra .new (không commit)
+    (Get-Content "$repo/context/roles/worker.md" -Raw).Trim() | Should Be 'old worker role'
+    [IO.File]::ReadAllText("$repo/context/roles/worker.md.new") | Should Be ([IO.File]::ReadAllText("$RepoRoot/skeleton/context/roles/worker.md"))
+    @(Get-ChildItem "$repo/context/roles/worker.md.bak-*").Count | Should Be 0
     (Get-Content "$repo/context/.skeleton-version" -Raw).Trim() | Should Be ((Get-Content "$RepoRoot/skeleton/VERSION" -Raw).Trim())
     [IO.File]::ReadAllText("$repo/.crew/config.json") | Should Be $configBefore
     [IO.File]::ReadAllText("$repo/context/HOT.md") | Should Be $hotBefore

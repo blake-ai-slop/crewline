@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # AST thật + adapter hc thật với lệnh hc giả; không đụng terminal người dùng.
 
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).

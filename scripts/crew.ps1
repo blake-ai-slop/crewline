@@ -103,6 +103,10 @@ switch ($Command) {
   'init' { Invoke-Init; Say 'xong. Bật đội: crew up' }
   'upgrade' { Invoke-Upgrade }
   'up' {
+    if (-not $All) {
+      $warnRoot = Get-MainRoot (Resolve-Path -LiteralPath $Path).Path
+      if ($warnRoot) { Show-CrewUpgradeWarning $warnRoot }
+    }
     if ($All) { Invoke-UpAll } elseif ($Restart) { Invoke-Up }
     else {
       # Invoke-Recover kết thúc bằng exit: finally vẫn chạy và giữ exit code. Con của -All không tự giao.

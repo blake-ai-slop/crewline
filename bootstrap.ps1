@@ -43,12 +43,19 @@ function Invoke-CrewlineBootstrap {
   if ($isCrewline) {
     $dirty = git -C $Dir status --porcelain
     if ($LASTEXITCODE -ne 0) { return (Fail "$Dir co file Crewline nhung khong phai repo git.") }
+    $before = (git -C $Dir rev-parse --short HEAD | Out-String).Trim()
+    $versionFile = Join-Path $Dir 'skeleton/VERSION'
+    $beforeVersion = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { '?' }
     if ($dirty) {
-      Say "canh bao: $Dir co thay doi chua commit => bo qua git pull, van chay install."
+      Say "canh bao: $Dir co thay doi chua commit => bo qua git pull, may van o ban cu $before (context v$beforeVersion), van chay install. Xem: git -C `"$Dir`" status; cat thay doi: git -C `"$Dir`" stash."
     } else {
       Say "cap nhat $Dir (git pull --ff-only)"
       git -C $Dir pull --ff-only -q | Out-Host
       if ($LASTEXITCODE -ne 0) { return (Fail "git pull --ff-only that bai trong $Dir. Xu ly tay roi chay lai.") }
+      $after = (git -C $Dir rev-parse --short HEAD | Out-String).Trim()
+      $afterVersion = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { '?' }
+      if ($before -eq $after) { Say "da o ban moi nhat $after (context v$afterVersion)" }
+      else { Say "cap nhat Crewline $before -> $after (context v$beforeVersion -> v$afterVersion)" }
     }
   } elseif ($isEmpty) {
     Say "clone $Repo ($Branch) -> $Dir"

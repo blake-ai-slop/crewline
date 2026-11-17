@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # crew review kiểm Rev trước khi gửi: Get-RevGuard + Invoke-Review thật qua AST; hc giả qua stub, không gọi hc thật.
 
 $want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Test-AgentScreen', 'Get-RevGuard', 'Invoke-Review'

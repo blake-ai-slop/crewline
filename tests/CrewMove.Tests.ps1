@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # crew repair xử lý project đã đổi tên / chuyển thư mục (Get-MoveInfo). Hàm trích bằng AST từ crew.ps1; git thật trong $TestDrive
 # (đổi tên thư mục repo + worktree thật); hc/herdr giả tiêm qua $ops; sổ tên crew trong $TestDrive (HOME giả) — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'

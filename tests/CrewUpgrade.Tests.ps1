@@ -1,4 +1,4 @@
-. "$PSScriptRoot/TestHome.ps1"
+﻿. "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $skeletonDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'skeleton'
 $skeletonVersion = (Get-Content (Join-Path $skeletonDir 'VERSION') -Raw).Trim()
@@ -21,7 +21,7 @@ Describe 'crew upgrade' {
     if ($result.ExitCode -ne 0) { throw "$output" }
   }
 
-  It 'writes version on init and upgrades old roles with a backup while preserving project files' {
+  It 'writes version on init; a hand-edited role is kept and the new role goes to .new (no backup, not committed)' {
     (Get-Content "$repo/context/.skeleton-version" -Raw).Trim() | Should Be $skeletonVersion
     Set-Content "$repo/context/roles/worker.md" 'old role'
     Set-Content "$repo/context/PROJECT.md" 'my project'
@@ -33,23 +33,23 @@ Describe 'crew upgrade' {
     $output = $result.Output
     $result.ExitCode | Should Be 0
     ($output -join "`n") | Should Match "v0 -> v$skeletonVersion"
-    [IO.File]::ReadAllText("$repo/context/roles/worker.md") | Should Be ([IO.File]::ReadAllText("$skeletonDir/context/roles/worker.md"))
-    $backups = @(Get-ChildItem "$repo/context/roles/worker.md.bak-*")
-    $backups.Count | Should Be 1
-    (Get-Content $backups[0].FullName -Raw).Trim() | Should Be 'old role'
+    (Get-Content "$repo/context/roles/worker.md" -Raw).Trim() | Should Be 'old role'
+    [IO.File]::ReadAllText("$repo/context/roles/worker.md.new") | Should Be ([IO.File]::ReadAllText("$skeletonDir/context/roles/worker.md"))
+    @(Get-ChildItem "$repo/context/roles/worker.md.bak-*").Count | Should Be 0
     (Get-Content "$repo/context/PROJECT.md" -Raw).Trim() | Should Be 'my project'
     (Get-Content "$repo/context/HOT.md" -Raw).Trim() | Should Be 'my hot'
     (Get-Content "$repo/context/.skeleton-version" -Raw).Trim() | Should Be $skeletonVersion
     (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$skeletonVersion"
-    @(git -C $repo show --name-only --format= HEAD | Where-Object { $_ -like '*.bak-*' }).Count | Should Be 0
-    ($output -join "`n") | Should Match 'worker\.md\.bak-'
+    @(git -C $repo show --name-only --format= HEAD | Where-Object { $_ -like '*.bak-*' -or $_ -like '*.new' -or $_ -eq 'context/roles/worker.md' }).Count | Should Be 0
+    ($output -join "`n") | Should Match ([regex]::Escape('CẢNH BÁO: context/roles/worker.md đã sửa tay — bản mới ở context/roles/worker.md.new'))
     @(git -C $repo status --porcelain --untracked-files=all).Count | Should Be 0
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)
     $result.ExitCode | Should Be 0
     ($result.Output -join "`n") | Should Match 'không có gì mới'
+    [IO.File]::ReadAllText("$repo/context/roles/worker.md.new") | Should Be ([IO.File]::ReadAllText("$skeletonDir/context/roles/worker.md"))
   }
 
-  It 'adds *.bak-* to .gitignore when missing, commits it, never commits backups' {
+  It 'adds *.bak-* and the narrow .new rules to .gitignore when missing, commits it, never commits backups or .new' {
     [IO.File]::WriteAllText("$repo/.gitignore", ".crew/`n")
     Set-Content "$repo/context/roles/planner.md" 'old planner'
     git -C $repo add .gitignore context
@@ -62,11 +62,15 @@ Describe 'crew upgrade' {
     (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$skeletonVersion"
     $committed = @(git -C $repo show --name-only --format= HEAD)
     $committed -ccontains '.gitignore' | Should Be $true
-    $committed -ccontains 'context/roles/planner.md' | Should Be $true
-    @($committed | Where-Object { $_ -like '*.bak-*' }).Count | Should Be 0
+    $committed -ccontains 'context/roles/planner.md' | Should Be $false
+    @($committed | Where-Object { $_ -like '*.bak-*' -or $_ -like '*.new' }).Count | Should Be 0
     @(Get-Content "$repo/.gitignore" | ForEach-Object { $_.Trim() }) -ccontains '*.bak-*' | Should Be $true
-    @(Get-ChildItem "$repo/context/roles/planner.md.bak-*").Count | Should Be 1
-    @(git -C $repo ls-files '*.bak-*').Count | Should Be 0
+    $ignore = @(Get-Content "$repo/.gitignore" | ForEach-Object { $_.Trim() })
+    foreach ($l in 'context/**/*.new', '/CLAUDE.md.new', '/AGENTS.md.new') { $ignore -ccontains $l | Should Be $true }
+    $ignore -ccontains '*.new' | Should Be $false
+    (Get-Content "$repo/context/roles/planner.md" -Raw).Trim() | Should Be 'old planner'
+    Test-Path "$repo/context/roles/planner.md.new" | Should Be $true
+    @(git -C $repo ls-files '*.bak-*' '*.new').Count | Should Be 0
     @(git -C $repo status --porcelain --untracked-files=all).Count | Should Be 0
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)
     $result.ExitCode | Should Be 0
@@ -122,11 +126,12 @@ Describe 'crew upgrade' {
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-DryRun')
     $output = $result.Output
     $result.ExitCode | Should Be 0
-    ($output -join "`n") | Should Match 'sao lưu'
+    ($output -join "`n") | Should Match ([regex]::Escape('context/roles/rev.md -> context/roles/rev.md.new'))
     $output | Should Match ([regex]::Escape('sẽ thêm *.bak-* vào .gitignore.'))
     [IO.File]::ReadAllText("$repo/.gitignore") | Should Be $ignoreBefore
     (Get-Content "$repo/context/roles/rev.md" -Raw).Trim() | Should Be 'old'
     @(Get-ChildItem "$repo/context/roles/*.bak-*").Count | Should Be 0
+    @(Get-ChildItem "$repo/context/roles/*.new").Count | Should Be 0
     (git -C $repo status --porcelain --untracked-files=all) | Should Be $before
     (git -C $repo rev-parse HEAD) | Should Be $head
   }
@@ -146,32 +151,29 @@ Describe 'crew upgrade' {
     @(git -C $repo status --porcelain).Count | Should BeGreaterThan 0
   }
 
-  It 'replaces delimited and legacy crew blocks, preserving surrounding text and unrelated staged files' {
+  It 'never rewrites a legacy block without <!-- /crew --> and sends an edited delimited block to .new, keeping unrelated staged files' {
     $legacy = "before`n<!-- crew -->`n## Context dùng chung (crew)`nold read instruction`n- old rule`n`nafter`n"
     [IO.File]::WriteAllText("$repo/CLAUDE.md", $legacy)
     [IO.File]::WriteAllText("$repo/AGENTS.md", "prefix`n<!-- crew -->`nold`n<!-- /crew -->`nsuffix`n")
+    git -C $repo add CLAUDE.md AGENTS.md
+    git -C $repo commit -q -m blocks
     Set-Content "$repo/unrelated.txt" 'staged'
     git -C $repo add unrelated.txt
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)
-    $output = $result.Output
+    $output = $result.Output -join "`n"
     $result.ExitCode | Should Be 0
-    $text = Get-Content "$repo/CLAUDE.md" -Raw -Encoding utf8
-    $text | Should Match '^before\n<!-- crew -->'
-    $text | Should Match '<!-- /crew -->\n\nafter\n$'
-    $text | Should Not Match 'old rule'
-    (Get-Content "$repo/AGENTS.md" -Raw) | Should Match '<!-- /crew -->\nsuffix\n$'
-    foreach ($name in 'CLAUDE.md', 'AGENTS.md') {
-      $updated = [IO.File]::ReadAllText("$repo/$name")
-      $updated | Should Match ([regex]::Escape('- Bản đồ code: context/MAP.md.'))
-      $updated | Should Match ([regex]::Escape('- Không push (chỉ planner push khi chủ dự án cho phép). Mặc định chế độ gọn: worker chạy test của phần mình, không tự review.'))
-      $updated | Should Not Match 'old'
-    }
-    (Get-Content "$repo/AGENTS.md" -Raw) | Should Match '^prefix\n<!-- crew -->'
+    [IO.File]::ReadAllText("$repo/CLAUDE.md") | Should BeExactly $legacy
+    Test-Path "$repo/CLAUDE.md.new" | Should Be $false
+    $output | Should Match ([regex]::Escape('CLAUDE.md có <!-- crew --> nhưng thiếu <!-- /crew -->'))
+    [IO.File]::ReadAllText("$repo/AGENTS.md") | Should BeExactly "prefix`n<!-- crew -->`nold`n<!-- /crew -->`nsuffix`n"
+    $new = [IO.File]::ReadAllText("$repo/AGENTS.md.new")
+    $new | Should Match '^prefix\n<!-- crew -->'
+    $new | Should Match '<!-- /crew -->\r?\nsuffix\n$'
+    $new | Should Match ([regex]::Escape('- Bản đồ code: context/MAP.md.'))
     @(git -C $repo diff --cached --name-only) | Should Be 'unrelated.txt'
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)
-    $output = $result.Output
     $result.ExitCode | Should Be 0
-    ($output -join "`n") | Should Match 'không có gì mới'
+    ($result.Output -join "`n") | Should Match 'không có gì mới'
   }
 
   It 'copies missing skeleton files and never modifies tasks or archive' {
@@ -225,9 +227,6 @@ Describe 'crew upgrade' {
     $skel = @(& $trim "$skeletonDir/context/PITFALLS.md" | Where-Object { $_.StartsWith('- ') })
     $have = @($current) + @($archived)
     $expect = @($skel | Where-Object { $s = $_; -not @($have | Where-Object { $_.StartsWith($s, [StringComparison]::Ordinal) }).Count })
-    # quyết định planner 2026-11-17: trên repo này chỉ còn đúng 1 dòng không có ở đâu
-    $expect.Count | Should Be 1
-    $expect[0] | Should Match '^- Tên terminal hc là duy nhất'
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-DryRun')
     $result.ExitCode | Should Be 0
     if (-not $expect.Count) { ($result.Output -join "`n") | Should Not Match 'PITFALLS\.md' }

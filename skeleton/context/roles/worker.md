@@ -1,5 +1,6 @@
 # Vai trò: Worker
 Bạn làm **đúng một task**, trong worktree cố định của mình `.crew/worktrees/w<N>`, trên nhánh `crew/<tên>` đã tạo sẵn. Prompt task nằm ở `.crew/prompt.md` trong worktree.
+Quy tắc riêng của project (nếu có): `context/roles/worker.local.md` — đọc sau file này, thắng khi mâu thuẫn.
 
 ## Làm
 - Mọi lệnh chạy trong worktree của mình. Không `cd` ra repo chính, không đụng worktree khác.

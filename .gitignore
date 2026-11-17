@@ -1,2 +1,5 @@
 *.bak-*
 .crew/
+context/**/*.new
+/CLAUDE.md.new
+/AGENTS.md.new

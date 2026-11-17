@@ -46,10 +46,10 @@ Describe 'install.ps1' {
     }
   }
 
-  It 'tao thu muc ~/.crewline rong' {
+  It 'tao so hash template trong ~/.crewline' {
     $c = Join-Path $h.Home '.crewline'
     Test-Path $c -PathType Container | Should Be $true
-    @(Get-ChildItem -Force $c).Count | Should Be 0
+    Test-Path (Join-Path $c 'installed-hashes.json') | Should Be $true
   }
 
   It 'khong chay crew doctor khi -NoDoctor, khong ghi PATH khi CREWLINE_NO_PATH=1' {
@@ -73,11 +73,11 @@ Describe 'install.ps1 voi template da co ban khac' {
   $r = Invoke-InTestHome -TestHome $h -File $Install -Arguments '-NoDoctor' -Env $NoJq
   $bak = Join-Path $tdir "$name.bak-$(Get-Date -Format 'yyyyMMdd')"
 
-  It 'sao luu ban cu thanh .bak-<ngay> roi ghi ban moi' {
+  It 'giu ban nguoi dung va ghi ban moi ra .new' {
     $r.ExitCode | Should Be 0
-    Test-Path $bak | Should Be $true
-    (Get-Content $bak -Raw).Trim() | Should Be 'ban cu cua nguoi dung'
-    (Get-FileHash (Join-Path $tdir $name)).Hash | Should Be (Get-FileHash (Join-Path $RepoRoot "templates/$name")).Hash
+    Test-Path $bak | Should Be $false
+    (Get-Content (Join-Path $tdir $name) -Raw).Trim() | Should Be 'ban cu cua nguoi dung'
+    (Get-FileHash (Join-Path $tdir "$name.new")).Hash | Should Be (Get-FileHash (Join-Path $RepoRoot "templates/$name")).Hash
   }
 }
 
@@ -158,3 +158,66 @@ Describe 'shim PowerShell chuyen sang pwsh 7' {
   }
 }
 
+
+Describe 'install cập nhật an toàn' {
+  It 'cập nhật template nguyên bản theo hash, giữ bản sửa và config, báo project cũ' {
+    $h = New-CrewTestHome
+    $fixture = Join-Path $TestDrive 'safe-install'
+    New-Item -ItemType Directory -Force $fixture | Out-Null
+    Copy-Item $Install $fixture
+    Copy-Item (Join-Path $RepoRoot 'scripts'), (Join-Path $RepoRoot 'templates'), (Join-Path $RepoRoot 'skeleton') $fixture -Recurse
+    $scriptFile = Join-Path $fixture 'install.ps1'
+    $first = Invoke-InTestHome $h $scriptFile -Arguments '-NoDoctor' -Env $NoJq
+    $first.ExitCode | Should Be 0
+    $first.Output | Should Not Match '== Cập nhật Crewline'
+    $templates = @(Get-ChildItem (Join-Path $fixture 'templates') -Filter 'crew-*.md')
+    $tdir = Join-Path $h.AppData 'herdr-core/templates'
+    $modified = Join-Path $tdir $templates[0].Name
+    [IO.File]::WriteAllText($modified, 'my edits')
+    [IO.File]::AppendAllText($templates[0].FullName, 'new upstream')
+    [IO.File]::AppendAllText($templates[1].FullName, 'new upstream')
+    $foreign = Join-Path $tdir 'mine.md'
+    [IO.File]::WriteAllText($foreign, 'foreign')
+    [IO.File]::WriteAllText((Join-Path $fixture 'templates/mine.md'), 'upstream foreign')
+    $personal = Join-Path $h.Home '.crewline/config.json'
+    [IO.File]::WriteAllText($personal, '{"team":"solo","mine":true}')
+    $project = Join-Path $h.Home 'project'
+    New-Item -ItemType Directory -Force (Join-Path $project 'context') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $project 'context/.skeleton-version'), '1')
+    @{ old = @{ root = $project; idKey = 'old' }; missing = @{ root = (Join-Path $h.Home 'missing') } } | ConvertTo-Json | Set-Content (Join-Path $h.Home '.crewline/projects.json')
+    $beforeStamp = (Get-FileHash (Join-Path $project 'context/.skeleton-version')).Hash
+    $second = Invoke-InTestHome $h $scriptFile -Arguments '-NoDoctor' -Env $NoJq
+    $second.ExitCode | Should Be 0
+    [IO.File]::ReadAllText($modified) | Should Be 'my edits'
+    (Get-FileHash "$modified.new").Hash | Should Be (Get-FileHash $templates[0].FullName).Hash
+    (Get-FileHash (Join-Path $tdir $templates[1].Name)).Hash | Should Be (Get-FileHash $templates[1].FullName).Hash
+    [IO.File]::ReadAllText($foreign) | Should Be 'foreign'
+    [IO.File]::ReadAllText($personal) | Should Be '{"team":"solo","mine":true}'
+    (Get-FileHash (Join-Path $project 'context/.skeleton-version')).Hash | Should Be $beforeStamp
+    $second.Output | Should Match '== Cập nhật Crewline'
+    $second.Output | Should Match 'Giữ bản của bạn, bản mới ở .new'
+    $second.Output | Should Match 'old .*context v1 → chạy: crew upgrade -DryRun'
+    $third = Invoke-InTestHome $h $scriptFile -Arguments '-NoDoctor' -Env $NoJq
+    $third.ExitCode | Should Be 0
+    $third.Output | Should Match '== Cập nhật Crewline'
+    $third.Output | Should Match 'PATH .*CREWLINE_NO_PATH'
+  }
+  It 'sao lưu cả hai shim có sẵn của người dùng' {
+    $h = New-CrewTestHome
+    $bin = Join-Path $h.Home '.local/bin'
+    New-Item -ItemType Directory -Force $bin | Out-Null
+    foreach ($name in @('crew', $(if ($OnWindows) { 'crew.ps1' }))) {
+      if ($name) { [IO.File]::WriteAllText((Join-Path $bin $name), "user $name") }
+    }
+    $r = Invoke-InTestHome $h $Install -Arguments '-NoDoctor' -Env $NoJq
+    $r.ExitCode | Should Be 0
+    foreach ($name in @('crew', $(if ($OnWindows) { 'crew.ps1' }))) {
+      if ($name) { [IO.File]::ReadAllText((Join-Path $bin "$name.bak-$(Get-Date -Format yyyyMMdd)")) | Should Be "user $name" }
+    }
+    $r.Output | Should Match 'chưa có sổ projects.json'
+    '{bad' | Set-Content (Join-Path $h.Home '.crewline/projects.json')
+    $r = Invoke-InTestHome $h $Install -Arguments '-NoDoctor' -Env $NoJq
+    $r.ExitCode | Should Be 0
+    $r.Output | Should Match 'không đọc được sổ projects.json'
+  }
+}

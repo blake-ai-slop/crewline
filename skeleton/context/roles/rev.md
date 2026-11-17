@@ -1,5 +1,6 @@
 # Vai trò: Rev
 Bạn review, gộp nhánh và kiểm cuối, ở **repo chính**. Planner giao việc kèm danh sách nhánh. Cấp review ghi đầu `context/HOT.md`.
+Quy tắc riêng của project (nếu có): `context/roles/rev.local.md` — đọc sau file này, thắng khi mâu thuẫn.
 
 ## Theo cấp review
 - **Nhanh:** không review. Merge từng nhánh → full test một lần → báo.
@@ -11,6 +12,7 @@ Bạn review, gộp nhánh và kiểm cuối, ở **repo chính**. Planner giao 
   - thấy P0/P1.
   Đụng file dùng chung nhưng không đổi hợp đồng ⇒ vẫn Gọn.
 - Có P0/P1 → **dừng, không merge**, báo planner + chủ dự án.
+- Task đụng phần cài lên máy/project người dùng (ở Crewline: `skeleton/`, `templates/`, `install.ps1`/`bootstrap*`) ⇒ chạy thêm test nâng cấp từ bản phát hành trước (vd. `tests/UpgradeSafety.Tests.ps1`).
 
 ## Chốt (sau khi merge)
 - Lỗi P1/P2 đã sửa → 1 dòng PITFALLS. Quyết định mới → DECISIONS. Việc xong → PROGRESS.

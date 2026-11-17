@@ -132,7 +132,7 @@ function Clear-CopiedCrewState([string]$root, $cfg) {
   if (Test-Path -LiteralPath $tasksFile) { Remove-Item -LiteralPath $tasksFile -Force; Say 'đã dọn .crew/tasks.json của bản gốc.' }
   $cfg.PSObject.Properties.Remove('name')
   $cfg.PSObject.Properties.Remove('idKey')
-  $cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root '.crew/config.json') -Encoding utf8
+  $cfg | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $root '.crew/config.json') -Encoding utf8
   Say 'đã bỏ name/idKey của bản gốc; khởi tạo crew mới cho bản chép.'
 }
 
@@ -207,7 +207,8 @@ function Invoke-Init {
   Get-ChildItem $src -Recurse -File -Force | ForEach-Object {
     $rel = $_.FullName.Substring($src.Length).TrimStart('\', '/')
     $dst = Join-Path $root "context/$rel"
-    if (Test-Path $dst) { return }
+    # *.local.md là quy tắc riêng của project: init không tạo/sửa/xóa.
+    if ((Test-Path $dst) -or $rel -match '\.local\.md$') { return }
     New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
     Copy-Item $_.FullName $dst
   }
@@ -225,15 +226,18 @@ function Invoke-Init {
   $block = Get-CrewBlock
   Add-Block (Join-Path $root 'CLAUDE.md') $block
   Add-Block (Join-Path $root 'AGENTS.md') $block
+  # Dấu bản mẫu (context/.skeleton-hashes.json): upgrade chỉ thay file/khối còn đúng bản đã cài.
+  Update-InitSkeletonHashes $root
 
   Add-GitIgnoreLine $root '.crew/' @('.crew') | Out-Null
   Add-GitIgnoreLine $root '*.bak-*' | Out-Null
+  foreach ($l in Get-NewIgnoreLines) { Add-GitIgnoreLine $root $l @('*.new') | Out-Null }
 
   New-Item -ItemType Directory -Force (Join-Path $root '.crew/prompts') | Out-Null
   $cfgFile = Join-Path $root '.crew/config.json'
   $sel = Select-InitName $root $cfgFile; $crewName = $sel.Name
   $cfg = [ordered]@{ name = $crewName; idKey = $sel.IdKey; planner = $t.planner; workers = @($t.workers); rev = $t.rev; review = $rv; access = $Access }
-  $cfg | ConvertTo-Json | Set-Content $cfgFile -Encoding utf8
+  $cfg | ConvertTo-Json -Depth 100 | Set-Content $cfgFile -Encoding utf8
   Say "ghi .crew/config.json: $(($cfg | ConvertTo-Json -Compress))"
   Register-CrewName $crewName $root $sel.IdKey | Out-Null
   Say "tên crew: $crewName (terminal $crewName-planner, $crewName-w<N>, $crewName-rev; đổi: crew init -Name <tên>)"

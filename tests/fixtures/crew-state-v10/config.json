@@ -1,0 +1,11 @@
+{
+  "name": "compat",
+  "idKey": "compat",
+  "planner": "none",
+  "workers": [
+    "claude"
+  ],
+  "rev": "none",
+  "review": "fast",
+  "access": "work"
+}

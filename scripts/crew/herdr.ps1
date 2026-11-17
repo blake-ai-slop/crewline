@@ -84,22 +84,59 @@ function Get-NameConflict([string]$root, $cfg) {
   ''
 }
 
+function Get-CrewStateSchema { 1 }
+
+# Mảng tasks/queue giữ nguyên định dạng cũ; schema chỉ nằm ở object config/sessions.
+function Read-CrewState([string]$file, [switch]$ThrowOnError) {
+  try {
+    $raw = [IO.File]::ReadAllText($file)
+    $leaf = [IO.Path]::GetFileName($file)
+    if (-not $raw.Trim().Trim([char]0xFEFF).Trim()) {
+      if ($leaf -in 'tasks.json', 'queue.json') {
+        $kind = if ($leaf -eq 'tasks.json') { 'task' } else { 'mục hàng đợi' }
+        Write-Host "crew: CẢNH BÁO: $file trống — coi như không có $kind." -ForegroundColor Yellow
+        return , @()
+      }
+      throw 'JSON trống'
+    }
+    try {
+      $j = ConvertFrom-Json -InputObject $raw -NoEnumerate -ErrorAction Stop
+      if ($null -eq $j -or ($j -isnot [array] -and $j.GetType() -ne [System.Management.Automation.PSCustomObject])) { throw 'cần object hoặc mảng' }
+    } catch { throw "$file hỏng — sửa JSON hoặc khôi phục bản sao, không ghi đè file: $($_.Exception.Message)" }
+    if ($j -is [pscustomobject] -and $j.PSObject.Properties.Name -contains 'schema') {
+      if ($j.schema -isnot [int] -and $j.schema -isnot [long]) { throw "$file hỏng — schema phải là số nguyên; sửa JSON hoặc khôi phục bản sao." }
+      if ($j.schema -gt (Get-CrewStateSchema)) { throw "$file`: dữ liệu do bản crew mới hơn ghi — cập nhật crew" }
+    }
+    if ($leaf -in 'config.json', 'sessions.json' -and $j.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw "$file hỏng — cần object; sửa JSON hoặc khôi phục bản sao." }
+    return ,$j
+  } catch {
+    $message = $_.Exception.Message
+    if (-not $message.StartsWith($file, [StringComparison]::Ordinal)) { $message = "$file hỏng — sửa JSON hoặc khôi phục bản sao, không ghi đè file: $message" }
+    if ($ThrowOnError) { throw $message }
+    Die $message
+  }
+}
+
 function Get-Config([string]$root) {
   $f = Join-Path $root '.crew/config.json'
   if (-not (Test-Path $f)) { Die "chưa có .crew/config.json — chạy 'crew init' trước." }
-  return Get-Content $f -Raw | ConvertFrom-Json
+  $config = Read-CrewState $f
+  if ($config.GetType() -ne [System.Management.Automation.PSCustomObject]) { Die "$f hỏng — config phải là object; sửa JSON hoặc khôi phục bản sao." }
+  return $config
 }
 
 # Luôn trả mảng (0/1/nhiều phần tử): dấu phẩy chặn PowerShell bóc mảng khi trả về. Gán `$t = Get-Tasks`, không bọc `@(Get-Tasks)`.
-function Get-Tasks([string]$root) {
+function Get-Tasks([string]$root, [switch]$ThrowOnError) {
   $f = Join-Path $root '.crew/tasks.json'
   if (-not (Test-Path $f)) { return , @() }
-  return , @(Get-Content $f -Raw | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
+  return , @((Read-CrewState $f -ThrowOnError:$ThrowOnError) | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
 }
 
 function Save-Tasks([string]$root, $tasks) {
+  $file = Join-Path $root '.crew/tasks.json'
+  if (Test-Path -LiteralPath $file) { $null = Read-CrewState $file }
   $list = @($tasks | Where-Object { $null -ne $_ })
-  ConvertTo-Json -InputObject $list -Depth 5 | Set-Content (Join-Path $root '.crew/tasks.json') -Encoding utf8
+  ConvertTo-Json -InputObject $list -Depth 100 | Set-Content (Join-Path $root '.crew/tasks.json') -Encoding utf8
 }
 
 function Get-Flags([string]$kind, [string]$access) {

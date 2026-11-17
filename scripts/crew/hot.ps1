@@ -1,4 +1,14 @@
-﻿# ---------------- hot ----------------
+﻿function Show-CrewUpgradeWarning([string]$root) {
+  $file = Join-Path $root 'context/.skeleton-version'
+  if (-not (Test-Path -LiteralPath $file)) { return }
+  $n = 0
+  if ([int]::TryParse(([IO.File]::ReadAllText($file)).Trim(), [ref]$n)) {
+    $m = Get-SkeletonVersion
+    if ($n -lt $m) { Write-Host "crew: context v$n cũ hơn crew v$m — chạy crew upgrade -DryRun rồi crew upgrade" -ForegroundColor Yellow }
+  }
+}
+
+# ---------------- hot ----------------
 # hc read/get không có màu/thuộc tính ô nhập: chữ gợi ý có thể giống tin thật.
 # Chỉ nhận marker hàng đợi của UI ở ô nhập cuối màn hình; không đoán từ chữ sau ❯/›.
 # Tin kẹt: chỉ Codex rảnh, chữ nằm trong ô nhập thật. Claude bỏ qua: hc không phân biệt được gợi ý mờ với chữ thật, và Claude tự đọc tin khi xong lượt.
@@ -60,6 +70,7 @@ function Get-HotWarnings([string]$root, $cfg, $tasks, $terminals, $pending = @{}
 
 function Invoke-Hot {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
+  Show-CrewUpgradeWarning $root
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
   try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Write-Host "crew: CẢNH BÁO: $($mv.Hint)" -ForegroundColor Yellow }
   Write-Host "== crew:$slug  review=$($cfg.review) access=$($cfg.access) planner=$($cfg.planner) workers=$($cfg.workers -join ',') rev=$($cfg.rev)"

@@ -130,6 +130,16 @@ Describe 'crew help' {
     $result.Text | Should Match 'crew help agent'
   }
 
+  It 'crew help upgrade mô tả .new, .local.md và 3 nhóm của -DryRun' {
+    $text = (Invoke-HelpPage 'upgrade').Text
+    $text | Should Match 'không bao giờ ghi đè'
+    $text | Should Match ([regex]::Escape('<file>.new'))
+    $text | Should Match ([regex]::Escape('context/roles/<vai>.local.md'))
+    $text | Should Match ([regex]::Escape('<!-- /crew -->'))
+    $text | Should Match '-DryRun in 3 nhóm'
+    $text | Should Not Match 'sao lưu'
+  }
+
   It 'crew help send nói rõ agent bận thì tin nằm chờ' {
     $result = Invoke-HelpPage 'send'
     $result.ExitCode | Should Be 0

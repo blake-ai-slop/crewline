@@ -6,40 +6,46 @@ function Get-SessionsFile([string]$root) { Join-Path $root '.crew/sessions.json'
 function New-SessionBook { @{ Roles = @{}; CodexRootRoles = @(); Warning = '' } }
 function Test-SessionId($id) { $id -is [string] -and $id -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' }
 
-# Không throw: thiếu file ⇒ sổ trống; hỏng ⇒ sổ trống + Warning. Mục sai dạng ⇒ coi như chưa ghi nhận.
+# Thiếu file ⇒ sổ trống; JSON hỏng/schema mới ⇒ dừng trước mọi ghi.
 function Read-SessionBook([string]$root) {
   $book = New-SessionBook
   $file = Get-SessionsFile $root
-  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $book }
-  try {
-    $j = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
-    if ($j -isnot [pscustomobject] -or $j.roles -isnot [pscustomobject]) { throw 'thiếu roles' }
-    foreach ($p in $j.roles.PSObject.Properties) {
-      $v = $p.Value
-      if ($v -isnot [pscustomobject] -or $v.agent -isnot [string] -or $v.root -isnot [string]) { continue }
-      $book.Roles[$p.Name] = @{ agent = $v.agent; root = $v.root; sessionId = $v.sessionId }
-    }
-    $book.CodexRootRoles = @($j.codexRootRoles | Where-Object { $_ -is [string] })
-  } catch {
-    $book = New-SessionBook
-    $book.Warning = "sổ phiên $file hỏng, coi như chưa có ghi nhận ($($_.Exception.Message))."
+  if (-not (Test-Path -LiteralPath $file)) { return $book }
+  $j = Read-CrewState $file
+  if ($j -isnot [pscustomobject] -or $j.roles -isnot [pscustomobject]) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." }
+  $book.State = $j
+  foreach ($p in $j.roles.PSObject.Properties) {
+    $v = $p.Value
+    if ($v -isnot [pscustomobject] -or $v.agent -isnot [string] -or $v.root -isnot [string]) { continue }
+    $book.Roles[$p.Name] = $v
   }
+  $book.CodexRootRoles = @($j.codexRootRoles | Where-Object { $_ -is [string] })
   $book
 }
 
-# Ghi nguyên tử; lỗi ⇒ chỉ cảnh báo (mất ghi nhận thì lần sau mở hội thoại mới, không hỏng gì).
 function Save-SessionBook([string]$root, $book) {
   $file = Get-SessionsFile $root
-  try {
-    New-Item -ItemType Directory -Force (Split-Path $file) -ErrorAction Stop | Out-Null
-    $roles = [ordered]@{}
-    foreach ($k in @($book.Roles.Keys | Sort-Object)) {
-      $r = $book.Roles[$k]
-      $o = [ordered]@{ agent = $r.agent; root = $r.root }
-      if ($r.sessionId) { $o.sessionId = $r.sessionId }
-      $roles[$k] = $o
+  $state = if (Test-Path -LiteralPath $file) { Read-CrewState $file } else { [pscustomobject]@{ version = 1 } }
+  if ((Test-Path -LiteralPath $file) -and ($state -isnot [pscustomobject] -or $state.roles -isnot [pscustomobject])) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." }
+  $roles = [ordered]@{}
+  if ($state.roles) { foreach ($p in $state.roles.PSObject.Properties) { $roles[$p.Name] = $p.Value } }
+  foreach ($k in @($book.Roles.Keys | Sort-Object)) {
+    $r = $book.Roles[$k]
+    $o = [ordered]@{}
+    if ($state.roles -and $state.roles.PSObject.Properties[$k]) {
+      foreach ($p in $state.roles.$k.PSObject.Properties) { $o[$p.Name] = $p.Value }
     }
-    $text = ConvertTo-Json -InputObject ([ordered]@{ version = 1; roles = $roles; codexRootRoles = @($book.CodexRootRoles) }) -Depth 5
+    $o.Remove('sessionId')
+    if ($r -is [System.Collections.IDictionary]) { foreach ($key in $r.Keys) { $o[$key] = $r[$key] } }
+    else { foreach ($p in $r.PSObject.Properties) { $o[$p.Name] = $p.Value } }
+    $roles[$k] = $o
+  }
+  $state | Add-Member NoteProperty schema (Get-CrewStateSchema) -Force
+  $state | Add-Member NoteProperty roles $roles -Force
+  $state | Add-Member NoteProperty codexRootRoles @($book.CodexRootRoles) -Force
+  try {
+    New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
+    $text = ConvertTo-Json -InputObject $state -Depth 100
     $tmp = "$file.tmp"
     [IO.File]::WriteAllText($tmp, $text, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $tmp -Destination $file -Force -ErrorAction Stop

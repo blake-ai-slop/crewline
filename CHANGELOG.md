@@ -2,6 +2,27 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-17 (4) — cập nhật không mất dữ liệu
+
+### Mới
+- **`crew upgrade` không ghi đè file bạn đã sửa:** `context/README.md`, `context/roles/*.md` và khối `<!-- crew -->` trong `CLAUDE.md`/`AGENTS.md` chỉ được thay khi còn đúng bản crew đã cài. Đã sửa tay thì giữ nguyên bản của bạn, bản mới ghi ra `<file>.new` để bạn gộp tay rồi xóa. Cuối lệnh có tóm tắt: đã cập nhật / giữ bản của bạn (.new) / giữ nguyên, kèm việc cần làm. `-DryRun` in cùng tóm tắt.
+- **Quy tắc riêng của project:** đặt trong `context/roles/<vai>.local.md` (planner/rev/worker). Agent đọc sau file role, file này thắng khi mâu thuẫn; `crew upgrade` không bao giờ đụng tới.
+- **Cập nhật bằng lệnh cài 1 dòng nói rõ chuyện gì xảy ra:** bản cũ → bản mới, template hc nào được cập nhật hay giữ bản của bạn (.new), config cá nhân và PATH giữ nguyên, và **danh sách project trên máy cần chạy `crew upgrade`**.
+- **`crew hot`/`crew up` nhắc khi project cần `crew upgrade`.**
+
+### Sửa
+- **Template hc `crew-*` đã sửa tay không còn bị ghi đè** khi cài lại (bản mới ở `.new`). Lệnh lạ trùng tên `~/.local/bin/crew` được sao lưu trước khi ghi.
+- **PATH Windows giữ nguyên `%USERPROFILE%`, `%JAVA_HOME%`…** khi crew thêm `~/.local/bin` (trước đây các biến bị bung thành đường dẫn cố định).
+- **Dữ liệu `.crew/` và `~/.crewline/` không còn bị làm hỏng:** trường lồng sâu được giữ khi ghi lại; file do bản crew mới hơn ghi, hoặc JSON hỏng, thì crew dừng và nói rõ, không ghi đè. `tasks.json`/`queue.json` rỗng được coi là không có task (kèm cảnh báo).
+- **Project tạo bằng bản init cũ** có khối crew thiếu `<!-- /crew -->`: upgrade không còn đoán ranh giới (từng xóa danh sách của bạn ngay dưới khối) mà dừng ở file đó và hướng dẫn thêm dấu kết thúc.
+
+### Lưu ý khi nâng cấp
+- Lần upgrade đầu lên v11, file role bạn đã sửa sẽ thành `.new` thay vì bị ghi đè — chuyển phần sửa riêng sang `<vai>.local.md`, rồi thay file role bằng bản `.new`.
+- `.gitignore` của project được thêm `context/**/*.new`, `/CLAUDE.md.new`, `/AGENTS.md.new`.
+
+### Chưa kiểm
+- Đợt này chỉ chạy đủ test trên Windows.
+
 ## 2026-11-17 (3)
 
 ### Khác

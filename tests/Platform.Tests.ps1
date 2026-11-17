@@ -1,4 +1,4 @@
-. "$PSScriptRoot/TestHome.ps1"
+﻿. "$PSScriptRoot/TestHome.ps1"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 Describe 'platform helpers' {
   It 'dot-source produces no output' {
@@ -65,5 +65,28 @@ $second = Add-UserPath $dir
       Get-Content (Join-Path $h.Home '.bashrc') -Raw | Should Match '# existing'
       if ($os -eq 'linux') { Test-Path (Join-Path $h.Home '.zshrc') | Should Be $false }
     }
+  }
+}
+
+Describe 'Windows raw PATH với registry giả' {
+  It 'giữ nguyên biến môi trường, mục trống, ghi ExpandString và thông báo một lần' {
+    . "$RepoRoot/scripts/platform.ps1"
+    function Get-CrewOS { 'windows' }
+    $savedNoPath = $env:CREWLINE_NO_PATH
+    try {
+      $env:CREWLINE_NO_PATH = ''
+      $state = @{ Raw = '%USERPROFILE%\tools;;%SystemRoot%\System32;C:\Other\'; Writes = 0; Notices = 0 }
+      $ops = @{
+        Read = { $state.Raw }.GetNewClosure()
+        Write = { param($value, $kind) $state.Raw = $value; $state.Kind = $kind; $state.Writes++ }.GetNewClosure()
+        Notify = { $state.Notices++ }.GetNewClosure()
+      }
+      Add-UserPath 'C:\Crew\bin' $ops | Should Be $true
+      $state.Raw | Should Be 'C:\Crew\bin;%USERPROFILE%\tools;;%SystemRoot%\System32;C:\Other\'
+      $state.Kind | Should Be ([Microsoft.Win32.RegistryValueKind]::ExpandString)
+      Add-UserPath 'c:\crew\BIN\' $ops | Should Be $false
+      $state.Writes | Should Be 1
+      $state.Notices | Should Be 1
+    } finally { $env:CREWLINE_NO_PATH = $savedNoPath }
   }
 }

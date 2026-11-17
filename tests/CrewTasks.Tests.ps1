@@ -1,10 +1,13 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test Get-Tasks/Save-Tasks: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (task/hot/clean gọi hc thật).
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
+
+function Die($message) { throw $message }
 
 function New-TaskRepo([object[]]$Names) {
   $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -37,12 +40,19 @@ Describe 'Get-Tasks luôn trả mảng' {
     }
   }
 
-  It 'tasks.json rỗng -> mảng rỗng' {
+  It 'tasks.json trống -> mảng rỗng, cảnh báo một lần và giữ nguyên byte khi đọc' {
     $root = New-TaskRepo $null
-    '' | Set-Content (Join-Path $root '.crew/tasks.json')
-    $t = Get-Tasks $root
+    $file = Join-Path $root '.crew/tasks.json'
+    [IO.File]::WriteAllText($file, '')
+    $before = (Get-FileHash -LiteralPath $file).Hash
+    $output = @(. { $t = Get-Tasks $root } 6>&1)
     ($t -is [array]) | Should Be $true
     $t.Count | Should Be 0
+    $output.Count | Should Be 1
+    "$($output[0])" | Should Be "crew: CẢNH BÁO: $file trống — coi như không có task."
+    (Get-FileHash -LiteralPath $file).Hash | Should Be $before
+    Save-Tasks $root @([pscustomobject]@{ name = 'moi'; worker = 1 })
+    (Get-Tasks $root)[0].name | Should Be 'moi'
   }
 
   It 'Where-Object lọc còn 1 phần tử rồi Save-Tasks vẫn ghi mảng (như crew clean)' {

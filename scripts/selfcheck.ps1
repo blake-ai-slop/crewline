@@ -91,7 +91,7 @@ try {
       if ($r.Text -notmatch 'chore: initial commit') { throw 'thiếu commit đầu' }
     }
     Step 'upgrade DryRun: giữ nguyên file và HEAD' {
-      $r = Invoke-SelfChild -Profile $profile -Directory $project -Code "Set-Content context/roles/worker.md 'old worker role'; git add context/roles/worker.md; if (`$LASTEXITCODE) { exit 1 }; git commit -qm old; exit `$LASTEXITCODE"
+      $r = Invoke-SelfChild -Profile $profile -Directory $project -Code "Set-Content context/roles/worker.md 'old worker role'; Remove-Item context/.skeleton-version; git add -A context; if (`$LASTEXITCODE) { exit 1 }; git commit -qm old; exit `$LASTEXITCODE"
       Assert-Child $r
       $beforeFiles = Get-SelfSnapshot $project
       $before = Invoke-SelfChild -Profile $profile -Directory $project -Code 'git rev-parse HEAD; git status --porcelain --untracked-files=all'
@@ -102,7 +102,7 @@ try {
       Assert-Child $after
       if ($before.Text -ne $after.Text -or $beforeFiles -ne (Get-SelfSnapshot $project)) { throw 'DryRun đã thay đổi file/HEAD/status' }
     }
-    Step 'upgrade: commit mới, role cập nhật, status sạch' {
+    Step 'upgrade: commit mới, role sửa tay giữ nguyên + bản mới ở .new, status sạch' {
       $before = Invoke-SelfChild -Profile $profile -Directory $project -Code 'git rev-parse HEAD'
       Assert-Child $before
       $r = Invoke-SelfChild -Profile $profile -Directory $project -Code ("& " + (Quote-Self $shim) + ' upgrade; exit $LASTEXITCODE')
@@ -111,7 +111,8 @@ try {
       $status = Invoke-SelfChild -Profile $profile -Directory $project -Code 'git status --porcelain; exit $LASTEXITCODE'
       Assert-Child $after; Assert-Child $status
       if ($before.Text -eq $after.Text -or $status.Text.Trim()) { throw 'thiếu commit upgrade hoặc status bẩn' }
-      if ([IO.File]::ReadAllText("$project/context/roles/worker.md") -ne [IO.File]::ReadAllText("$repo/skeleton/context/roles/worker.md")) { throw 'role chưa cập nhật' }
+      if ((Get-Content "$project/context/roles/worker.md" -Raw).Trim() -ne 'old worker role') { throw 'upgrade đã ghi đè role sửa tay' }
+      if ([IO.File]::ReadAllText("$project/context/roles/worker.md.new") -ne [IO.File]::ReadAllText("$repo/skeleton/context/roles/worker.md")) { throw 'thiếu bản mới worker.md.new' }
     }
     Step 'upgrade lần hai: không có gì mới' {
       $r = Invoke-SelfChild -Profile $profile -Directory $project -Code ("& " + (Quote-Self $shim) + ' upgrade; exit $LASTEXITCODE')
