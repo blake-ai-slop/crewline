@@ -1,11 +1,12 @@
-﻿# Mở lại hội thoại: trích hàm bằng AST + e2e qua crew.ps1 thật trong HOME giả với hc/herdr-app giả. hc giả không chạy agent nào; không gọi hc thật.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Mở lại hội thoại: trích hàm bằng AST + e2e qua crew.ps1 thật trong HOME giả với hc/herdr-app giả. hc giả không chạy agent nào; không gọi hc thật.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 $want = 'Get-Flags', 'Quote', 'Get-AgentCommand', 'ConvertTo-RootKey', 'Test-SamePath', 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode',
   'Get-TermShellState', 'Get-InputBox', 'Get-ScreenDialog', 'Wait-WorkerReady', 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook',
   'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 function Say($msg) { $script:Said += , [string]$msg }

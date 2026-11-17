@@ -1,5 +1,6 @@
-﻿# AST + hc giả; không gọi terminal thật.
-$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# AST + hc giả; không gọi terminal thật.
+
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
 $want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished',
@@ -8,7 +9,7 @@ $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionB
 $want += 'Get-SelfTerm', 'Get-SelfPaneState'
 # Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
 $env:HC_TERMINAL_ID = $null
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 

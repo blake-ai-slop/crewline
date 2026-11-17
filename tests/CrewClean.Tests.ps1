@@ -1,8 +1,9 @@
-﻿# Test phần git của crew clean (Remove-TaskGit): trích hàm bằng AST từ crew.ps1, chạy trên repo git tạm trong $TestDrive, không gọi hc.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Test phần git của crew clean (Remove-TaskGit): trích hàm bằng AST từ crew.ps1, chạy trên repo git tạm trong $TestDrive, không gọi hc.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 $want = 'Say', 'Get-Tasks', 'Save-Tasks', 'Invoke-GitQuiet', 'Test-WorktreeListed', 'Remove-TaskGit', 'Remove-TaskBranch'
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 function Say($msg) { }

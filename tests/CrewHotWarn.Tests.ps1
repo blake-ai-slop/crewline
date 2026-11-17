@@ -1,8 +1,9 @@
-﻿# Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
 $hotCrew = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$hotAst = [System.Management.Automation.Language.Parser]::ParseFile($hotCrew,[ref]$null,[ref]$null)
-$hotFunctions = 'Get-WorkerMode','Get-SendPlan','Get-TermStatus','Get-HotWarnings','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
-foreach ($fn in $hotAst.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $hotFunctions},$false)) { . ([scriptblock]::Create($fn.Extent.Text.Replace("(Join-Path `$PSScriptRoot 'lint.ps1')", '$script:HotLintPath'))) }
+
+$hotFunctions = 'Get-PromptScope','Get-ScopeConflicts','Get-WorkerMode','Get-SendPlan','Get-TermStatus','Get-HotWarnings','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
+foreach ($fn in (Find-CrewAst {param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $hotFunctions} -Recurse:$false)) { . ([scriptblock]::Create($fn.Extent.Text.Replace("(Join-Path `$CrewScriptsDir 'lint.ps1')", '$script:HotLintPath'))) }
 function Read-ProjectRegistry { @{Ok=$true; Map=$script:hotRegistry} }
 function Get-ProjectsFile { Join-Path $TestDrive 'projects.json' }
 function Get-LiveTerminals { $script:fakeTerms }
@@ -39,6 +40,21 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $script:HotLintPath = Join-Path $TestDrive 'missing.ps1'
     $output = Invoke-Hot 6>&1 | Out-String
     $output | Should Not Match 'crew: context:|lint.ps1|không đọc'
+  }
+  It 'task trùng hiện đúng một cảnh báo mỗi cặp, bỏ task thiếu prompt' {
+    $items = @()
+    foreach ($n in 1,2,3) {
+      $dir = Join-Path $root ".crew/worktrees/scope$n/.crew"
+      New-Item -ItemType Directory -Force $dir | Out-Null
+      'Được sửa: `src/a.ps1`, `context/tasks/*`' | Set-Content (Join-Path $dir 'prompt.md') -Encoding UTF8
+      $items += [pscustomobject]@{name="t$n";worker=$n;worktree=".crew/worktrees/scope$n";branch='main';agent='codex'}
+    }
+    $items += [pscustomobject]@{name='missing';worker=4;worktree='gone';branch='main';agent='codex'}
+    ConvertTo-Json -InputObject $items | Set-Content (Join-Path $root '.crew/tasks.json')
+    $output = Invoke-Hot 6>&1 | Out-String
+    ([regex]::Matches($output, 'crew: CẢNH BÁO: task')).Count | Should Be 3
+    $output | Should Match 'task t1 và t2 trùng file: src/a.ps1 ~ src/a.ps1'
+    $output | Should Not Match 'trùng file:.*context/tasks|và missing trùng'
   }
   It 'sạch không có khối Cảnh báo' {
     @(Get-HotWarnings $root $cfg @() @()).Count | Should Be 0

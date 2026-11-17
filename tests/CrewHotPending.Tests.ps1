@@ -1,8 +1,9 @@
-﻿# Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
 # 2026-11-01: crewline-planner/w1/rev (chỉ đọc), hp-test-claude/codex (đã kill).
-$pendingAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
+
 $pendingFunctions = 'Get-WorkerMode','Get-SendPlan','Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Get-HotWarnings'
-foreach ($fn in $pendingAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $pendingFunctions }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $pendingFunctions } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 $ClaudeSuggestion = @'

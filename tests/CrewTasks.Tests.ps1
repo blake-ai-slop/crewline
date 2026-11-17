@@ -1,7 +1,8 @@
-﻿# Test Get-Tasks/Save-Tasks: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (task/hot/clean gọi hc thật).
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Test Get-Tasks/Save-Tasks: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (task/hot/clean gọi hc thật).
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks' }, $false)) {
+
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 

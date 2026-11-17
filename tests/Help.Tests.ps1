@@ -1,7 +1,8 @@
-﻿[Console]::OutputEncoding = [Text.Encoding]::UTF8
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $repo = Split-Path $PSScriptRoot -Parent
 $helpScript = Join-Path $repo 'scripts/help.ps1'
-$commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
+$commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
 
 # Help chỉ xuất văn bản, không chạy crew/hc hoặc ghi cấu hình người dùng.
 function Invoke-HelpPage([string]$Topic) {
@@ -16,6 +17,12 @@ function Get-HelpParameters([string]$File) {
 }
 
 Describe 'crew help' {
+  It 'task giải thích chặn trùng file và -Force' {
+    $text = (Invoke-HelpPage 'task').Text
+    $text | Should Match '\[-Force\]'
+    $text | Should Match 'Chặn giao.*Được sửa:.*trùng file.*-Force vẫn giao kèm cảnh báo'
+  }
+
   It 'hướng dẫn bản chép, chuyển thư mục và cảnh báo hot' {
     (Invoke-HelpPage 'init').Text | Should Match 'Chép thư mục.*crew init -Name'
     (Invoke-HelpPage 'repair').Text | Should Match 'đổi tên/chuyển thư mục.*git worktree repair, tasks.json, sổ, bật lại terminal'
@@ -79,23 +86,23 @@ Describe 'crew help' {
     $result.Text | Should Not Match 'crew (task|check|review|send|clean|limits|selfcheck|repair)\b|Mẹo'
   }
 
-  It 'agent liệt kê đủ chín lệnh theo nhóm và thứ tự' {
+  It 'agent liệt kê đủ mười lệnh theo nhóm và thứ tự' {
     $result = Invoke-HelpPage 'agent'
     $result.ExitCode | Should Be 0
     $result.Text | Should Match '^Đây là lệnh planner, Rev dùng; người dùng thường không cần gõ\.'
-    $ordered = @('Giao việc', 'crew task', 'crew limits', 'crew send', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'crew lint', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck')
+    $ordered = @('Giao việc', 'crew task', 'crew queue', 'crew limits', 'crew send', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'crew lint', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck')
     $previous = -1
     foreach ($item in $ordered) {
       $index = $result.Text.IndexOf($item)
       ($index -gt $previous) | Should Be $true
       $previous = $index
     }
-    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 9
+    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 10
   }
 
   It 'status và hot dispatch cùng Invoke-Hot, không gọi hc thật' {
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts/crew.ps1'), [ref]$null, [ref]$null)
-    $dispatch = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true) | Select-Object -Last 1
+    $entryAst = @(Get-CrewAsts)[0]
+    $dispatch = $entryAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true) | Select-Object -Last 1
     function Invoke-Hot { 'hot-path' }
     foreach ($name in @('status', 'hot')) {
       $clause = @($dispatch.Clauses | Where-Object { $_.Item1.Value -eq $name })
@@ -130,9 +137,9 @@ Describe 'crew help' {
     $result.Text | Should Match 'tin nằm chờ'
   }
 
-  foreach ($topic in @('task', 'up', 'clean', 'init', 'upgrade', 'review', 'send', 'lint')) {
+  foreach ($topic in @('task', 'queue', 'up', 'clean', 'init', 'upgrade', 'review', 'send', 'lint')) {
     It "mọi cờ của $topic khớp param thật crew.ps1 qua AST" {
-      $parameters = Get-HelpParameters (Join-Path $repo 'scripts/crew.ps1')
+      $parameters = Get-CrewParamNames
       $result = Invoke-HelpPage $topic
       $flags = @([regex]::Matches($result.Text, '(?m)(?:^|[\s\[])-([A-Za-z][A-Za-z0-9]*)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
       $flags.Count -gt 0 | Should Be $true
@@ -149,6 +156,16 @@ Describe 'crew help' {
     (Invoke-HelpPage 'up').Text | Should Match 'mở lại đúng hội thoại cũ của vai khi chắc chắn'
   }
 
+  It 'queue: giữ theo After/trùng file/limit, tự chạy sau clean và up' {
+    $text = (Invoke-HelpPage 'queue').Text
+    $text | Should Match '\.crew/queue\.json'
+    $text | Should Match 'mốc hạn chế với -Size L, hoặc mốc dừng'
+    $text | Should Match 'trùng file Được sửa'
+    $text | Should Match 'dừng giao tiếp'
+    (Invoke-HelpPage 'clean').Text | Should Match 'tự giao mục trong hàng đợi'
+    (Invoke-HelpPage 'up').Text | Should Match 'tự giao mục trong hàng đợi'
+  }
+
   It 'limits nói đúng nguồn số: trực tiếp, không tốn token, màn hình có thể cũ' {
     $text = (Invoke-HelpPage 'limits').Text
     $text | Should Match 'trực tiếp từ Codex/Claude'
@@ -158,7 +175,7 @@ Describe 'crew help' {
 
   It 'ghi đủ cờ theo hợp đồng, không bỏ sót khi thêm chi tiết' {
     $expected = @{
-      task = @('Worker', 'Review'); up = @('Path', 'All', 'DryRun', 'Restart', 'Force'); clean = @('Force')
+      task = @('Worker', 'Review'); queue = @('Worker', 'Review', 'After', 'Size', 'Remove', 'Run', 'DryRun'); up = @('Path', 'All', 'DryRun', 'Restart', 'Force'); clean = @('Force')
       init = @('Path', 'Name', 'Team', 'Review', 'Access', 'GitInit', 'NoCommit')
       upgrade = @('Path', 'DryRun', 'NoCommit', 'Force'); review = @('DryRun'); send = @('Raw')
       lint = @('Path', 'Strict'); repair = @('Path', 'DryRun'); status = @('Path'); hot = @('Path'); limits = @('Path'); check = @('Path', 'NoTest')

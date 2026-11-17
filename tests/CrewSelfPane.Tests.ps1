@@ -1,10 +1,11 @@
-﻿# crew up gõ ngay trong pane của một vai: e2e qua crew.ps1 thật + tiến trình nền thật, hc + herdr-app giả đứng đầu PATH, HOME giả.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# crew up gõ ngay trong pane của một vai: e2e qua crew.ps1 thật + tiến trình nền thật, hc + herdr-app giả đứng đầu PATH, HOME giả.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 $want = 'Start-BreakawayProcess', 'Get-SelfPaneTimeoutSec', 'Get-SelfTerm', 'Get-SelfPaneState', 'Get-TermStatus', 'Get-TermShellState', 'Wait-SelfPaneShell', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey', 'Get-HotWarnings',
   'Invoke-GitQuiet', 'Get-CrewName', 'Get-LegacySlug', 'Test-CrewName', 'Get-CopySource', 'Get-NameOwner', 'Test-OtherAlive', 'Get-NameConflict', 'Get-IdKeyOwner', 'Get-CrewIdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-Root', 'Get-Config', 'Get-ForeignTermError'
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 function Read-ProjectRegistry { @{ Ok = $true; Map = [ordered]@{} } }

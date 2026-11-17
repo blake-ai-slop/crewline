@@ -1,7 +1,8 @@
-﻿# crew up init: CLI thật, HOME và hc/herdr giả.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# crew up init: CLI thật, HOME và hc/herdr giả.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 $FakeHc = @'
@@ -193,7 +194,7 @@ Describe 'crew up init' {
   }
   It 'goc he thong: AST fake duong dan, khong dong goc that' {
     $wrap = Join-Path $c.Home.Home 'root.ps1'
-    $fn = $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq 'Invoke-Recover' }, $false)[0].Extent.Text
+    $fn = (Get-CrewFunction 'Invoke-Recover').Extent.Text
     $pre = 'param($target); $Path = $target; function Get-MainRoot { $null }; function Test-SamePath($a,$b) { $b -eq [IO.Path]::GetPathRoot($target) }; function Die($msg) { Write-Output $msg; exit 1 }'
     Set-Content $wrap ($pre + "`n" + $fn + "`nInvoke-Recover `$true")
     $r = Invoke-InTestHome -TestHome $c.Home -File $wrap -Arguments @($dir) -Env $c.Env
@@ -218,7 +219,7 @@ Describe 'crew up init' {
   It 'goc da git init chua HEAD: AST fake root, khong hoi hay tao commit' {
     git -C $dir init -qb main
     $wrap = Join-Path $c.Home.Home 'git-root.ps1'
-    $fn = $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq 'Invoke-Recover' }, $false)[0].Extent.Text
+    $fn = (Get-CrewFunction 'Invoke-Recover').Extent.Text
     $pre = 'param($target); $Path = $target; function Get-MainRoot { $target }; function Get-Root { $target }; function Invoke-GitQuiet { @{ Code = 1 } }; function Test-SamePath($a,$b) { $a -eq $b -or $b -eq [IO.Path]::GetPathRoot($target) }; function Die($msg) { Write-Output $msg; exit 1 }'
     Set-Content $wrap ($pre + "`n" + $fn + "`nInvoke-Recover `$true")
     $r = Invoke-InTestHome -TestHome $c.Home -File $wrap -Arguments @($dir) -Env $c.Env

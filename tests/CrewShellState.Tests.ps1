@@ -1,5 +1,6 @@
-﻿# AST thật + adapter hc thật với lệnh hc giả; không đụng terminal người dùng.
-$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# AST thật + adapter hc thật với lệnh hc giả; không đụng terminal người dùng.
+
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
 $want = 'Get-TermShellState', 'Get-TermStatus', 'Invoke-Up', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey',
@@ -8,7 +9,7 @@ $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionB
 $want += 'Get-SelfTerm', 'Get-SelfPaneState'
 # Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
 $env:HC_TERMINAL_ID = $null
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 function New-CoreShell {

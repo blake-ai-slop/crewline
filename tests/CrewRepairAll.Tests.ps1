@@ -1,9 +1,10 @@
-﻿# crew up -All và crew up tự khôi phục: e2e qua crew.ps1 thật trong HOME giả, hc + herdr-app giả đứng đầu PATH. Không gọi hc thật, không ghi ~/.crewline thật.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# crew up -All và crew up tự khôi phục: e2e qua crew.ps1 thật trong HOME giả, hc + herdr-app giả đứng đầu PATH. Không gọi hc thật, không ghi ~/.crewline thật.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 $want = 'Get-UpAllPlan', 'Get-UpChildResult', 'Format-UpAllSummary', 'ConvertTo-RootKey', 'Test-SamePath'
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows

@@ -1,7 +1,8 @@
-﻿# Test Get-AgentCommand: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (không gọi hc).
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Test Get-AgentCommand: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (không gọi hc).
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Flags', 'Quote', 'Get-AgentCommand' }, $false)) {
+
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Flags', 'Quote', 'Get-AgentCommand' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 
@@ -41,7 +42,7 @@ Describe 'Get-AgentCommand dựng lệnh theo agent và access' {
 
 Describe 'crew.ps1 dùng Get-AgentCommand cho planner, Rev, worker' {
   It 'không còn tự ghép exe/cờ riêng' {
-    $src = Get-Content $crewScript -Raw
+    $src = @(Get-CrewSourceFiles | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
     ([regex]::Matches($src, 'Get-AgentCommand \$cfg\.planner \$cfg\.access')).Count | Should Be 1
     ([regex]::Matches($src, 'Get-AgentCommand \$cfg\.rev \$cfg\.access')).Count | Should Be 1
     ([regex]::Matches($src, 'Get-AgentCommand \$kind \$cfg\.access')).Count | Should Be 1

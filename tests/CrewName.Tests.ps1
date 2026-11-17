@@ -1,9 +1,10 @@
-﻿# Tên crew duy nhất theo project: slug, sổ ~/.crewline/projects.json (HOME giả / file trong $TestDrive), kiểm chủ terminal theo cwd.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Tên crew duy nhất theo project: slug, sổ ~/.crewline/projects.json (HOME giả / file trong $TestDrive), kiểm chủ terminal theo cwd.
 # Hàm trích bằng AST từ crew.ps1, hc giả — không gọi hc thật. Init chạy e2e qua Invoke-InTestHome (HOME giả).
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
 $want = 'Get-LegacySlug', 'Get-Slug', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
@@ -18,7 +19,7 @@ $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionB
 $want += 'Get-SelfTerm', 'Get-SelfPaneState'
 # Chạy test từ pane thật: địa chỉ giả có thể trùng HC_TERMINAL_ID.
 $env:HC_TERMINAL_ID = $null
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 $script:Said = [Collections.Generic.List[string]]::new()

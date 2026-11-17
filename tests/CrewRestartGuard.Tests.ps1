@@ -1,6 +1,7 @@
-﻿# crew up -Restart không tự tắt planner/Rev đang làm: hàm thuần Get-RestartGuard qua AST (e2e với hc giả ở CrewResume.Tests.ps1).
-$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-RestartGuard' }, $false)) {
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# crew up -Restart không tự tắt planner/Rev đang làm: hàm thuần Get-RestartGuard qua AST (e2e với hc giả ở CrewResume.Tests.ps1).
+
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-RestartGuard' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 

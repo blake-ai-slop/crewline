@@ -1,4 +1,5 @@
-﻿# Thiếu tên/email git: crew hỏi rồi lưu --global. CLI thật, HOME và gitconfig giả, hc/herdr-app giả.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Thiếu tên/email git: crew hỏi rồi lưu --global. CLI thật, HOME và gitconfig giả, hc/herdr-app giả.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
@@ -89,13 +90,15 @@ function Run-Crew($c, [string[]]$argv, [string]$inputText = '', [hashtable]$extr
 # Từ đây $c chạy bản sao crew.ps1 chỉ khác Invoke-RepairCore (trích bằng AST, thay bằng hàm in dấu REPAIR-CORE).
 # Phần hỏi vẫn là code thật: dispatch, Invoke-UpAll, Invoke-UpChild (con cũng là bản sao này), Invoke-Recover, Invoke-Init, Confirm-GitIdentity.
 function Use-NoRepair($c) {
+  if (@(Find-CrewAst { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RepairCore' } -Recurse:$false).Count -ne 1) { throw 'crew không còn Invoke-RepairCore' }
+  # Hàm thật nằm ở scripts/crew/*.ps1 (dot-source) ⇒ định nghĩa stub ngay trước switch dispatch để đè hàm thật.
   $text = [IO.File]::ReadAllText($crewScript)
   $parsed = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
-  $fn = $parsed.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-RepairCore' }, $true)
-  if (-not $fn) { throw 'crew.ps1 không còn Invoke-RepairCore' }
+  $dispatch = @($parsed.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.SwitchStatementAst] })[-1]
+  if (-not $dispatch) { throw 'crew.ps1 không còn switch dispatch' }
   $stub = 'function Invoke-RepairCore { Write-Host ''REPAIR-CORE''; @{ Done = @(); Finished = @(); Human = @(); Self = $null } }'
-  $patched = $text.Substring(0, $fn.Extent.StartOffset) + $stub + $text.Substring($fn.Extent.EndOffset)
-  # Bản sao nằm ngoài scripts/ nên phải trỏ lại ui.ps1, platform.ps1, teams.json, skeleton thật.
+  $patched = $text.Substring(0, $dispatch.Extent.StartOffset) + $stub + "`n" + $text.Substring($dispatch.Extent.StartOffset)
+  # Bản sao nằm ngoài scripts/ nên phải trỏ lại ui.ps1, platform.ps1, teams.json, skeleton, scripts/crew/ thật ($CrewScriptsDir lấy theo).
   $c.Script = Join-Path $c.Home.Home 'crew-norepair.ps1'
   [IO.File]::WriteAllText($c.Script, $patched.Replace('$PSScriptRoot', '$env:CREW_TEST_SCRIPTS'), [Text.UTF8Encoding]::new($true))
   $c.Env.CREW_TEST_SCRIPTS = Split-Path $crewScript -Parent
@@ -422,9 +425,9 @@ try {
   }
 
   Describe 'danh tính git: tiến trình nền' {
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
+
     $functions = @{}
-    foreach ($fn in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $functions[$fn.Name] = $fn.Extent.Text }
+    foreach ($fn in (Find-CrewAst { param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] } -Recurse:$true)) { $functions[$fn.Name] = $fn.Extent.Text }
 
     It 'Invoke-Up: đường FromRepair (tiến trình nền) không gọi hỏi' {
       $functions['Invoke-Up'] | Should Match 'if \(-not \$script:FromRepair\) \{ Confirm-GitIdentity'

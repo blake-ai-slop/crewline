@@ -2,6 +2,19 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-17 (2)
+
+### Mới
+- **`crew queue`:** xếp sẵn task để crew tự giao khi có worker rảnh. `crew queue <tên> <file-prompt> [-Worker N] [-Review x] [-After <task>] [-Size S|M|L]` thêm, `crew queue` liệt kê, `crew queue <tên> -Remove` bỏ, `crew queue -Run [-DryRun]` giao ngay. Tự chạy sau `crew clean` và `crew up`; không có tiến trình nền. Task bị giữ khi task phải chờ chưa xong, trùng file với task đang chạy, không có worker rảnh, hoặc limit ≥70% (task L) / ≥90%. `crew hot` hiện số task đang đợi.
+- **Chặn file trùng:** `crew task` dừng khi danh sách "Được sửa:" trong prompt trùng với task đang chạy; thêm `-Force` để vẫn giao. `crew hot` cảnh báo các task đang chạy trùng file.
+
+### Khác
+- `scripts/crew.ps1` tách thành `scripts/crew/*.ps1` theo nhóm; hành vi không đổi.
+
+### Chưa kiểm
+- Hàng đợi vẫn tự chạy sau `crew up` kể cả khi `crew up` lỗi; khi `crew up` thay chính tab đang gõ, phần in của hàng đợi mất theo. `crew queue -Run -DryRun` chưa xét trùng file giữa các mục sắp giao cùng lượt.
+- Đợt này chỉ chạy đủ test trên Windows.
+
 ## 2026-11-17
 
 ### Mới

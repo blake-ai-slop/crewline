@@ -1,7 +1,8 @@
-﻿# crew review kiểm Rev trước khi gửi: Get-RevGuard + Invoke-Review thật qua AST; hc giả qua stub, không gọi hc thật.
-$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# crew review kiểm Rev trước khi gửi: Get-RevGuard + Invoke-Review thật qua AST; hc giả qua stub, không gọi hc thật.
+
 $want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Test-AgentScreen', 'Get-RevGuard', 'Invoke-Review'
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 function Say($m) { $script:Said += @($m) }

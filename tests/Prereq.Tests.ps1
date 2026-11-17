@@ -12,6 +12,7 @@ function New-PrereqFixture {
   Copy-Item (Join-Path $RepoRoot 'install.ps1') $f
   Copy-Item (Join-Path $RepoRoot 'templates') $f -Recurse
   foreach ($n in 'platform.ps1', 'crew.ps1', 'setup.ps1', 'ui.ps1', 'prereq.ps1', 'teams.json') { Copy-Item (Join-Path $RepoRoot "scripts/$n") (Join-Path $f 'scripts') }
+  Copy-Item (Join-Path $RepoRoot 'scripts/crew') (Join-Path $f 'scripts') -Recurse
   # Các test winget/herdr.dev kiểm logic nhánh Windows: trên Linux/macOS giả Get-CrewOS = windows (test Unix bên dưới ghi đè lại).
   if (-not $OnWindows) { Add-Content (Join-Path $f 'scripts/platform.ps1') "`nfunction Get-CrewOS { 'windows' }" }
   $f

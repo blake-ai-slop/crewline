@@ -1,12 +1,13 @@
-﻿# Test crew limits: trích hàm bằng AST từ crew.ps1, hc và CLI đều giả; không gọi hc/codex/claude thật.
+﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+# Test crew limits: trích hàm bằng AST từ crew.ps1, hc và CLI đều giả; không gọi hc/codex/claude thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/platform.ps1')
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [ref]$null, [ref]$null)
-foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-LimitTiers', 'Get-LimitWeekWarn', 'Get-LimitLevel', 'Get-LimitInfo', 'Resolve-LimitRows',
+
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-LimitTiers', 'Get-LimitWeekWarn', 'Get-LimitLevel', 'Get-LimitInfo', 'Resolve-LimitRows',
     'ConvertTo-LimitPercent', 'Format-LimitEpoch', 'Get-CodexLimitHello', 'Get-CodexLimitStep', 'ConvertFrom-CodexLimitReply',
     'ConvertFrom-ClaudeUsageText', 'ConvertFrom-ClaudeUsageReply', 'Get-LimitCliInvocation', 'Invoke-LimitProcess',
     'Get-CodexLiveLimit', 'Get-ClaudeLiveLimit', 'ConvertTo-LimitInfo', 'Get-TermStatus', 'Invoke-Limits',
-    'Get-ForeignTermError', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey' }, $false)) {
+    'Get-ForeignTermError', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 
