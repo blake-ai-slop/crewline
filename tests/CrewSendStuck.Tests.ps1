@@ -1,6 +1,6 @@
 ﻿# Tin kẹt ở ô nhập + nhận nhầm hộp thoại: hàm thật qua AST, hc giả. Fixture Codex lấy từ màn hình thật 2026-11-02 (hc 0.1.16, codex-cli 0.166.0).
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$want = 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Invoke-Review'
+$want = 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review'
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -251,7 +251,8 @@ Describe 'crew review tới Rev có tin kẹt' {
     $script:NameList = @('a')
     $script:StuckOps = New-StuckOps @((New-StuckInfo)) @($Stuck)
     function Get-MainRoot($p) { 'C:\demo' }
-    function Get-Config($p) { @{ review = 'lean' } }
+    function Get-Config($p) { @{ review = 'lean'; rev = 'codex' } }
+    function Get-TermInfo($t) { New-StuckInfo }
     function Get-CrewName { 'demo' }
     function Get-Tasks { , @([pscustomobject]@{ name = 'a'; branch = 'crew/a' }) }
     function Invoke-GitOrDie { @{ Code = 0; Text = 'main' } }

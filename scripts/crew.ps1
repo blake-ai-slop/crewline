@@ -35,7 +35,8 @@ param(
   [switch]$Force,
   [switch]$Raw,
   [switch]$All,
-  [switch]$NoTest
+  [switch]$NoTest,
+  [switch]$Strict
 )
 
 # Chốt chặn: crew cần pwsh 7. Gọi bằng Windows PowerShell 5.1 (powershell.exe) thì chạy lại chính file này bằng pwsh.
@@ -1227,10 +1228,19 @@ function Invoke-Upgrade {
     } elseif ($rel -eq 'PITFALLS.md') {
       $text = [IO.File]::ReadAllText($dst)
       $lines = @($text -split '\r?\n' | ForEach-Object { $_.Trim() })
+      # Dòng đã chuyển sang context/archive/PITFALLS-*.md coi như đã có: không thêm lại. Dòng (trim) bằng hoặc bắt đầu bằng dòng skeleton (nguyên văn, phân biệt hoa thường) ⇒ đã có.
+      $archive = Join-Path $context 'archive'
+      if (Test-Path -LiteralPath $archive -PathType Container) {
+        foreach ($a in Get-ChildItem -LiteralPath $archive -Filter 'PITFALLS-*.md' -File -Force) {
+          $lines += @([IO.File]::ReadAllText($a.FullName) -split '\r?\n' | ForEach-Object { $_.Trim() })
+        }
+      }
       $add = @()
       foreach ($line in Get-Content $item.FullName -Encoding utf8) {
         $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('- ') -and $lines -cnotcontains $trimmed) { $add += $trimmed; $lines += $trimmed }
+        if (-not $trimmed.StartsWith('- ')) { continue }
+        if (@($lines | Where-Object { $_.StartsWith($trimmed, [StringComparison]::Ordinal) }).Count) { continue }
+        $add += $trimmed; $lines += $trimmed
       }
       if ($add.Count) { Write-UpgradeFile $dst ($text + $(if ($text.EndsWith("`n")) { '' } else { "`n" }) + ($add -join "`n") + "`n") }
     }
@@ -1274,6 +1284,19 @@ function Invoke-Upgrade {
 }
 
 # ---------------- up ----------------
+# Hàm thuần: -Restart (không -Force) có tắt nhầm planner/Rev đang làm không. $plannerMode = Get-WorkerMode(...).Mode của
+# terminal planner ('' = không live/không đọc). Ra lý do chặn, '' = được tắt.
+function Get-RestartGuard([string[]]$targets, $tasks, [string]$plannerMode) {
+  if (@($targets) -contains 'planner' -and $plannerMode -eq 'agent') {
+    return 'planner đang chạy — bật lại sẽ mất hội thoại điều phối; thêm -Force nếu chắc chắn.'
+  }
+  if (@($targets) -contains 'rev') {
+    $busy = @(@($tasks) | Where-Object { $_ -and $_.reviewSentAt } | ForEach-Object { $_.name })
+    if ($busy.Count) { return "rev đang review/merge task $($busy -join ', ') — bật lại sẽ mất phiên đang làm. Đợi Rev xong + crew clean, hoặc thêm -Force nếu chắc chắn." }
+  }
+  ''
+}
+
 function Invoke-Up {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
   # Invoke-Recover đã gọi trước khi gọi tới đây; project cũ được ghi tên vào config + sổ, tên terminal và space/tab giữ nguyên
@@ -1316,9 +1339,19 @@ function Invoke-Up {
       $busy = @($tasks | Where-Object { "w$([int]$_.worker)" -eq $tg } | ForEach-Object { $_.name })
       if ($busy.Count) { Die "$tg đang có task $($busy -join ', ') — bật lại sẽ mất phiên đang làm. Đợi xong + crew clean, hoặc thêm -Force nếu chắc chắn." }
     }
-    if ($self -and $targets -contains $self.name.Substring($slug.Length + 1)) {
+    $selfRestart = $self -and $targets -contains $self.name.Substring($slug.Length + 1)
+    if ($selfRestart -and -not $selfState) { Die "$($self.name) là pane đang chạy lệnh này và agent trong đó có thể còn sống, crew không tự tắt. Không tắt vai nào. Mở tab khác rồi chạy lại: crew up -Restart $Restart" }
+    # planner/Rev đang làm: chặn trước mọi Stop-Term và job thay pane. Pane của chính lệnh này do chặn self-pane ở trên xử lý.
+    if (-not $Force) {
+      $pn = "$slug-planner"; $plannerMode = ''
+      if ($targets -contains 'planner' -and $live -contains $pn -and -not ($self -and $self.name -ceq $pn)) {
+        $plannerMode = (Get-WorkerMode (Get-TermInfo $pn) $cfg.planner).Mode
+      }
+      $why = Get-RestartGuard $targets $tasks $plannerMode
+      if ($why) { Die $why }
+    }
+    if ($selfRestart) {
       $selfRole = $self.name.Substring($slug.Length + 1)
-      if (-not $selfState) { Die "$($self.name) là pane đang chạy lệnh này và agent trong đó có thể còn sống, crew không tự tắt. Không tắt vai nào. Mở tab khác rồi chạy lại: crew up -Restart $Restart" }
       if ($IsWindows -eq $false) { Say "$($self.name) là pane đang chạy lệnh này; chưa xác minh shell trên hệ này nên crew không tự thay. Mở tab khác rồi chạy: crew up -Restart $selfRole" }
       else { $selfJob = New-SelfPaneJob $root $self.name $selfRole $self.address $true }
     }
@@ -1774,11 +1807,24 @@ function Invoke-Hot {
   Write-Host "== git worktree list"; git -C $root worktree list
   Write-Host "== terminal"
   $terminals = try { @(Get-LiveTerminals) } catch { Write-Host "crew: CẢNH BÁO: $($_.Exception.Message) — không liệt kê được terminal." -ForegroundColor Yellow; @() }
-  $foreign = @(); $pending = @{}
+  try {
+    . (Join-Path $PSScriptRoot 'lint.ps1')
+    $lint = @(Get-ContextLint $root)
+    if ($lint.Count) { Write-Host "crew: context: $($lint.Count) cảnh báo — chạy crew lint" -ForegroundColor Yellow }
+  } catch { }
+  $roleKinds = @{ "$slug-planner" = @{ Kind = $cfg.planner; Role = 'planner' }; "$slug-rev" = @{ Kind = $cfg.rev; Role = 'rev' } }
+  $roleIndex = 0
+  foreach ($kind in @($cfg.workers)) { $roleIndex++; $roleKinds["$slug-w$roleIndex"] = @{ Kind = $kind; Role = "w$roleIndex" } }
+  $foreign = @(); $pending = @{}; $wrongAgents = @()
   $terminals | Where-Object { $_.name -like "$slug-*" } |
     ForEach-Object {
       $why = Get-ForeignTermError $_.name $_ $root
       if ($why) { $foreign += $why; return ("{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, 'KHÁC PROJECT', $_.cwd) }
+      $role = $roleKinds[$_.name]
+      if ($_.state -eq 'live' -and $role) {
+        $mode = Get-WorkerMode $_ $role.Kind
+        if ($mode.Mode -eq 'wrong') { $wrongAgents += "crew: CẢNH BÁO: $($_.name) đang chạy $($mode.App), config là $($role.Kind) — crew up -Restart $($role.Role)" }
+      }
       $st = Get-TermStatus $_
       $status = if ($_.status) { $_.status } else { '-' }
       $app = if ($st.App) { $st.App } else { $_.agent }
@@ -1796,6 +1842,7 @@ function Invoke-Hot {
       }
       "{0,-18} {1,-5} {2,-9} {3}" -f $_.name, $_.address, $status, $_.agent
     } | Write-Host
+  foreach ($w in $wrongAgents) { Write-Host $w -ForegroundColor Yellow }
   foreach ($w in $foreign) { Write-Host "crew: CẢNH BÁO: $w" -ForegroundColor Yellow }
   $tasks = Get-Tasks $root
   Write-Host "== worker (worktree cố định)"
@@ -2996,20 +3043,28 @@ function Invoke-Limits($Ops = (New-LimitOps)) {
   $wi = 0
   foreach ($kind in @($cfg.workers)) { $wi++; $rows += @{ Name = "$slug-w$wi"; Agent = $kind } }
   if ($cfg.rev -ne 'none') { $rows += @{ Name = "$slug-rev"; Agent = $cfg.rev } }
-  # Limit theo tài khoản: mỗi loại agent trong config chỉ hỏi một lần, kể cả khi pane đang tắt.
+  $liveTerms = try { @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Say "cảnh báo: $($_.Exception.Message) — không đọc được terminal nào."; @() }
+  $foreign = @()
+  foreach ($r in $rows) {
+    $term = $liveTerms | Where-Object { $_.name -eq $r.Name } | Select-Object -First 1
+    $r.Live = $null -ne $term
+    $why = if ($r.Live) { Get-ForeignTermError $r.Name $term $root } else { '' }
+    if ($why) { $foreign += $why; $r.Live = $false }
+    $r.Different = $false
+    if ($r.Live) {
+      $app = (Get-TermStatus $term).App
+      if (-not $app) { $app = $term.agent }
+      $actual = if ($app -eq 'claude-code') { 'claude' } elseif ($app -eq 'codex') { 'codex' } else { $null }
+      if ($actual -and $actual -ne $r.Agent) { $r.Agent = $actual; $r.Different = $true }
+    }
+  }
+  # Mỗi loại agent thực tế chỉ hỏi một lần; pane tắt dùng config.
   $liveByAgent = @{}
   foreach ($agent in @($rows | ForEach-Object { $_.Agent } | Select-Object -Unique)) {
     if ($agent -eq 'codex') { $liveByAgent[$agent] = Get-CodexLiveLimit $Ops }
     elseif ($agent -eq 'claude') { $liveByAgent[$agent] = Get-ClaudeLiveLimit $Ops }
   }
-  $liveTerms = try { @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Say "cảnh báo: $($_.Exception.Message) — không đọc được terminal nào."; @() }
-  $live = @($liveTerms | ForEach-Object { $_.name })
-  $foreign = @()
   foreach ($r in $rows) {
-    $r.Live = $live -contains $r.Name
-    # terminal cùng tên của project khác: không đọc số của nó, chỉ cảnh báo
-    $why = if ($r.Live) { Get-ForeignTermError $r.Name ($liveTerms | Where-Object { $_.name -eq $r.Name } | Select-Object -First 1) $root } else { '' }
-    if ($why) { $foreign += $why; $r.Live = $false }
     $direct = $liveByAgent[$r.Agent]
     $r.Direct = [bool]$direct
     $r.Info = if (-not $r.Live) { $null }
@@ -3037,9 +3092,11 @@ function Invoke-Limits($Ops = (New-LimitOps)) {
       if ($r.From) { $note += " (theo $($r.From))" }
     }
     if ($i -and $i.WeekWarn) { $lv = "$lv ⚠"; $warned += "$($r.Name) ($($r.Agent)): tuần $pw" }
-    $line = ($fmt -f $r.Name, $r.Agent, $p5, $pw, $lv, $reset, $task) + $note
+    $agentLabel = if ($r.Different) { "$($r.Agent)*" } else { $r.Agent }
+    $line = ($fmt -f $r.Name, $agentLabel, $p5, $pw, $lv, $reset, $task) + $note
     if ($i -and $i.WeekWarn) { Write-Host $line -ForegroundColor Yellow } else { Write-Host $line }
   }
+  if (@($rows | Where-Object { $_.Different }).Count) { Write-Host '* khác config' }
   foreach ($w in $warned) { Write-Host "⚠ tuần ≥$(Get-LimitWeekWarn)%: $w — báo chủ dự án trước khi giao cho agent này." -ForegroundColor Yellow }
   $failed = @($liveByAgent.Keys | Where-Object { -not $liveByAgent[$_] } | Sort-Object)
   if ($failed.Count) { Write-Host "Không hỏi được số trực tiếp từ: $($failed -join ', ') (thiếu CLI, chưa đăng nhập, hoặc đổi format)." }
@@ -3411,6 +3468,21 @@ function Format-ReviewMessage([string]$level, $items) {
   "Rev ${level}: merge $merge$order. Đọc $notes$each. Full test, $clean, báo planner. Không push."
 }
 
+# Hàm thuần: Rev có nhận được tin review không. $info = `hc get` của terminal Rev (đọc 1 lần, 0 phím). Ra lý do, '' = gửi được.
+# Không live/chờ duyệt Send-CrewMessage cũng chặn; ở đây thêm gợi ý cách xử lý và áp được cho -DryRun.
+# $readScreen: scriptblock trả màn hình Rev, chỉ gọi khi hc báo shell (Rev mở lại phiên chưa báo app ⇒ nhận theo màn hình, như Start-WorkerTask).
+function Get-RevGuard($cfg, [string]$term, $info, [scriptblock]$readScreen = $null) {
+  if (-not $cfg.rev -or $cfg.rev -eq 'none') { return 'config Rev=none nên không có pane rev để gửi review. Dùng mức review fast (planner tự merge) hoặc đặt rev trong config rồi crew up.' }
+  $m = Get-WorkerMode $info $cfg.rev
+  switch ($m.Mode) {
+    'dead' { return "$term không chạy — chạy crew up rồi gửi lại." }
+    'blocked' { return "$term đang chờ duyệt — chủ dự án xử lý (không gửi, không dùng --force)." }
+    'wrong' { return "rev đang chạy $($m.App), config là $($cfg.rev) — crew up -Restart rev" }
+    'shell' { if (-not ($readScreen -and (Test-AgentScreen $cfg.rev (& $readScreen)))) { return 'rev chỉ còn shell — crew up -Restart rev' } }
+  }
+  ''
+}
+
 function Invoke-Review {
   $names = @($NameList)
   if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun]' }
@@ -3425,8 +3497,16 @@ function Invoke-Review {
   })
   $rl = Get-ReviewLine $root $main $sel $cfg.review
   if ($rl.Error) { Die $rl.Error }
-  if ($DryRun) { Write-Host $rl.Msg; return }
-  Send-CrewMessage "$slug-rev" $rl.Msg $false $root
+  $revTerm = "$slug-rev"
+  $revInfo = if ($cfg.rev -and $cfg.rev -ne 'none') { Get-TermInfo $revTerm } else { $null }
+  $why = Get-RevGuard $cfg $revTerm $revInfo { & (New-HcOps).Read $revTerm }
+  if ($DryRun) {
+    Write-Host $rl.Msg
+    if ($why) { Say "cảnh báo: $why" }
+    return
+  }
+  if ($why) { Die "$why Không gửi." }
+  Send-CrewMessage $revTerm $rl.Msg $false $root
   # gửi được ⇒ đánh dấu chờ review (crew repair giao lại khi Rev bị đóng giữa chừng); +i ms giữ thứ tự gửi
   $now = [DateTime]::UtcNow
   for ($i = 0; $i -lt $sel.Count; $i++) {
@@ -3460,6 +3540,15 @@ switch ($Command) {
   'task' { Invoke-Task }
   'status' { Invoke-Hot }
   'hot' { Invoke-Hot }
+  'lint' {
+    . (Join-Path $PSScriptRoot 'lint.ps1')
+    $root = Get-Root (Resolve-Path -LiteralPath $Path).Path
+    if (-not $root) { Die 'không phải repo git.' }
+    $lint = @(Get-ContextLint $root)
+    foreach ($warning in $lint) { Write-Host "$($warning.File):$($warning.Line) $($warning.Rule): $($warning.Message)" }
+    if ($lint.Count) { Write-Host "context: $($lint.Count) cảnh báo" } else { Write-Host 'context sạch' }
+    if ($Strict -and $lint.Count) { exit 1 }; exit 0
+  }
   'limits' { Invoke-Limits }
   'clean' { Invoke-Clean }
   'send' { Invoke-Send }

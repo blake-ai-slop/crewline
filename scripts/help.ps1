@@ -49,8 +49,13 @@ $commands = @(
     Examples = @('crew hot', 'crew hot -Path D:/Projects/demo')
   }
   @{
+    Name = 'lint'; Group = 'Giao việc'; Syntax = 'crew lint [-Path <repo>] [-Strict]'; Short = 'kiểm context, chỉ cảnh báo'
+    Details = @('Kiểm trần dòng, kích thước, mục dài/trùng và tên hàm/đường dẫn cũ trong context; không ghi file, không gọi hc.', 'Mặc định exit 0; -Strict trả exit 1 khi có cảnh báo.')
+    Examples = @('crew lint', 'crew lint -Path . -Strict')
+  }
+  @{
     Name = 'limits'; Group = 'Giao việc'; Syntax = 'crew limits [-Path .]'; Short = 'hỏi limit tài khoản một lần'
-    Details = @('Hỏi số trực tiếp từ Codex/Claude một lần cho mỗi loại agent trong config của project -Path, không tốn token, không theo dõi liên tục.', 'Không hỏi được (thiếu CLI, chưa đăng nhập, đổi format) thì lấy từ màn hình terminal qua hc và ghi (màn hình, có thể cũ); pane thiếu số có thể mượn pane cùng agent, không đọc được thì hiện không rõ.', 'Hiện % đã dùng 5h/tuần và giờ reset 5h; mốc chỉ theo 5h: ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Tuần không vào mốc; tuần ≥90% thì có cảnh báo ⚠: báo chủ dự án trước khi giao cho agent đó.')
+    Details = @('Hỏi số trực tiếp từ Codex/Claude một lần cho mỗi loại agent đang chạy trong pane live của project -Path (pane tắt dùng config; * khác config), không tốn token, không theo dõi liên tục.', 'Không hỏi được (thiếu CLI, chưa đăng nhập, đổi format) thì lấy từ màn hình terminal qua hc và ghi (màn hình, có thể cũ); pane thiếu số có thể mượn pane cùng agent, không đọc được thì hiện không rõ.', 'Hiện % đã dùng 5h/tuần và giờ reset 5h; mốc chỉ theo 5h: ok (<50%), theo dõi (50–69%), hạn chế (70–89%), dừng (≥90%).', 'Tuần không vào mốc; tuần ≥90% thì có cảnh báo ⚠: báo chủ dự án trước khi giao cho agent đó.')
     Examples = @('crew limits')
   }
   @{
@@ -101,7 +106,7 @@ if ($Topic -eq 'agent') {
   Write-Output 'Đây là lệnh planner, Rev dùng; người dùng thường không cần gõ.'
   foreach ($group in @(
     @{ Title = 'Giao việc'; Names = @('task', 'limits', 'send') },
-    @{ Title = 'Kiểm và gộp'; Names = @('check', 'review', 'clean') },
+    @{ Title = 'Kiểm và gộp'; Names = @('check', 'review', 'clean', 'lint') },
     @{ Title = 'Chẩn đoán, phát hành'; Names = @('repair', 'selfcheck') }
   )) {
     Write-Output ''

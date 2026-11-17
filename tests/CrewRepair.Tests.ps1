@@ -4,7 +4,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [r
 $want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Format-TaskFinished', 'Invoke-RepairCore',
-  'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
+  'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Get-RevGuard', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError',
   'Get-MoveInfo', 'Get-MovedPath', 'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Get-Ids', 'Read-ProjectRegistry', 'Save-ProjectRegistry',
   'Test-OtherAlive', 'Get-NameOwner', 'Get-IdKeyOwner', 'Register-CrewName'
@@ -467,7 +467,7 @@ Describe 'crew repair: Rev bị đóng giữa review (hc giả)' {
 
 function New-ReviewRepo {
   $root = New-RepairRepo
-  '{"review":"lean"}' | Set-Content (Join-Path $root '.crew/config.json')
+  '{"review":"lean","rev":"claude"}' | Set-Content (Join-Path $root '.crew/config.json')
   Add-Task $root 'a' 1; Add-Commit $root 'a' 1
   Add-Task $root 'b' 2; Add-Commit $root 'b' 2
   $root
@@ -682,6 +682,8 @@ Describe 'task đã xong không bị giao lại (hc giả)' {
 Describe 'crew review ghi reviewSentAt' {
   $script:ReviewSent = [Collections.Generic.List[string]]::new()
   function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '') { $script:ReviewSent.Add("$term|$text") }
+  # Rev sống, đúng agent (Get-RevGuard đọc 1 lần qua Get-TermInfo)
+  function Get-TermInfo($term) { New-Info }
   BeforeEach { $script:ReviewSent.Clear() }
 
   It 'gửi OK -> tasks.json có reviewSentAt (ISO, theo thứ tự), không đổi trường khác' {

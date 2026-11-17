@@ -1,7 +1,7 @@
 ﻿[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $repo = Split-Path $PSScriptRoot -Parent
 $helpScript = Join-Path $repo 'scripts/help.ps1'
-$commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'status', 'hot', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
+$commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
 
 # Help chỉ xuất văn bản, không chạy crew/hc hoặc ghi cấu hình người dùng.
 function Invoke-HelpPage([string]$Topic) {
@@ -79,18 +79,18 @@ Describe 'crew help' {
     $result.Text | Should Not Match 'crew (task|check|review|send|clean|limits|selfcheck|repair)\b|Mẹo'
   }
 
-  It 'agent liệt kê đủ tám lệnh theo nhóm và thứ tự' {
+  It 'agent liệt kê đủ chín lệnh theo nhóm và thứ tự' {
     $result = Invoke-HelpPage 'agent'
     $result.ExitCode | Should Be 0
     $result.Text | Should Match '^Đây là lệnh planner, Rev dùng; người dùng thường không cần gõ\.'
-    $ordered = @('Giao việc', 'crew task', 'crew limits', 'crew send', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck')
+    $ordered = @('Giao việc', 'crew task', 'crew limits', 'crew send', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'crew lint', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck')
     $previous = -1
     foreach ($item in $ordered) {
       $index = $result.Text.IndexOf($item)
       ($index -gt $previous) | Should Be $true
       $previous = $index
     }
-    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 8
+    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 9
   }
 
   It 'status và hot dispatch cùng Invoke-Hot, không gọi hc thật' {
@@ -130,7 +130,7 @@ Describe 'crew help' {
     $result.Text | Should Match 'tin nằm chờ'
   }
 
-  foreach ($topic in @('task', 'up', 'clean', 'init', 'upgrade', 'review', 'send')) {
+  foreach ($topic in @('task', 'up', 'clean', 'init', 'upgrade', 'review', 'send', 'lint')) {
     It "mọi cờ của $topic khớp param thật crew.ps1 qua AST" {
       $parameters = Get-HelpParameters (Join-Path $repo 'scripts/crew.ps1')
       $result = Invoke-HelpPage $topic
@@ -161,7 +161,7 @@ Describe 'crew help' {
       task = @('Worker', 'Review'); up = @('Path', 'All', 'DryRun', 'Restart', 'Force'); clean = @('Force')
       init = @('Path', 'Name', 'Team', 'Review', 'Access', 'GitInit', 'NoCommit')
       upgrade = @('Path', 'DryRun', 'NoCommit', 'Force'); review = @('DryRun'); send = @('Raw')
-      repair = @('Path', 'DryRun'); status = @('Path'); hot = @('Path'); limits = @('Path'); check = @('Path', 'NoTest')
+      lint = @('Path', 'Strict'); repair = @('Path', 'DryRun'); status = @('Path'); hot = @('Path'); limits = @('Path'); check = @('Path', 'NoTest')
     }
     foreach ($topic in $expected.Keys) {
       $result = Invoke-HelpPage $topic

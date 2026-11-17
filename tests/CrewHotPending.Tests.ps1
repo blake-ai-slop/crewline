@@ -1,7 +1,7 @@
 ﻿# Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
 # 2026-11-01: crewline-planner/w1/rev (chỉ đọc), hp-test-claude/codex (đã kill).
 $pendingAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../scripts/crew.ps1'), [ref]$null, [ref]$null)
-$pendingFunctions = 'Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Get-HotWarnings'
+$pendingFunctions = 'Get-WorkerMode','Get-SendPlan','Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Get-HotWarnings'
 foreach ($fn in $pendingAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $pendingFunctions }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -114,6 +114,23 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
         Keys = { $script:PendingKeys++; throw 'cấm phím' }
       }
     }
+  }
+  It 'pane sai config cảnh báo đúng vai, vẫn đọc một lần và không gửi phím' {
+    function Get-Config { @{ workers=@('codex','claude','claude','codex'); planner='none'; rev='none'; review='lean'; access='wide' } }
+    function Get-LiveTerminals {
+      @(
+        [pscustomobject]@{name='demo-w1'; state='live'; status=@{app='claude-code';state='working'}; agent='claude-code'},
+        [pscustomobject]@{name='demo-w2'; state='live'; status=@{app='codex';state='working'}; agent='codex'}
+      )
+    }
+    function Get-WorkerTree($r,$i) { Join-Path $r "w$i" }
+    $out = Invoke-Hot 6>&1 | Out-String
+    $out | Should Match 'demo-w1 đang chạy claude-code, config là codex — crew up -Restart w1'
+    $out | Should Match 'demo-w2 đang chạy codex, config là claude — crew up -Restart w2'
+    $script:PendingReads.Count | Should Be 2
+    foreach ($n in $script:PendingReads.Keys) { $script:PendingReads[$n] | Should Be 1 }
+    $script:PendingSend | Should Be 0
+    $script:PendingKeys | Should Be 0
   }
   It 'hiện cột và cảnh báo hai hàng đợi, không báo gợi ý' {
     $out = Invoke-Hot 6>&1 | Out-String

@@ -2,6 +2,21 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-17
+
+### Mới
+- **`crew lint`:** kiểm `context/` của project, chỉ cảnh báo: file vượt số dòng tối đa, mục quá 300 ký tự, file quá 6 KB, tên hàm hoặc đường dẫn nhắc trong MAP/PITFALLS/DECISIONS không còn trong code, mục trùng giữa các file. Thêm `-Strict` để trả lỗi khi có cảnh báo. `crew hot` in một dòng tóm tắt khi có cảnh báo.
+- **`crew hot` cảnh báo tab chạy agent khác config** và gợi ý `crew up -Restart <vai>`.
+- **`crew limits` lấy số theo agent đang chạy thật trong tab;** khác config thì đánh dấu `*`.
+
+### Sửa
+- **`crew upgrade` không còn thêm lại dòng PITFALLS đã chuyển vào `context/archive/`,** kể cả khi dòng đó đã được viết dài thêm.
+- **`crew review` không gửi khi Rev không nhận được:** Rev = none, tab tắt, đang chờ duyệt, chạy sai agent hoặc chỉ còn shell thì dừng và nói cách xử lý.
+- **`crew up -Restart` không tắt planner đang chạy hoặc Rev đang có task chờ review** trừ khi thêm `-Force`.
+
+### Chưa kiểm
+- Đợt này chỉ chạy đủ test trên Windows; CI Linux/macOS chưa đợi.
+
 ## 2026-11-04
 
 ### Mới

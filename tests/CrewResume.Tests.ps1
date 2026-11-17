@@ -514,6 +514,43 @@ Describe 'crew up: không chắc phiên thì hội thoại mới và nói rõ (h
   }
 }
 
+Describe 'crew up -Restart chặn planner/Rev đang làm (hc giả)' {
+  It 'planner sống có agent: không -Force ⇒ Die, 0 kill ở mọi vai; -Force ⇒ bật lại' {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'pg' 'claude' 'none' @('claude')
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    Clear-Log $ctx
+    foreach ($t in 'planner', 'all') {
+      $r = Invoke-Crew $ctx @('up', '-Restart', $t) $root
+      $r.ExitCode | Should Be 1
+      $r.Output | Should Match 'planner đang chạy — bật lại sẽ mất hội thoại điều phối; thêm -Force nếu chắc chắn'
+      @(Get-Log $ctx 'hc.log' | Where-Object { $_ -match '^(kill|rm|run|send|keys) ' }).Count | Should Be 0
+    }
+    # chỉ worker: planner không phải đích ⇒ không chặn
+    (Invoke-Crew $ctx @('up', '-Restart', 'w1') $root).ExitCode | Should Be 0
+    Clear-Log $ctx
+    (Invoke-Crew $ctx @('up', '-Restart', 'planner', '-Force') $root).ExitCode | Should Be 0
+    @(Get-Cmds $ctx 'pg-planner').Count | Should Be 1
+  }
+  It 'Rev có task đã gửi review: không -Force ⇒ Die nêu tên task, 0 kill; chưa gửi review ⇒ bật lại' {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'rg' 'none' 'claude' @('claude')
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    $tasksFile = Join-Path $root '.crew/tasks.json'
+    ConvertTo-Json -InputObject @([ordered]@{ name = 'viec'; branch = 'crew/viec'; worker = 2; reviewSentAt = '2026-11-17T00:00:00.0000000Z' }) | Set-Content -LiteralPath $tasksFile -Encoding utf8
+    Clear-Log $ctx
+    foreach ($t in 'rev', 'all') {
+      $r = Invoke-Crew $ctx @('up', '-Restart', $t) $root
+      $r.ExitCode | Should Be 1
+      $r.Output | Should Match 'rev đang review/merge task viec'
+      @(Get-Log $ctx 'hc.log' | Where-Object { $_ -match '^(kill|rm|run|send|keys) ' }).Count | Should Be 0
+    }
+    ConvertTo-Json -InputObject @([ordered]@{ name = 'viec'; branch = 'crew/viec'; worker = 2 }) | Set-Content -LiteralPath $tasksFile -Encoding utf8
+    (Invoke-Crew $ctx @('up', '-Restart', 'rev') $root).ExitCode | Should Be 0
+    @(Get-Cmds $ctx 'rg-rev').Count | Should Be 1
+  }
+}
+
 Describe 'crew up -Restart và -DryRun (hc giả)' {
   It '-Restart không resume dù sổ đủ; vai khác còn sống không đụng; UUID mới' {
     $ctx = New-Ctx
@@ -521,7 +558,8 @@ Describe 'crew up -Restart và -DryRun (hc giả)' {
     (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
     $old = (Get-Book $root).roles.planner.sessionId
     Clear-Log $ctx
-    $r = Invoke-Crew $ctx @('up', '-Restart', 'all') $root
+    # planner đang chạy agent: -Restart all cần -Force (không -Force xem Describe 'crew up -Restart chặn planner/Rev đang làm')
+    $r = Invoke-Crew $ctx @('up', '-Restart', 'all', '-Force') $root
     $r.ExitCode | Should Be 0
     @(Get-Cmds $ctx 'rs-planner')[0] | Should Match "^claude $pc --session-id $uuid 'Bạn là planner"
     @(Get-Cmds $ctx 'rs-w1')[0] | Should Match "^claude $pc 'Bạn là worker"

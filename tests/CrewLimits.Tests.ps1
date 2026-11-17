@@ -5,7 +5,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($crewScript, [r
 foreach ($fn in $ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-LimitTiers', 'Get-LimitWeekWarn', 'Get-LimitLevel', 'Get-LimitInfo', 'Resolve-LimitRows',
     'ConvertTo-LimitPercent', 'Format-LimitEpoch', 'Get-CodexLimitHello', 'Get-CodexLimitStep', 'ConvertFrom-CodexLimitReply',
     'ConvertFrom-ClaudeUsageText', 'ConvertFrom-ClaudeUsageReply', 'Get-LimitCliInvocation', 'Invoke-LimitProcess',
-    'Get-CodexLiveLimit', 'Get-ClaudeLiveLimit', 'ConvertTo-LimitInfo', 'Invoke-Limits',
+    'Get-CodexLiveLimit', 'Get-ClaudeLiveLimit', 'ConvertTo-LimitInfo', 'Get-TermStatus', 'Invoke-Limits',
     'Get-ForeignTermError', 'Test-TermOwner', 'Test-SamePath', 'ConvertTo-RootKey' }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -511,14 +511,14 @@ Describe 'Invoke-Limits' {
       }
     }
   }
-  function Invoke-Table($answers, $cfg, [string[]]$liveNames, [string]$screen = '', [string[]]$foreign = @()) {
+  function Invoke-Table($answers, $cfg, [string[]]$liveNames, [string]$screen = '', [string[]]$foreign = @(), $apps = @{}) {
     $script:FakeRoot = "$TestDrive"
     $script:FakeCfg = $cfg
     $script:FakeScreen = $screen
     $script:HcCalls = [Collections.Generic.List[string]]::new()
     $script:FakeTerms = @($liveNames | ForEach-Object {
         $cwd = if ($foreign -contains $_) { Join-Path $TestDrive 'project-khac' } else { "$TestDrive" }
-        [pscustomobject]@{ name = $_; state = 'live'; cwd = $cwd }
+        [pscustomobject]@{ name = $_; state = 'live'; cwd = $cwd; status = @{ app = $apps[$_]; state = 'idle' } }
       })
     $Path = "$TestDrive"
     return (Invoke-Limits (New-FakeOps $answers) 6>&1 | Out-String)
@@ -526,6 +526,23 @@ Describe 'Invoke-Limits' {
   function Get-TableLine([string]$out, [string]$name) { (($out -split '\r?\n') | Where-Object { $_ -match "^$([regex]::Escape($name))\s" }) | Select-Object -First 1 }
   $mixed = [pscustomobject]@{ planner = 'claude'; workers = @('codex', 'codex'); rev = 'claude' }
   $allLive = 'c-planner', 'c-w1', 'c-w2', 'c-rev'
+
+  It 'pane live dùng agent thật, hỏi một lần và đánh dấu khác config' {
+    $cfg = [pscustomobject]@{ planner = 'claude'; workers = @('claude'); rev = 'none' }
+    $out = Invoke-Table @{ codex = (New-CodexReply) } $cfg @('c-planner', 'c-w1') '' @() @{'c-planner'='codex'; 'c-w1'='codex'}
+    $script:AskCalls -join ',' | Should Be 'codex'
+    (Get-TableLine $out 'c-planner') | Should Match 'codex\*'
+    (Get-TableLine $out 'c-w1') | Should Match 'codex\*'
+    $out | Should Match '\* khác config'
+    $script:HcCalls.Count | Should Be 0
+  }
+  It 'claude-code thay codex dùng số Claude; pane tắt vẫn hỏi theo config' {
+    $cfg = [pscustomobject]@{ planner = 'codex'; workers = @('codex'); rev = 'none' }
+    $out = Invoke-Table @{ codex = (New-CodexReply); claude = (New-ClaudeReply) } $cfg @('c-planner') '' @() @{'c-planner'='claude-code'}
+    (Get-TableLine $out 'c-planner') | Should Match 'claude\*\s+13%'
+    (Get-TableLine $out 'c-w1') | Should Match 'codex\s+-\s+-\s+tắt'
+    ($script:AskCalls | Sort-Object) -join ',' | Should Be 'claude,codex'
+  }
 
   It 'cả hai trực tiếp: không đọc màn hình, không chú thích có thể cũ, có giờ reset' {
     $out = Invoke-Table @{ codex = (New-CodexReply 18 75); claude = (New-ClaudeReply) } $mixed $allLive '5h 99% · week 99%'

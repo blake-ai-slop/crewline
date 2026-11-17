@@ -1,4 +1,4 @@
-﻿. "$PSScriptRoot/TestHome.ps1"
+. "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $skeletonDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'skeleton'
 $skeletonVersion = (Get-Content (Join-Path $skeletonDir 'VERSION') -Raw).Trim()
@@ -186,5 +186,75 @@ Describe 'crew upgrade' {
     [IO.File]::ReadAllText("$repo/context/MAP.md") | Should Be ([IO.File]::ReadAllText("$skeletonDir/context/MAP.md"))
     (Get-Content "$repo/context/tasks/private.md" -Raw).Trim() | Should Be 'task'
     (Get-Content "$repo/context/archive/private.md" -Raw).Trim() | Should Be 'archive'
+  }
+
+  It 'does not re-add pitfalls already moved to context/archive/PITFALLS-*.md' {
+    $bullets = @(Get-Content "$skeletonDir/context/PITFALLS.md" -Encoding utf8 | Where-Object { $_ -like '- *' })
+    $original = "# My pitfalls`n`n- private rule`n"
+    [IO.File]::WriteAllText("$repo/context/PITFALLS.md", $original)
+    [IO.File]::WriteAllText("$repo/context/archive/PITFALLS-2026-10.md", "# old`r`n`r`n  $($bullets[0])  `r`n")
+    [IO.File]::WriteAllText("$repo/context/archive/PITFALLS-2026-11.md", (($bullets | Select-Object -Skip 1) -join "`n") + "`n")
+    git -C $repo add context
+    git -C $repo commit -q -m archived
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-DryRun')
+    $result.ExitCode | Should Be 0
+    ($result.Output -join "`n") | Should Not Match 'PITFALLS\.md'
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-NoCommit')
+    $result.ExitCode | Should Be 0
+    [IO.File]::ReadAllText("$repo/context/PITFALLS.md") | Should Be $original
+    # file archive khác mẫu PITFALLS-*.md không tính: dòng thiếu vẫn được thêm
+    Remove-Item "$repo/context/archive/PITFALLS-2026-11.md"
+    Set-Content "$repo/context/archive/OLD-PITFALLS.md" (($bullets | Select-Object -Skip 1) -join "`n") -Encoding utf8
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-NoCommit', '-Force')
+    $result.ExitCode | Should Be 0
+    $got = @([IO.File]::ReadAllText("$repo/context/PITFALLS.md") -split "`r?`n" | ForEach-Object { $_.Trim() })
+    @($got | Where-Object { $_ -ceq $bullets[0].Trim() }).Count | Should Be 0
+    @($got | Where-Object { $_ -ceq $bullets[1].Trim() }).Count | Should Be 1
+  }
+
+  # Repo public không phát hành context nội bộ; các ca fixture tổng quát ở trên/dưới vẫn chạy.
+  It 'on a copy of this repo context, pitfalls already in archive/PITFALLS-*.md are not re-added' -Skip:(-not (Test-Path -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'context') -PathType Container)) {
+    $real = Join-Path (Split-Path $PSScriptRoot -Parent) 'context'
+    Remove-Item -Recurse -Force "$repo/context"
+    Copy-Item -Recurse $real "$repo/context"
+    git -C $repo add -A context
+    git -C $repo commit -q -m copy
+    $trim = { param($files) @(Get-Content $files -Encoding utf8 | ForEach-Object { $_.Trim() }) }
+    $current = & $trim "$repo/context/PITFALLS.md"
+    $archived = & $trim @(Get-ChildItem "$repo/context/archive" -Filter 'PITFALLS-*.md' | ForEach-Object { $_.FullName })
+    $skel = @(& $trim "$skeletonDir/context/PITFALLS.md" | Where-Object { $_.StartsWith('- ') })
+    $have = @($current) + @($archived)
+    $expect = @($skel | Where-Object { $s = $_; -not @($have | Where-Object { $_.StartsWith($s, [StringComparison]::Ordinal) }).Count })
+    # quyết định planner 2026-11-17: trên repo này chỉ còn đúng 1 dòng không có ở đâu
+    $expect.Count | Should Be 1
+    $expect[0] | Should Match '^- Tên terminal hc là duy nhất'
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-DryRun')
+    $result.ExitCode | Should Be 0
+    if (-not $expect.Count) { ($result.Output -join "`n") | Should Not Match 'PITFALLS\.md' }
+    $before = [IO.File]::ReadAllText("$repo/context/PITFALLS.md")
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-NoCommit')
+    $result.ExitCode | Should Be 0
+    $after = [IO.File]::ReadAllText("$repo/context/PITFALLS.md")
+    $added = @($after.Substring($before.Length) -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    ($added -join "`n") | Should BeExactly ($expect -join "`n")
+    foreach ($line in $added) { $archived -ccontains $line | Should Be $false }
+  }
+
+  It 'counts a longer line starting with the skeleton bullet (in PITFALLS or archive) as present, not one containing it mid-line' {
+    $bullets = @(Get-Content "$skeletonDir/context/PITFALLS.md" -Encoding utf8 | Where-Object { $_ -like '- *' } | ForEach-Object { $_.Trim() })
+    $original = "# My pitfalls`n`n  $($bullets[0]) Thêm chi tiết riêng của dự án.`n"
+    [IO.File]::WriteAllText("$repo/context/PITFALLS.md", $original)
+    $arch = @("  $($bullets[1]) Chi tiết sự cố ở archive.", "Ghi chú: $($bullets[2])", "$($bullets[3].ToUpper())")
+    $arch += @($bullets | Select-Object -Skip 4)
+    [IO.File]::WriteAllText("$repo/context/archive/PITFALLS-2026-11.md", ($arch -join "`n") + "`n")
+    git -C $repo add context
+    git -C $repo commit -q -m prefix
+    $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo, '-NoCommit')
+    $result.ExitCode | Should Be 0
+    $text = [IO.File]::ReadAllText("$repo/context/PITFALLS.md")
+    $text.StartsWith($original) | Should Be $true
+    $added = @($text.Substring($original.Length) -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    # chỉ dòng 3 (chỉ chứa ở giữa) và dòng 4 (khác hoa thường) được thêm
+    ($added -join "`n") | Should BeExactly (@($bullets[2], $bullets[3]) -join "`n")
   }
 }

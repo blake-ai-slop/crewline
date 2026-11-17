@@ -1,8 +1,8 @@
 ﻿# Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
 $hotCrew = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 $hotAst = [System.Management.Automation.Language.Parser]::ParseFile($hotCrew,[ref]$null,[ref]$null)
-$hotFunctions = 'Get-HotWarnings','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
-foreach ($fn in $hotAst.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $hotFunctions},$false)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+$hotFunctions = 'Get-WorkerMode','Get-SendPlan','Get-TermStatus','Get-HotWarnings','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Invoke-GitQuiet','Get-CrewName','Get-LegacySlug','Test-CrewName','Test-SamePath','ConvertTo-RootKey','Get-Root','Get-WorkerTree','Get-Tasks','Get-Config','Get-ForeignTermError','Test-TermOwner','Get-CopySource','Get-NameOwner','Test-OtherAlive','Get-NameConflict','Get-IdKeyOwner','Get-CrewIdKey','Get-LegacyIdKey','Test-IdKey'
+foreach ($fn in $hotAst.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $hotFunctions},$false)) { . ([scriptblock]::Create($fn.Extent.Text.Replace("(Join-Path `$PSScriptRoot 'lint.ps1')", '$script:HotLintPath'))) }
 function Read-ProjectRegistry { @{Ok=$true; Map=$script:hotRegistry} }
 function Get-ProjectsFile { Join-Path $TestDrive 'projects.json' }
 function Get-LiveTerminals { $script:fakeTerms }
@@ -10,6 +10,7 @@ function New-HcOps { throw 'không được đọc màn hình thêm' }
 function Die($message) { throw $message }
 Describe 'crew hot cảnh báo chỉ đọc' {
   BeforeEach {
+    $script:HotLintPath = Join-Path (Split-Path $hotCrew) 'lint.ps1'
     $script:hotRegistry = [ordered]@{}
     $script:fakeTerms = @()
     $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -25,6 +26,19 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $cfg = [pscustomobject]@{name='demo'; workers=@('codex'); review='lean'; access='work'; planner='none'; rev='none'}
     $cfg | ConvertTo-Json | Set-Content (Join-Path $root '.crew/config.json')
     $Path = $root
+  }
+  It 'lint có cảnh báo chỉ in tóm tắt, không sửa context' {
+    New-Item -ItemType Directory (Join-Path $root 'context') | Out-Null
+    '- `Get-RemovedFunction`' | Set-Content (Join-Path $root 'context/MAP.md')
+    $before = Get-Content (Join-Path $root 'context/MAP.md') -Raw
+    $output = Invoke-Hot 6>&1 | Out-String
+    $output | Should Match 'crew: context: 1 cảnh báo — chạy crew lint'
+    (Get-Content (Join-Path $root 'context/MAP.md') -Raw) | Should Be $before
+  }
+  It 'lint lỗi bỏ qua im lặng' {
+    $script:HotLintPath = Join-Path $TestDrive 'missing.ps1'
+    $output = Invoke-Hot 6>&1 | Out-String
+    $output | Should Not Match 'crew: context:|lint.ps1|không đọc'
   }
   It 'sạch không có khối Cảnh báo' {
     @(Get-HotWarnings $root $cfg @() @()).Count | Should Be 0
