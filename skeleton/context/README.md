@@ -20,9 +20,11 @@ Thứ tự đọc: **PROJECT → HOT → PITFALLS → DECISIONS → MAP**. Vai t
 ## Lệnh crew (máy này: herdr-app + hc trên Windows)
 - `crew hot` — worktree, terminal của crew, task đang chạy.
 - `crew task <tên> <file-prompt> [-Worker N] [-Review fast]` — tạo worktree `crew/<tên>`, chép prompt, bật worker.
+- `crew queue <tên> <file-prompt> [-Worker N] [-After <task>] [-Size S|M|L]` — xếp hàng, tự giao khi có worker rảnh; `crew queue` xem hàng đợi và lý do giữ, `crew queue -Run` giao ngay.
 - `crew send <terminal> "<1 dòng>"` — gửi tin cho agent/shell (thay `hc send` + `hc keys enter`).
 - `crew check <task>` — planner kiểm phạm vi/parse/test sau khi worker báo XONG.
 - `crew review <task,…>` — giao Rev.
 - `crew selfcheck` — tự thử trước khi push.
-- `crew clean <tên>` — dọn worktree/nhánh/terminal của task đã merge.
+- `crew clean <tên>` — đưa worker về nhánh chính, xóa nhánh/bản ghi task đã merge (rồi tự giao task kế trong hàng đợi).
+- `crew lint` — kiểm context: trần dòng/độ dài mục, mục trùng, tên hàm/đường dẫn không còn.
 - Theo dõi agent: `hc get <địa chỉ|tên>`, `hc read <t> --lines 80`, `hc wait <t>`.

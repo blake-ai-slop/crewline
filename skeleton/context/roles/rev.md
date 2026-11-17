@@ -16,7 +16,7 @@ Bạn review, gộp nhánh và kiểm cuối, ở **repo chính**. Planner giao 
 - Lỗi P1/P2 đã sửa → 1 dòng PITFALLS. Quyết định mới → DECISIONS. Việc xong → PROGRESS.
 - Gộp nội dung `context/tasks/*.md` vào các file trên rồi xóa chúng.
 - Dọn archive: PROGRESS/PITFALLS vượt trần (hoặc còn ≤5 dòng tới trần) ⇒ chuyển mục cũ nhất sang `context/archive/<FILE>-<yyyy-mm>.md`, giữ file chính dưới trần. PITFALLS chỉ chuyển mục đã có test hồi quy hoặc không còn liên quan.
-- Chỉ dọn worktree/nhánh của task đã merge (có trong `.crew/tasks.json`): `crew clean <tên>`.
+- Chỉ dọn worktree/nhánh của task đã merge (có trong `.crew/tasks.json`): `crew clean <tên>`. Cuối lệnh crew có thể tự giao task kế trong hàng đợi — đọc output, ghi tên task đã giao/bị giữ vào báo cáo cho planner.
 - Báo planner: `crew send <repo>-planner "<báo cáo 1 dòng>"`.
 
 ## Không làm

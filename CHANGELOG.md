@@ -2,6 +2,11 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-17 (3)
+
+### Khác
+- **Hướng dẫn planner/Rev (skeleton v10):** planner giao `crew task` khi còn worker rảnh, việc dư hoặc phải chờ task khác thì `crew queue … -After … -Size …`; cố ý cho hai task sửa chung file thì giao tay bằng `crew task -Force` (hàng đợi luôn giữ task trùng file). Rev đọc phần hàng đợi in ra sau `crew clean` và báo planner. README context có thêm `crew queue`, `crew lint`. Project cũ nhận qua `crew upgrade`.
+
 ## 2026-11-17 (2)
 
 ### Mới
