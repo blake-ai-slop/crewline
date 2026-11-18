@@ -45,6 +45,16 @@ Describe 'Phạm vi prompt và các cặp trùng' {
     (Get-ScopeConflicts $root $tasks @('a')).Count | Should Be 0
     (Get-ScopeConflicts $root @([pscustomobject]@{name='gone';worktree='missing'}) @('a')).Count | Should Be 0
   }
+  It 'scope trên bản ghi thắng prompt cũ, dùng được không worktree, giữ scope rỗng' {
+    'Được sửa: `old.ps1`' | Set-Content (Join-Path $wt '.crew/prompt.md') -Encoding UTF8
+    $record = [pscustomobject]@{ name='planned'; worktree='worker'; scope=@('src\', 'docs/*.md') }
+    (Get-ScopeConflicts $root @($record) @('old.ps1')).Count | Should Be 0
+    (Get-ScopeConflicts $root @($record) @('src/a.ps1', 'docs/a.md'))[0].Pairs.Count | Should Be 2
+    $record.scope = @()
+    (Get-ScopeConflicts $root @($record) @('old.ps1')).Count | Should Be 0
+    $record = [pscustomobject]@{ name='planned'; scope=@('a.ps1') }
+    (Get-ScopeConflicts $root @($record) @('a.ps1'))[0].Task | Should Be 'planned'
+  }
   It 'đọc worktree tuyệt đối, trả mọi task và không đổi prompt' {
     $file = Join-Path $wt '.crew/prompt.md'
     'Được sửa: `a`' | Set-Content $file -Encoding UTF8

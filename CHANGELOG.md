@@ -1,6 +1,16 @@
-# Changelog
+﻿# Changelog
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
+
+## 2026-11-18 — hàng đợi chắc hơn, CI chỉ Windows
+
+### Sửa
+- **`crew up` lỗi thì hàng đợi không tự giao việc;** mã thoát của `crew up` giữ nguyên.
+- **Không mất kết quả hàng đợi:** mỗi lượt tự giao (`crew clean`/`crew up`/`crew queue -Run`) ghi vào `.crew/queue.log` (giữ 200 dòng gần nhất); `crew queue` in thời điểm lượt chạy gần nhất. Khi `crew up` thay chính tab đang gõ, crew báo trước nơi xem kết quả.
+- **`crew queue -Run -DryRun` xét trùng file giữa các mục sắp giao cùng lượt,** khớp với lượt chạy thật.
+
+### Lưu ý
+- **Linux/macOS tạm ngưng kiểm:** CI chỉ chạy Windows. `crew upgrade` trên Linux đang có lỗi đã biết (từ bản 2026-11-17 (4)); dùng Windows hoặc chờ bản sửa.
 
 ## 2026-11-17 (4) — cập nhật không mất dữ liệu
 

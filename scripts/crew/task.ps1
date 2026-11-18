@@ -11,12 +11,17 @@ function Get-ScopeConflicts([string]$root, $tasks, [string[]]$scope, [string]$ex
   $rules = @($scope | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Where-Object { $_ -and $_ -notlike 'context/tasks/*' })
   if (-not $rules.Count) { return ,$conflicts }
   foreach ($task in @($tasks)) {
-    if ($task.name -eq $exceptName -or -not $task.worktree) { continue }
-    $wt = $task.worktree
-    if (-not [IO.Path]::IsPathRooted($wt)) { $wt = Join-Path $root $wt }
-    $file = Join-Path $wt '.crew/prompt.md'
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
-    $oldScope = Get-PromptScope (Get-Content -LiteralPath $file -Raw -Encoding UTF8)
+    if ($task.name -eq $exceptName) { continue }
+    if ($null -ne $task.PSObject.Properties['scope']) { $oldScope = @($task.scope) }
+    else {
+      if (-not $task.worktree) { continue }
+      $wt = $task.worktree
+      if (-not [IO.Path]::IsPathRooted($wt)) { $wt = Join-Path $root $wt }
+      $file = Join-Path $wt '.crew/prompt.md'
+      if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+      $oldScope = Get-PromptScope (Get-Content -LiteralPath $file -Raw -Encoding UTF8)
+    }
+    $oldScope = @($oldScope | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') })
     $pairs = @()
     foreach ($a in $rules) {
       foreach ($b in $oldScope) {

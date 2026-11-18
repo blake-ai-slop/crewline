@@ -5,6 +5,19 @@
 function Get-QueueFile([string]$root) { Join-Path $root '.crew/queue.json' }
 function Get-QueuePromptPath([string]$root, [string]$name) { Join-Path $root ".crew/queue/$name.md" }
 
+# Lỗi ghi log chỉ cảnh báo, không thay kết quả giao hay mã thoát của lệnh chính.
+function Write-QueueLog([string]$root, [string[]]$lines) {
+  try {
+    $file = Join-Path $root '.crew/queue.log'
+    $old = @(if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Encoding utf8 })
+    New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
+    $block = @($lines | ForEach-Object { $_ -split '\r?\n' })
+    # Giữ tiêu đề lượt mới nhất cả khi chỉ riêng lượt đó vượt 200 dòng.
+    if ($block.Count -gt 200) { $block = @($block[0]) + @($block | Select-Object -Last 199) }
+    @(@($old) + $block | Select-Object -Last 200) | Set-Content -LiteralPath $file -Encoding utf8
+  } catch { Write-Host "crew: CẢNH BÁO: không ghi được .crew/queue.log: $($_.Exception.Message)" -ForegroundColor Yellow }
+}
+
 # Luôn trả mảng (như Get-Tasks). File hỏng ⇒ throw (người gọi tay Die, gọi tự động chỉ cảnh báo).
 function Get-QueueItems([string]$root) {
   $f = Get-QueueFile $root
@@ -70,91 +83,111 @@ function Read-QueueConfig([string]$root) {
 }
 
 # Giao mọi mục giao được, theo thứ tự. Không Die (lỗi ⇒ throw). $manual: in "hàng đợi trống" khi rỗng. Trả số mục đã giao.
-function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = $true, $ops = $null) {
-  $items = Get-QueueItems $root
-  if (-not $items.Count) { if ($manual) { Say 'hàng đợi trống' }; return 0 }
-  if (-not $ops) { $ops = New-QueueOps }
-  $cfg = Read-QueueConfig $root
-  $n = @($cfg.workers).Count
-  $tasks = Get-Tasks $root -ThrowOnError
-  $limits = @{}
-  $keep = @(); $given = 0; $stopped = $false
-  for ($ix = 0; $ix -lt $items.Count; $ix++) {
-    $item = $items[$ix]
-    if ($stopped) { $keep += $item; continue }
-    $hold = ''
-    $busy = @($tasks | ForEach-Object { [int]$_.worker })
-    $queued = @($keep | ForEach-Object { $_.name }) + @($items | Select-Object -Skip ($ix + 1) | ForEach-Object { $_.name })
-    $prompt = Get-QueuePromptPath $root $item.name
-    if ($item.after -and @($tasks | Where-Object { $_.name -eq $item.after }).Count) { $hold = "chờ task $($item.after) xong" }
-    elseif ($item.after -and $queued -contains $item.after) { $hold = "chờ $($item.after) (còn trong hàng đợi)" }
-    elseif (-not (Test-Path -LiteralPath $prompt)) { $hold = "thiếu prompt $prompt" }
-    if (-not $hold) {
-      $clash = @(Get-ScopeConflicts $root $tasks (Get-PromptScope (Get-Content -LiteralPath $prompt -Raw -Encoding utf8)) | Where-Object { $_ -and $_.Task })
-      if ($clash.Count) { $hold = 'trùng file với ' + (@($clash | ForEach-Object { "$($_.Task) ($(@($_.Pairs) -join ', '))" }) -join '; ') }
-    }
-    $pick = 0
-    if (-not $hold) {
-      $want = [int]$item.worker
-      $free = @(1..$n | Where-Object { $busy -notcontains $_ })
-      $cands = if ($want) { if ($free -contains $want) { @($want) } else { @() } } else { $free }
-      if (-not $cands.Count) { $hold = if ($want) { "w$want đang bận" } else { 'không có worker rảnh' } }
-      $why = @()
-      foreach ($w in $cands) {
-        $kind = [string]@($cfg.workers)[$w - 1]
-        # hỏi limit chỉ khi có mục sắp giao, mỗi loại agent tối đa một lần/lần chạy
-        if (-not $limits.ContainsKey($kind)) { $limits[$kind] = try { & $ops.Limit $kind } catch { $null } }
-        $lh = Get-QueueLimitHold $kind $limits[$kind] ([string]$item.size)
-        if ($lh) { $why += "w${w}: $lh"; continue }
-        $pick = $w; break
-      }
-      if (-not $pick -and -not $hold) { $hold = $why -join '; ' }
-    }
-    if ($hold) {
-      Say "$($item.name): giữ: $hold"
-      if (-not $dryRun) { $item | Add-Member -NotePropertyName hold -NotePropertyValue $hold -Force }
-      $keep += $item; continue
-    }
-    if ($dryRun) {
-      Say "$($item.name): sẽ giao → w$pick"
-      # bản ghi giả để mục sau thấy worker bận/After; không có worktree ⇒ không đọc prompt cũ của w<N> khi kiểm trùng file
-      $tasks = @($tasks) + [pscustomobject]@{ name = $item.name; worker = $pick; worktree = (Join-Path $root '.crew/queue/dry-run') }
-      $keep += $item; continue
-    }
-    $argv = @('task', $item.name, $prompt, '-Worker', "$pick")
-    if ($item.review) { $argv += @('-Review', [string]$item.review) }
-    $r = & $ops.Spawn $root $argv
-    if ($r.Code -ne 0) {
-      $item | Add-Member -NotePropertyName hold -NotePropertyValue "crew task lỗi: $(Get-QueueSpawnError $r.Text)" -Force
-      Say "$($item.name): giữ: $($item.hold)"
-      $keep += $item; $stopped = $true; continue
-    }
-    Say "$($item.name): đã giao → w$pick"
-    Remove-Item -LiteralPath $prompt -Force -ErrorAction SilentlyContinue
-    $given++
+function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = $true, $ops = $null, [string]$source = 'run') {
+  $log = [Collections.Generic.List[string]]::new()
+  $log.Add("== $(Get-Date -Format s) ($source)")
+  try {
+    $items = Get-QueueItems $root
+    if (-not $items.Count) { if ($manual) { Say 'hàng đợi trống' }; return 0 }
+    if (-not $ops) { $ops = New-QueueOps }
+    $cfg = Read-QueueConfig $root
+    $n = @($cfg.workers).Count
     $tasks = Get-Tasks $root -ThrowOnError
-  }
-  if (-not $dryRun) { Save-QueueItems $root $keep }
-  if ($stopped) { Say 'dừng giao tiếp vì crew task lỗi; sửa rồi chạy: crew queue -Run' }
-  $given
+    $limits = @{}
+    $keep = @(); $given = 0; $stopped = $false
+    for ($ix = 0; $ix -lt $items.Count; $ix++) {
+      $item = $items[$ix]
+      if ($stopped) {
+        $reason = 'dừng giao tiếp vì crew task lỗi'
+        $log.Add("$($item.name): giữ: $reason")
+        $item | Add-Member -NotePropertyName hold -NotePropertyValue $reason -Force
+        $keep += $item; continue
+      }
+      $hold = ''
+      $busy = @($tasks | ForEach-Object { [int]$_.worker })
+      $queued = @($keep | ForEach-Object { $_.name }) + @($items | Select-Object -Skip ($ix + 1) | ForEach-Object { $_.name })
+      $prompt = Get-QueuePromptPath $root $item.name
+      if ($item.after -and @($tasks | Where-Object { $_.name -eq $item.after }).Count) { $hold = "chờ task $($item.after) xong" }
+      elseif ($item.after -and $queued -contains $item.after) { $hold = "chờ $($item.after) (còn trong hàng đợi)" }
+      elseif (-not (Test-Path -LiteralPath $prompt)) { $hold = "thiếu prompt $prompt" }
+      if (-not $hold) {
+        $clash = @(Get-ScopeConflicts $root $tasks (Get-PromptScope (Get-Content -LiteralPath $prompt -Raw -Encoding utf8)) | Where-Object { $_ -and $_.Task })
+        if ($clash.Count) { $hold = 'trùng file với ' + (@($clash | ForEach-Object { "$($_.Task) ($(@($_.Pairs) -join ', '))" }) -join '; ') }
+      }
+      $pick = 0
+      if (-not $hold) {
+        $want = [int]$item.worker
+        $free = @(1..$n | Where-Object { $busy -notcontains $_ })
+        $cands = if ($want) { if ($free -contains $want) { @($want) } else { @() } } else { $free }
+        if (-not $cands.Count) { $hold = if ($want) { "w$want đang bận" } else { 'không có worker rảnh' } }
+        $why = @()
+        foreach ($w in $cands) {
+          $kind = [string]@($cfg.workers)[$w - 1]
+          # hỏi limit chỉ khi có mục sắp giao, mỗi loại agent tối đa một lần/lần chạy
+          if (-not $limits.ContainsKey($kind)) { $limits[$kind] = try { & $ops.Limit $kind } catch { $null } }
+          $lh = Get-QueueLimitHold $kind $limits[$kind] ([string]$item.size)
+          if ($lh) { $why += "w${w}: $lh"; continue }
+          $pick = $w; break
+        }
+        if (-not $pick -and -not $hold) { $hold = $why -join '; ' }
+      }
+      if ($hold) {
+        $log.Add("$($item.name): giữ: $hold")
+        Say "$($item.name): giữ: $hold"
+        if (-not $dryRun) { $item | Add-Member -NotePropertyName hold -NotePropertyValue $hold -Force }
+        $keep += $item; continue
+      }
+      if ($dryRun) {
+        Say "$($item.name): sẽ giao → w$pick"
+        # Bản ghi giả mang scope của prompt sắp giao, tránh đọc prompt cũ của worker.
+        $tasks = @($tasks) + [pscustomobject]@{ name = $item.name; worker = $pick; scope = (Get-PromptScope (Get-Content -LiteralPath $prompt -Raw -Encoding utf8)) }
+        $keep += $item; continue
+      }
+      $argv = @('task', $item.name, $prompt, '-Worker', "$pick")
+      if ($item.review) { $argv += @('-Review', [string]$item.review) }
+      $r = & $ops.Spawn $root $argv
+      if ($r.Code -ne 0) {
+        $item | Add-Member -NotePropertyName hold -NotePropertyValue "crew task lỗi: $(Get-QueueSpawnError $r.Text)" -Force
+        $log.Add("$($item.name): giữ: $($item.hold)")
+        Say "$($item.name): giữ: $($item.hold)"
+        $keep += $item; $stopped = $true; continue
+      }
+      $log.Add("$($item.name): đã giao → w$pick")
+      Say "$($item.name): đã giao → w$pick"
+      Remove-Item -LiteralPath $prompt -Force -ErrorAction SilentlyContinue
+      $given++
+      $tasks = Get-Tasks $root -ThrowOnError
+    }
+    if (-not $dryRun) { Save-QueueItems $root $keep }
+    if ($stopped) { Say 'dừng giao tiếp vì crew task lỗi; sửa rồi chạy: crew queue -Run' }
+    $given
+  } catch {
+    $log.Add("lỗi: $($_.Exception.Message)")
+    throw
+  } finally { if (-not $dryRun) { Write-QueueLog $root $log.ToArray() } }
 }
 
 # Gọi tự động cuối crew clean / crew up: không -DryRun, im lặng khi trống, lỗi chỉ cảnh báo, không đổi exit code lệnh chính.
 # $where = thư mục trong repo (root hoặc worktree); giao theo repo chính.
-function Invoke-QueueAuto([string]$where) {
+function Invoke-QueueAuto([string]$where, [string]$source = 'clean') {
   $savedExitCode = $global:LASTEXITCODE
   try {
     $at = Resolve-Path -LiteralPath $where -ErrorAction SilentlyContinue
     if (-not $at) { return }
     $root = Get-MainRoot $at.Path
     if (-not $root -or -not (Test-Path -LiteralPath (Get-QueueFile $root))) { return }
-    Invoke-QueueRun $root $false $false | Out-Null
+    Invoke-QueueRun $root $false $false $null $source | Out-Null
   } catch { Write-Host "crew: CẢNH BÁO: hàng đợi: $($_.Exception.Message)" -ForegroundColor Yellow }
   finally { $global:LASTEXITCODE = $savedExitCode }
 }
 
 function Show-Queue([string]$root) {
   $items = Get-QueueItems $root
+  $file = Join-Path $root '.crew/queue.log'
+  if (Test-Path -LiteralPath $file) {
+    $last = @(Get-Content -LiteralPath $file -Encoding utf8 | Where-Object { $_ -match '^== \d{4}-.* \(.*\)$' } | Select-Object -Last 1)
+    if ($last.Count) { Say "lần chạy gần nhất: $($last[0].Substring(3)) — xem .crew/queue.log" }
+  }
   if (-not $items.Count) { Say 'hàng đợi trống'; return }
   $fmt = '{0,-24} {1,-6} {2,-4} {3,-20} {4}'
   Write-Host ($fmt -f 'tên', 'worker', 'size', 'after', 'đang giữ (lần chạy gần nhất)')

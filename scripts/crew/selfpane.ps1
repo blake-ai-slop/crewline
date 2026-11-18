@@ -13,6 +13,7 @@ function Invoke-SelfPaneHandoff($job) {
     Write-Host "$(Get-SelfPaneMarker)$([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $job -Compress))))"
     return
   }
+  Say 'kết quả hàng đợi sẽ ở .crew/queue.log.'
   Say "tab này sắp chuyển thành $($job.term) sau vài giây; chữ đang in sẽ mất. Đừng gõ gì vào tab này cho tới khi đó."
   try { Start-SelfPaneProcess $job }
   catch { Say "cảnh báo: không tạo được tiến trình nền ($($_.Exception.Message)); giữ pane. Mở tab khác rồi chạy lại: crew up$(if ($job.restart) { " -Restart $($job.role)" })" }

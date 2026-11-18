@@ -7,8 +7,8 @@ Mục tiêu: nhiều agent (Claude Code, Codex) cùng làm một dự án, song 
 | Hệ | Trạng thái |
 |---|---|
 | Windows 10/11 | Dùng hằng ngày, đã chạy thật với agent |
-| Linux (x86_64, ARM) | **Thử nghiệm:** test + CI xanh, chưa chạy thật herdr-app với agent |
-| macOS (Apple Silicon) | **Thử nghiệm:** như Linux; Mac Intel chưa có herdr-app |
+| Linux (x86_64, ARM) | **Tạm ngưng kiểm:** CI chỉ chạy Windows; `crew upgrade` trên Linux đang có lỗi đã biết (bản 2026-11-17) |
+| macOS (Apple Silicon) | **Tạm ngưng kiểm:** CI chỉ chạy Windows; `crew upgrade` trên Linux đang có lỗi đã biết (bản 2026-11-17); Mac Intel chưa có herdr-app |
 
 ```
 crew:<repo>  (space trong herdr-app)
@@ -214,7 +214,7 @@ Nguyên tắc: thoáng bên trong worktree, chặt ở ranh giới (dữ liệu 
 ```
 bootstrap.ps1          cài 1 dòng (Windows): kiểm git/pwsh, clone hoặc pull, chạy install.ps1
 bootstrap.sh           cài 1 dòng (Linux/macOS): cài pwsh vào ~/.local nếu thiếu, clone/pull, chạy install.ps1
-.github/workflows/     CI: repo dev chạy đủ test Windows + Linux mỗi push/PR, macOS chạy tay; repo public kiểm nhanh 3 hệ khi phát hành
+.github/workflows/     CI: push/PR chỉ chạy Windows (repo dev đủ test, repo public kiểm nhanh khi phát hành); Linux/macOS chạy tay
 install.ps1            cài shim, template, jq, PATH, ~/.crewline/
 tests/                 Pester 3.4; TestHome.ps1 = HOME/APPDATA giả cho test
 scripts/crew.ps1       lệnh crew

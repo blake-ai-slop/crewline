@@ -109,9 +109,16 @@ switch ($Command) {
     }
     if ($All) { Invoke-UpAll } elseif ($Restart) { Invoke-Up }
     else {
-      # Invoke-Recover kết thúc bằng exit: finally vẫn chạy và giữ exit code. Con của -All không tự giao.
-      try { Invoke-Recover $true }
-      finally { if (-not $DryRun -and $env:CREWLINE_UP_ALL_CHILD -ne '1') { Invoke-QueueAuto $Path } }
+      # Biên script con bắt exit của Recover, giữ nguyên scope hàm và mã thoát.
+      $recoverFile = Join-Path ([IO.Path]::GetTempPath()) ("crew-recover-$([guid]::NewGuid().ToString('N')).ps1")
+      try {
+        [IO.File]::WriteAllText($recoverFile, 'Invoke-Recover $true')
+        $global:LASTEXITCODE = 0
+        & $recoverFile
+        $recoverExit = $LASTEXITCODE
+      } finally { Remove-Item -LiteralPath $recoverFile -Force -ErrorAction SilentlyContinue }
+      if ($recoverExit -eq 0 -and -not $DryRun -and $env:CREWLINE_UP_ALL_CHILD -ne '1') { Invoke-QueueAuto $Path 'up' }
+      exit $recoverExit
     }
   }
   'task' { Invoke-Task }

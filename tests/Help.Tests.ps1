@@ -172,6 +172,10 @@ Describe 'crew help' {
     $text | Should Match 'mốc hạn chế với -Size L, hoặc mốc dừng'
     $text | Should Match 'trùng file Được sửa'
     $text | Should Match 'dừng giao tiếp'
+    $text | Should Match '\.crew/queue\.log'
+    $text | Should Match 'tối đa 200 dòng'
+    $text | Should Match 'thành công \(exit 0\)'
+    $text | Should Match 'trùng file giữa các mục sắp giao cùng lượt'
     (Invoke-HelpPage 'clean').Text | Should Match 'tự giao mục trong hàng đợi'
     (Invoke-HelpPage 'up').Text | Should Match 'tự giao mục trong hàng đợi'
   }

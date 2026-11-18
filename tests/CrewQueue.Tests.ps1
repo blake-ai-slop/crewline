@@ -201,6 +201,66 @@ Describe 'Invoke-QueueRun (ops giả)' {
     $script:Said -contains 'c: giữ: chờ task a xong' | Should Be $true
   }
 
+  It '-DryRun xét scope của các mục sẽ giao cùng lượt; không ghi queue, prompt hay log' {
+    $root = New-QueueRoot @('claude', 'codex')
+    Add-Q $root 'a'; Add-Q $root 'b'; Add-Q $root 'c'
+    'Được sửa: `src/`' | Set-Content (Get-QueuePromptPath $root 'a') -Encoding utf8
+    'Được sửa: `src/a.ps1`' | Set-Content (Get-QueuePromptPath $root 'b') -Encoding utf8
+    $before = Get-Content (Get-QueueFile $root) -Raw
+    $ops = New-FakeOps
+    Invoke-QueueRun $root $true $true $ops | Should Be 0
+    $script:Said -contains 'a: sẽ giao → w1' | Should Be $true
+    ($script:Said -join "`n") | Should Match 'b: giữ: trùng file với a'
+    $script:Said -contains 'c: sẽ giao → w2' | Should Be $true
+    $ops.Log.Spawn.Count | Should Be 0
+    (Get-Content (Get-QueueFile $root) -Raw) | Should Be $before
+    Test-Path (Get-QueuePromptPath $root 'a') | Should Be $true
+    Test-Path (Join-Path $root '.crew/queue.log') | Should Be $false
+  }
+
+  It 'log lượt thật ghi nguồn, từng mục và chỉ giữ 200 dòng mới; list hiện lần gần nhất cả khi trống' {
+    $root = New-QueueRoot @('claude')
+    Add-Q $root 'a'; Add-Q $root 'b'
+    $file = Join-Path $root '.crew/queue.log'
+    1..205 | Set-Content $file
+    Invoke-QueueRun $root $false $false (New-FakeOps) 'up' | Should Be 1
+    $lines = @(Get-Content $file -Encoding utf8)
+    $lines.Count | Should Be 200
+    $lines[-3] | Should Match '^== \d{4}-.* \(up\)$'
+    $lines[-2] | Should Be 'a: đã giao → w1'
+    $lines[-1] | Should Be 'b: giữ: không có worker rảnh'
+    $before = Get-Content $file -Raw
+    Invoke-QueueRun $root $true $true (New-FakeOps) | Should Be 0
+    (Get-Content $file -Raw) | Should Be $before
+    Save-QueueItems $root @()
+    $script:Said.Clear()
+    Show-Queue $root
+    $script:Said[0] | Should Match 'lần chạy gần nhất: .* \(up\) — xem \.crew/queue.log'
+    $script:Said[1] | Should Be 'hàng đợi trống'
+    Invoke-QueueRun $root $false $false (New-FakeOps) 'clean' | Should Be 0
+    @(Get-Content $file)[-1] | Should Match '\(clean\)$'
+  }
+
+  It 'lượt log quá 200 dòng vẫn giữ tiêu đề mới nhất và đếm theo dòng thực' {
+    $root = New-QueueRoot
+    $block = @('== 2026-11-17T10:00:00 (run)') + @(1..210 | ForEach-Object { "giữ: $_`nchi tiết" })
+    Write-QueueLog $root $block
+    $lines = @(Get-Content (Join-Path $root '.crew/queue.log'))
+    $lines.Count | Should Be 200
+    $lines[0] | Should Be '== 2026-11-17T10:00:00 (run)'
+    $lines[-1] | Should Be 'chi tiết'
+  }
+
+  It 'log ghi mục lỗi và các mục còn lại bị giữ sau lỗi' {
+    $root = New-QueueRoot
+    Add-Q $root 'a'; Add-Q $root 'b'
+    Invoke-QueueRun $root $false $true (New-FakeOps @{} 'terminal lỗi') | Should Be 0
+    $text = Get-Content (Join-Path $root '.crew/queue.log') -Raw -Encoding utf8
+    $text | Should Match '\(run\)'
+    $text | Should Match 'a: giữ: crew task lỗi: terminal lỗi'
+    $text | Should Match 'b: giữ: dừng giao tiếp vì crew task lỗi'
+  }
+
   It 'thiếu prompt chép ⇒ giữ, nêu đường dẫn' {
     $root = New-QueueRoot
     Add-Q $root 'a'
@@ -245,7 +305,7 @@ Describe 'Invoke-QueueAuto' {
         $file = Join-Path $root ".crew/$name.json"
         [IO.File]::WriteAllText($file, $bad)
         $before = (Get-FileHash $file).Hash
-        $defs = @('Die','Get-CrewStateSchema','Read-CrewState','Get-Tasks','Get-QueueFile','Get-QueueItems','Read-QueueConfig','Invoke-QueueRun','Invoke-QueueAuto') | ForEach-Object { (Get-CrewFunction $_).Extent.Text }
+        $defs = @('Die','Get-CrewStateSchema','Read-CrewState','Get-Tasks','Get-QueueFile','Get-QueueItems','Read-QueueConfig','Invoke-QueueRun','Write-QueueLog','Invoke-QueueAuto') | ForEach-Object { (Get-CrewFunction $_).Extent.Text }
         $body = ($defs -join "`n") + @"
 function Get-MainRoot(`$at) { '$($root.Replace("'", "''"))' }
 function New-QueueOps { return @{ Limit = {}; Spawn = {} } }
@@ -289,16 +349,16 @@ Describe 'nối vào crew.ps1, clean, up, hot (AST)' {
     $hot[-1].Extent.Text | Should Match '== hàng đợi: '
   }
 
-  # Chạy đúng nhánh dispatch 'up' trong pwsh con với Invoke-Recover giả kết thúc bằng exit 1 (như crew up cần người quyết).
+  # Chạy đúng nhánh dispatch 'up' trong pwsh con với Recover và tự giao giả (không gọi CLI agent/hc).
   $runUp = {
-    param([string]$flags, [string]$child = '')
+    param([string]$flags, [string]$child = '', [string]$recover = 'exit 1')
     $body = (& $clause 'up').Trim().TrimStart('{').TrimEnd('}')
     $script = @"
 function Get-MainRoot(`$p) { return `$null }
-function Invoke-Recover(`$x) { Write-Host 'RECOVER'; exit 1 }
+function Invoke-Recover(`$x) { Write-Host 'RECOVER'; $recover }
 function Invoke-Up { Write-Host 'UP' }
 function Invoke-UpAll { Write-Host 'UPALL' }
-function Invoke-QueueAuto(`$p) { Write-Host "AUTO `$p" }
+function Invoke-QueueAuto(`$p, `$source) { Write-Host "AUTO `$p `$source" }
 `$Path = '.'; `$All = `$false; `$Restart = ''; `$DryRun = `$false
 $flags
 `$env:CREWLINE_UP_ALL_CHILD = '$child'
@@ -311,16 +371,33 @@ exit 0
     @{ Code = $LASTEXITCODE; Text = $out -join "`n" }
   }
 
-  It 'crew up một project: sau Invoke-Recover (kể cả exit 1) tự giao, giữ exit code' {
-    $r = & $runUp ''
-    $r.Text | Should Be "RECOVER`nAUTO ."
+  It 'crew up lỗi: không tự giao và giữ exit code' {
+    $r = & $runUp '& pwsh -NoProfile -Command ''exit 9'''
+    $r.Text | Should Be 'RECOVER'
     $r.Code | Should Be 1
   }
+  It 'native trước đó lỗi, Recover trả về bình thường ⇒ thoát 0 và tự giao' {
+    $r = & $runUp '& pwsh -NoProfile -Command ''exit 9''; if ($LASTEXITCODE -ne 9) { throw ''native phải trả 9'' }' '' 'return'
+    $r.Text | Should Be "RECOVER`nAUTO . up"
+    $r.Code | Should Be 0
+  }
+  It 'crew up thành công mới tự giao, giữ exit 0 kể cả LASTEXITCODE cũ khác 0' {
+    $r = & $runUp '$global:LASTEXITCODE = 9' '' 'exit 0'
+    $r.Text | Should Be "RECOVER`nAUTO . up"
+    $r.Code | Should Be 0
+    (& $runUp '' '' 'exit 7').Code | Should Be 7
+    (& $runUp '' '' 'exit 7').Text | Should Be 'RECOVER'
+  }
+  It 'crew up Recover throw: không tự giao' {
+    $r = & $runUp '' '' "throw 'recover failed'"
+    $r.Code | Should Be 1
+    $r.Text | Should Not Match 'AUTO'
+  }
   It 'crew up -DryRun / -Restart / -All / con của -All: không tự giao' {
-    (& $runUp '$DryRun = $true').Text | Should Be 'RECOVER'
+    (& $runUp '$DryRun = $true' '' 'exit 0').Text | Should Be 'RECOVER'
     (& $runUp '$Restart = ''w1''').Text | Should Be 'UP'
     (& $runUp '$All = $true').Text | Should Be 'UPALL'
-    (& $runUp '' '1').Text | Should Be 'RECOVER'
+    (& $runUp '' '1' 'exit 0').Text | Should Be 'RECOVER'
   }
 }
 
@@ -455,11 +532,13 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     $dry = Run-Crew $c @('queue', '-Run', '-DryRun')
     $dry.Text | Should Match 'a: sẽ giao → w1'
     Test-Path (Join-Path $c.State 'sends.log') | Should Be $false
+    Test-Path (Join-Path $c.Root '.crew/queue.log') | Should Be $false
 
     $r = Run-Crew $c @('queue', '-Run')
     $r.Code | Should Be 0
     $r.Text | Should Match 'a: đã giao → w1'
     $r.Text | Should Match 'b: giữ: không có worker rảnh'
+    (Get-Content (Join-Path $c.Root '.crew/queue.log') -Raw) | Should Match '\(run\)'
     # limit hỏi qua claude giả, đúng một lần; -DryRun trước đó cũng hỏi một lần
     $limitLog = @(Get-Content (Join-Path $c.State 'limits.log') -Encoding utf8)
     $limitLog.Count | Should Be 2
@@ -478,6 +557,10 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     $clean.Code | Should Be 0
     $clean.Text | Should Match 'đã dọn task a'
     $clean.Text | Should Match 'b: đã giao → w1'
+    $log = Get-Content (Join-Path $c.Root '.crew/queue.log') -Raw -Encoding utf8
+    $log | Should Match '\(clean\)'
+    $log | Should Match 'b: đã giao → w1'
+    (Run-Crew $c @('queue')).Text | Should Match 'lần chạy gần nhất: .* \(clean\)'
     $tasks = @(Get-Content (Join-Path $c.Root '.crew/tasks.json') -Raw | ConvertFrom-Json)
     $tasks[0].name | Should Be 'b'
     $tasks[0].review | Should Be 'fast'
@@ -497,13 +580,19 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     $pb = Join-Path $c.Root 'pb.md'; 'Được sửa: `scripts/crew/queue.ps1`' | Set-Content $pb -Encoding utf8
     $pc = Join-Path $c.Root 'pc.md'; 'Được sửa: `docs/x.md`' | Set-Content $pc -Encoding utf8
     foreach ($q in @(@('a', $pa), @('b', $pb), @('c', $pc))) { (Run-Crew $c @('queue', $q[0], $q[1])).Code | Should Be 0 }
+    $dry = Run-Crew $c @('queue', '-Run', '-DryRun')
+    $dry.Code | Should Be 0
+    $dry.Text | Should Match 'a: sẽ giao → w1'
+    $dry.Text | Should Match 'b: giữ: trùng file với a'
+    $dry.Text | Should Match 'c: sẽ giao → w2'
+    Test-Path (Join-Path $c.Root '.crew/queue.log') | Should Be $false
     $r = Run-Crew $c @('queue', '-Run')
     $r.Code | Should Be 0
     $r.Text | Should Match 'a: đã giao → w1'
     $r.Text | Should Match 'b: giữ: trùng file với a \(scripts/crew/queue\.ps1 ~ scripts/crew/\)'
     $r.Text | Should Match 'c: đã giao → w2'
     $limitLog = @(Get-Content (Join-Path $c.State 'limits.log') -Encoding utf8)
-    ($limitLog -join '|') | Should Be 'claude -p /usage --output-format json --no-session-persistence|codex app-server'
+    ($limitLog -join '|') | Should Be 'claude -p /usage --output-format json --no-session-persistence|codex app-server|claude -p /usage --output-format json --no-session-persistence|codex app-server'
     (Run-Crew $c @('queue')).Text | Should Match '(?m)^b\s.*trùng file với a'
   }
 
