@@ -24,8 +24,15 @@ function Get-Slug([string]$root) {
 # Tên crew hợp lệ: a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'.
 function Test-CrewName([string]$n) { $n -cmatch '^[a-z0-9](?:[a-z0-9-]{0,10}[a-z0-9])?$' }
 
+# Tên mới cho project cũ có slug cũ rỗng — cùng cách Update-ConfigName (upgrade) sẽ ghi: Get-Slug + đuôi -2… theo sổ.
+function Get-FreshCrewName([string]$root) {
+  $reg = Read-ProjectRegistry
+  Resolve-CrewName (Get-Slug $root) $root $reg.Map
+}
+
 # Tên crew của project — chỗ DUY NHẤT mọi lệnh lấy tên (terminal <tên>-planner|-w<N>|-rev, space spcrew<tên>).
-# Config có `name` ⇒ dùng; chưa có (project cũ) ⇒ slug cũ y hệt.
+# Config có `name` ⇒ dùng; chưa có (project cũ) ⇒ slug cũ y hệt. Slug cũ rỗng: -DryRun (không ghi config) ⇒ tên
+# Update-ConfigName sẽ ghi, để preview in đúng việc sẽ làm; chạy thật ⇒ dừng (Update-ConfigName phải ghi name trước).
 function Get-CrewName([string]$root, $cfg) {
   if ($cfg -and $cfg.PSObject.Properties.Name -contains 'name' -and $null -ne $cfg.name) {
     $n = [string]$cfg.name
@@ -33,6 +40,8 @@ function Get-CrewName([string]$root, $cfg) {
     return $n
   }
   $s = Get-LegacySlug $root
+  # -DryRun là cờ của crew.ps1, đọc theo phạm vi động như mọi hàm crew (crew up chạy Recover trong script tạm nên không dùng $script:).
+  if (-not $s -and (Get-Variable -Name DryRun -ValueOnly -ErrorAction SilentlyContinue)) { return Get-FreshCrewName $root }
   if (-not $s) { Die "không suy ra được tên crew từ thư mục '$(Split-Path $root -Leaf)'. Chạy 'crew upgrade' (tự ghi name) hoặc 'crew init -Name <tên>'." }
   return $s
 }
@@ -80,7 +89,10 @@ function Get-CrewIdKey([string]$root, $cfg) {
     if (-not (Test-IdKey $k)) { Die "idKey '$k' trong .crew/config.json không hợp lệ (a-z 0-9, 1–24 ký tự). Sửa `"idKey`" hoặc chạy: crew init -Name <tên>" }
     return $k
   }
-  Get-LegacyIdKey (Get-CrewName $root $cfg)
+  $n = Get-CrewName $root $cfg
+  # slug cũ rỗng (chỉ tới được khi -DryRun): Update-ConfigName sẽ ghi idKey mã hóa mới, không phải khóa cũ
+  if (-not ($cfg -and $cfg.PSObject.Properties.Name -contains 'name' -and $null -ne $cfg.name) -and -not (Get-LegacySlug $root)) { return ConvertTo-IdKey $n }
+  Get-LegacyIdKey $n
 }
 
 # Sổ tên crew toàn máy: ~/.crewline/projects.json = { "<tên>": { "root": "<root tuyệt đối>", "idKey": "<khóa>" } }.
@@ -126,7 +138,7 @@ function Save-ProjectRegistry($map) {
     $entry['root'] = $map[$k].Root; $entry['idKey'] = $map[$k].IdKey
     $o[$k] = $entry
   }
-  [IO.File]::WriteAllText($f, ($o | ConvertTo-Json -Depth 100) + "`n", [Text.UTF8Encoding]::new($false))
+  Write-CrewStateFile $f (($o | ConvertTo-Json -Depth 100) + "`n")
 }
 
 # Mục sổ thuộc root khác còn tồn tại (có .crew/config.json)?

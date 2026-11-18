@@ -298,9 +298,9 @@ Describe 'Wait-SelfPaneShell' -Tag 'windows' {
     $o = & $mk; $o.cwd = 'C:\khac'; (Wait-SelfPaneShell $job (& $ops $o 'PS C:\x>') 4 0).Why | Should Match 'không thuộc project'
     (Wait-SelfPaneShell $job (& $ops $null 'PS C:\x>') 4 0).Why | Should Match 'không đọc được'
   }
-  It 'pane exited chỉ thay khi -Restart' -Skip:(-not $OnWindows) {
+  It 'pane exited được thay cả khi không -Restart' -Skip:(-not $OnWindows) {
     $e = & $mk; $e.argv = @('pwsh', '-NoExit', '-EncodedCommand', 'x')
-    (Wait-SelfPaneShell $job (& $ops $e 'PS C:\x>') 4 0).Why | Should Match 'shell trống'
+    (Wait-SelfPaneShell $job (& $ops $e 'PS C:\x>') 4 0).Why | Should Be ''
     $r = $job.Clone(); $r.restart = $true
     (Wait-SelfPaneShell $r (& $ops $e 'PS C:\x>') 4 0).Why | Should Be ''
   }
@@ -551,18 +551,26 @@ Describe 'crew up trong pane của một vai (hc giả, tiến trình nền th�
     Test-Path -LiteralPath (Join-Path $root '.crew/self-pane.lock') | Should Be $false
   }
 
-  It 'pane exited (crew bật, agent đã thoát) không -Restart: cảnh báo như cũ, không thay' -Skip:(-not $OnWindows) {
+  It 'pane exited không -Restart: thay pane và resume phiên cũ' -Skip:$NoBackground {
     $ctx = New-Ctx 't3m'
     $root = New-Repo 'proj'
     $wt = Add-Worktree $root 1
     $p = New-CoreShell 'proj-planner' 't3m' $root
     $p.argv = @('pwsh', '-NoExit', '-EncodedCommand', 'x')
     Set-Terms $ctx @($p, (New-Agent 'proj-w1' 't2' $wt))
+    # Ghi sổ bằng crew thật trước khi mô phỏng agent thoát.
+    Set-Terms $ctx @((New-Agent 'proj-w1' 't2' $wt))
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    Set-Terms $ctx @($p, (New-Agent 'proj-w1' 't2' $wt))
     $r = Invoke-Crew $ctx @('up') $root
-    $r.ExitCode | Should Be 1
-    $r.Output | Should Match 'CẦN NGƯỜI QUYẾT: proj-planner: agent đã thoát'
-    $r.Output | Should Not Match 'sắp chuyển'
-    @(Get-Lines $ctx '^(run|send|keys|kill|rm)\b').Count | Should Be 0
+    $r.ExitCode | Should Be 0
+    $r.Output | Should Match 'sắp chuyển'
+    Wait-Background $root
+    (Get-Lines $ctx '^kill t3m').Count | Should Be 1
+    $run = @(Get-Lines $ctx '^run .*--name proj-planner')[-1]
+    $encoded = ($run -split '-EncodedCommand ')[1].Split(' ')[0]
+    [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded)) | Should Match '--resume '
+    Get-BgLog $root | Should Be ''
   }
 
   It 'còn thư mục w<N> lạ: vai khác không bật được thì cũng không thay pane' -Skip:(-not $OnWindows) {
@@ -793,7 +801,12 @@ Describe 'crew up -Restart từ chính pane của vai (hc giả, tiến trình n
     $r.ExitCode | Should Be 0
     Wait-Background $root
     (Get-Lines $ctx '^kill t3m').Count | Should Be 1
-    (Get-Lines $ctx '^run .*--name proj-planner').Count | Should Be 1
+    $runs = @(Get-Lines $ctx '^run .*--name proj-planner')
+    $runs.Count | Should Be 1
+    $encoded = ($runs[0] -split '-EncodedCommand ')[1].Split(' ')[0]
+    $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+    $command | Should Match '--session-id '
+    $command | Should Not Match '--resume |--continue'
   }
 
   It 'đọc lại khác đi sau -Restart: 0 kill pane mình' -Skip:$NoBackground {

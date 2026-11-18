@@ -75,11 +75,11 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     foreach ($t in $mv.Terms) { Write-Host "terminal $($t.name) ($($t.address)) cwd $($t.cwd) — root cũ" }
     foreach ($sp in $mv.Spaces) { Write-Host "space $($sp.id) folder $($sp.folder) — root cũ" }
     # tasks.json trỏ root cũ ⇒ sửa trong bộ nhớ (chẩn đoán dưới dùng đường dẫn mới cho cả DryRun); chạy thật mới ghi file
-    $movedTasks = @()
+    $movedTasks = @(); $movedNames = @()
     foreach ($t in $tasks) {
       $nw = [string]$t.worktree
       foreach ($o in $mv.OldRoots) { $nw = Get-MovedPath $nw $o $root }
-      if ($nw -ne [string]$t.worktree) { $movedTasks += "$($t.name): $($t.worktree) -> $nw"; $t.worktree = $nw }
+      if ($nw -ne [string]$t.worktree) { $movedTasks += "$($t.name): $($t.worktree) -> $nw"; $movedNames += [string]$t.name; $t.worktree = $nw }
     }
   }
 
@@ -101,26 +101,21 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     # Pane đang chạy lệnh này: màn hình đang in nên không đọc dấu nhắc được; không bao giờ tính là terminal thiếu.
     if ($ti -and $env:HC_TERMINAL_ID -and $ti.address -ceq $env:HC_TERMINAL_ID) {
       $selfState = Get-SelfPaneState $ti
-      if ($selfState -in 'lost', 'unix-shell') {
+      if ($selfState -in 'lost', 'exited', 'unix-shell') {
         $r.Mode = 'self'; $r.Live = $true; $r.Self = $selfState; $selfRole = $r
         Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, 'pane hiện tại, shell trống')
         continue
       }
-      if ($selfState -eq 'exited') {
-        $r.Live = $true
-        Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, 'live, shell (agent đã thoát)')
-        continue
-      }
     }
-    # shell trống sau reboot ⇒ xử lý như terminal thiếu: crew up bật lại, task dở được giao lại ở dưới
+    # shell trống sau reboot hoặc agent thoát ⇒ xử lý như terminal thiếu: crew up bật lại, task dở được giao lại ở dưới
     if ($r.Mode -eq 'shell') {
       $shellState = Get-TermShellState $ti { & $ops.Read $r.Term }
-      if ($shellState -eq 'lost') { $r.Mode = 'lost' }
+      if ($shellState -in 'lost', 'exited') { $r.Mode = 'lost' }
       # crew bật pane này, màn hình chưa về dấu nhắc shell ⇒ agent chưa báo status, không phải đã thoát (crew up chạy lại ngay sau khi bật)
       elseif (-not $shellState -and @($ti.argv) -contains '-EncodedCommand') { $r.Mode = 'starting' }
     }
     $r.Live = $r.Mode -notin 'dead', 'lost'
-    $note = @{ dead = 'thiếu'; lost = 'shell trống sau reboot — bật lại'; agent = 'live, đúng agent'; starting = 'live, agent đang khởi động'; wrong = 'live, SAI agent'; shell = 'live, shell (agent đã thoát)'; blocked = 'live, chờ duyệt' }[$r.Mode]
+    $note = @{ dead = 'thiếu'; lost = 'shell trống — bật lại'; agent = 'live, đúng agent'; starting = 'live, agent đang khởi động'; wrong = 'live, SAI agent'; shell = 'live, shell (agent đã thoát)'; blocked = 'live, chờ duyệt' }[$r.Mode]
     Write-Host ("{0,-20} {1,-7} {2}" -f $r.Term, $r.Kind, $note)
   }
   # trùng tên với project khác ⇒ không sửa, không bật, không gửi gì
@@ -149,7 +144,10 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     }
     if ($movedTasks.Count) {
       & $will "tasks.json: worktree $($movedTasks -join '; ')"
-      if (-not $dry) { Save-Tasks $root $tasks }
+      if (-not $dry) {
+        $movedRecords = @($tasks | Where-Object { $_.name -in $movedNames })
+        Update-Tasks $root { param($current) foreach ($record in $movedRecords) { $existing = @($current | Where-Object { $_.name -eq $record.name }); if ($existing.Count) { foreach ($item in $existing) { $item.worktree = $record.worktree } } else { $current += $record } }; $current } | Out-Null
+      }
     }
     $key = Get-CrewIdKey $root $cfg
     & $will "sổ $(Get-ProjectsFile): $slug -> $root (giữ tên, idKey $key)"
@@ -323,6 +321,13 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
   foreach ($t in $tasks) {
     $role = $info[$t.name].Role
     if (-not $role -or -not $info[$t.name].HasBranch) { continue }
+    if ($role.Live -and $role.Mode -eq 'agent') {
+      $why = Get-WorkerInputError $role.Term (& $ops.Read $role.Term)
+      if ($why) {
+        $human.Add($(if ($dry) { "sẽ chặn: tin kẹt ở $($role.Term)" } else { $why }))
+        continue
+      }
+    }
     if ($role.Live) {
       switch ($role.Mode) {
         'blocked' { $human.Add("$($role.Term) (task $($t.name)) đang chờ duyệt — chủ dự án xử lý.") }
@@ -353,6 +358,8 @@ function Invoke-RepairCore([string]$root, $cfg, [string]$slug, [string]$main, [b
     }
     $why = Wait-WorkerReady $role.Term $role.Kind $ops
     if ($why) { $human.Add("$why — chưa giao lại task $($t.name), không bấm phím; sau đó: crew send $($role.Term) `"$line`""); continue }
+    $why = Get-WorkerInputError $role.Term (& $ops.Read $role.Term)
+    if ($why) { $human.Add($why); continue }
     $r = Invoke-SendFlow $role.Term $line $ops
     if ($r.Ok) { $done.Add("giao lại task $($t.name) -> $($role.Term)"); $sent += $t.name }
     else { $human.Add("giao lại task $($t.name) chưa xong: $($r.Message)") }

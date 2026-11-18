@@ -4,7 +4,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 # (đổi tên thư mục repo + worktree thật); hc/herdr giả tiêm qua $ops; sổ tên crew trong $TestDrive (HOME giả) — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
+$want = 'Get-WorkerInputError', 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Format-TaskFinished', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Get-MainRoot', 'Get-Config',
@@ -61,7 +61,7 @@ function New-MoveRepo([string]$base) {
   New-Item -ItemType Directory -Force (Join-Path $wt '.crew') | Out-Null
   'prompt' | Set-Content (Join-Path $wt '.crew/prompt.md')
   'x' | Set-Content (Join-Path $wt 'n.txt'); git -C $wt add -A; git -C $wt commit -q -m a
-  Save-Tasks $root @(New-TaskRecord 'a' 'crew/a' $wt 1 'app-w1' 'claude' '')
+  $legacy = New-TaskRecord 'a' 'crew/a' $wt 1 'app-w1' 'claude' ''; $legacy.PSObject.Properties.Remove('doneTracking'); Save-Tasks $root @($legacy)
   Register-CrewName 'app' $root 'app' | Should Be $true | Out-Null
   $root
 }
@@ -242,7 +242,7 @@ Describe 'crew repair: project đã chuyển thư mục (git thật, hc giả)' 
     $new = Move-Project $old
     $dryOps = New-MoveOps $new (Get-OldLive $old) @(New-Space 'spcrewapp' $old @('t1', 't2'))
     $dry = Invoke-RepairCore $new $Cfg 'app' 'main' $true $dryOps
-    (@($dry.Done) -join '|') | Should Match 'giao lại task a -> app-w1 nếu worktree bẩn'
+    (@($dry.Done) -join '|') | Should Match 'giao lại task a -> app-w1 nếu worktree bẩn|giao lại task a -> app-w1 nếu worktree sạch'
     @($dry.Finished).Count | Should Be 0
     $dryOps.State.Sent.Count | Should Be 0
     $ops = New-MoveOps $new (Get-OldLive $old) @(New-Space 'spcrewapp' $old @('t1', 't2'))
@@ -575,5 +575,25 @@ Describe 'Get-LiveTerminals phân biệt thành công rỗng với lỗi' {
       $err | Should Match $bad[$k]
       $err | Should Match 'exit 0'
     }
+  }
+}
+
+Describe 'Invoke-RepairCore: self exited' {
+  It 'trả self để crew up thay sau cùng; repair core không kill hoặc gửi task trong pane hiện tại' -Skip:($IsWindows -eq $false) {
+    $root = New-MoveRepo 'self-exited'
+    $live = @(Get-OldLive $root)
+    $live[0].status = $null
+    $live[0] | Add-Member argv @('pwsh', '-NoExit', '-EncodedCommand', 'x')
+    $ops = New-MoveOps $root $live @()
+    $savedSelf = $env:HC_TERMINAL_ID
+    try {
+      $env:HC_TERMINAL_ID = 't1'
+      $res = Invoke-RepairCore $root $Cfg 'app' 'main' $false $ops
+      $res.Self.Term | Should Be 'app-w1'
+      $res.Self.Self | Should Be 'exited'
+      $ops.State.Killed.Count | Should Be 0
+      $ops.State.Up | Should Be 0
+      $ops.State.Sent.Count | Should Be 0
+    } finally { $env:HC_TERMINAL_ID = $savedSelf }
   }
 }

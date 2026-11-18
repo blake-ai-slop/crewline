@@ -79,7 +79,8 @@ if (`$errors.Count) { exit 1 }
       if ($r.Code -ne 0) { Write-Host "$shell parse: $($r.Text)"; $state.parse = 'LỖI'; $failed = $true }
     }
   }
-  $tests = @($files | Where-Object { $_ -match '^tests/[^/]+\.Tests\.ps1$' -and (Test-Path -LiteralPath (Join-Path $worktree $_) -PathType Leaf) })
+  # Test của tools/ (không phát hành) cũng chạy khi được sửa; Test-Path bỏ qua khi thư mục không có.
+  $tests = @($files | Where-Object { $_ -match '^(tests|tools)/[^/]+\.Tests\.ps1$' -and (Test-Path -LiteralPath (Join-Path $worktree $_) -PathType Leaf) })
   if ($NoTest) { Write-Host 'bỏ qua test (-NoTest)' }
   elseif ($tests.Count) {
     $list = ($tests | ForEach-Object { "'" + (Join-Path $worktree $_).Replace("'", "''") + "'" }) -join ','

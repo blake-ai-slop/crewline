@@ -54,7 +54,7 @@ function Start-SelfPaneProcess($job) {
 # Đợi crew thoát rồi xác minh pane. Trả @{ Info; Why }: Why khác rỗng ⇒ giữ pane, không kill. Chỉ đọc.
 # Shim chạy crew ngay trong shell của pane nên pid cha có thể là chính shell (không bao giờ thoát): khi đó dấu nhắc trở lại là dấu hiệu crew đã xong.
 function Wait-SelfPaneShell($job, $ops, [int]$tries = 120, [int]$settleMs = 3000) {
-  $want = if ($job.restart) { 'lost', 'exited' } else { , 'lost' }
+  $want = 'lost', 'exited'
   $check = {
     param($info)
     if (-not $info) { return 'không đọc được terminal' }
@@ -329,6 +329,56 @@ function Invoke-UpChild([string]$root, [bool]$dry) {
   @{ Code = [int]$code; Text = ($lines -join "`n"); SelfJob = $selfJob }
 }
 
+# Chỉ quản lý cây pwsh của project; hc server và terminal do server bật nằm ngoài cây này.
+function Invoke-UpAllTimedChild([string]$root, [bool]$dry, [int]$seconds) {
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  $proc = [Diagnostics.Process]::new()
+  $info = [Diagnostics.ProcessStartInfo]::new()
+  $exe = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $info.FileName = if ($exe) { $exe.Source } else { (Get-Process -Id $PID).Path }
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.StandardOutputEncoding = $info.StandardErrorEncoding = [Text.Encoding]::UTF8
+  foreach ($arg in @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $CrewScriptPath, 'up', '-Path', $root)) { $info.ArgumentList.Add($arg) }
+  if ($dry) { $info.ArgumentList.Add('-DryRun') }
+  $info.Environment['CREWLINE_UP_ALL_CHILD'] = '1'
+  $proc.StartInfo = $info
+  $code = 1; $expired = $false; $selfJob = $null; $started = $false
+  $lines = [Collections.Generic.List[string]]::new()
+  try {
+    $started = $proc.Start()
+    # Đọc cả hai pipe bất đồng bộ: output lớn không làm con kẹt trước timeout.
+    $stdout = $proc.StandardOutput.ReadToEndAsync()
+    $stderr = $proc.StandardError.ReadToEndAsync()
+    while (-not ($proc.HasExited -and $stdout.IsCompleted -and $stderr.IsCompleted)) {
+      if ($seconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $seconds) {
+        $expired = $true
+        if (-not $proc.HasExited) { $proc.Kill($true) }
+        break
+      }
+      Start-Sleep -Milliseconds 50
+    }
+    if (-not $expired) { $code = $proc.ExitCode }
+    $marker = Get-SelfPaneMarker
+    foreach ($read in @($stdout, $stderr)) {
+      if (-not $read.IsCompleted) { continue }
+      foreach ($raw in ($read.GetAwaiter().GetResult() -split '\r?\n')) {
+        $line = $raw -replace "\x1b\[[0-9;]*m", ''
+        if ($line.StartsWith($marker)) {
+          $selfJob = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line.Substring($marker.Length))) | ConvertFrom-Json -AsHashtable
+        } elseif ($line) { $lines.Add($line); Write-Host "  $line" }
+      }
+    }
+  } catch {
+    $lines.Add("lỗi tiến trình project: $($_.Exception.Message)")
+    Write-Host "  $($lines[$lines.Count - 1])"
+    if ($started -and -not $proc.HasExited) { $proc.Kill($true) }
+  } finally { $proc.Dispose(); $clock.Stop() }
+  @{ Code = $code; Text = ($lines -join "`n"); SelfJob = $selfJob; Expired = $expired; Seconds = $clock.Elapsed.TotalSeconds }
+}
+
 function Invoke-UpAll {
   $reg = Read-ProjectRegistry
   if (-not $reg.Ok) { Die "$($reg.Error) — không khôi phục, không ghi đè sổ. Sửa hoặc xóa file đó rồi chạy lại." }
@@ -341,17 +391,23 @@ function Invoke-UpAll {
   if ($noIdentity.Count) { Confirm-GitIdentity $noIdentity[0].Root $false ([bool]$DryRun) }
   $selfJob = $null
   $rows = @(foreach ($p in $plan) {
-      if ($p.Skip) { @{ Name = $p.Name; Root = $p.Root; Result = 'bỏ qua'; Note = $p.Skip }; continue }
+      if ($p.Skip) { @{ Name = $p.Name; Root = $p.Root; Result = 'bỏ qua'; Note = $p.Skip; Seconds = 0 }; continue }
       Write-Host "== $($p.Name) ($($p.Root))"
-      $r = Invoke-UpChild $p.Root ([bool]$DryRun)
+      $r = Invoke-UpAllTimedChild $p.Root ([bool]$DryRun) $Timeout
       if ($r.SelfJob) { $selfJob = $r.SelfJob }
-      $result = Get-UpChildResult $r.Code $r.Text
-      $note = if ($result -eq 'lỗi') { "exit $($r.Code), xem output ở trên" } else { '' }
-      @{ Name = $p.Name; Root = $p.Root; Result = $result; Note = $note }
+      $result = if ($r.Expired) { 'hết giờ' } elseif ($r.Code -eq 0) { 'ok' } else { "lỗi mã $($r.Code)" }
+      if ($r.Expired) { Write-Host "hết giờ: $($p.Name)" }
+      $note = if (-not $r.Expired -and (Get-UpChildResult $r.Code $r.Text) -eq 'cần người quyết') { 'cần người quyết' } else { '' }
+      @{ Name = $p.Name; Root = $p.Root; Result = $result; Note = $note; Seconds = $r.Seconds }
     })
   Write-Host "== tổng kết crew up -All$(if ($DryRun) { ' (DryRun: không ghi, không bật, không gửi)' })"
-  Format-UpAllSummary $rows | ForEach-Object { Write-Host "  $_" }
+  # Giữ hàm định dạng cũ cho các caller khác, thêm cột thời gian ở đây.
+  $summary = @(Format-UpAllSummary $rows)
+  Write-Host "$($summary[0])  thời gian"
+  for ($i = 0; $i -lt $rows.Count; $i++) {
+    Write-Host ("  {0}  {1:0.00}s" -f $summary[$i + 1], $rows[$i].Seconds)
+  }
   if ($selfJob) { Invoke-SelfPaneHandoff $selfJob }
-  if (@($rows | Where-Object { $_.Result -in 'lỗi', 'cần người quyết' }).Count) { exit 1 }
+  if (@($rows | Where-Object { $_.Result -ne 'ok' }).Count) { exit 1 }
   exit 0
 }

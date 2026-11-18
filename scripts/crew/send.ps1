@@ -70,18 +70,23 @@ function Test-SentInput([string[]]$lines, [string]$text, [bool]$bare = $false) {
 
 # Ô nhập đúng và chỉ có tin vừa gửi (Test-SentInput) ⇒ Tab 1 lần để vào hàng đợi thật của Codex: Tab gửi cả ô, nên chữ thêm, chữ sửa, bản nháp cùng đầu tin ⇒ không bấm.
 # Đọc lại màn hình + trạng thái ngay trước phím; không live, không phải Codex, hết working, blocked, hộp thoại ⇒ không bấm.
+# Tin dài gói nhiều dòng và có dòng trống cuối ô (Enter bị đổi thành xuống dòng) vẫn nhận qua Get-InputBox; khối queued phía trên không ảnh hưởng.
 function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $false) {
   $unsure = @{ Ok = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin có thể nằm lại ô nhập, xem crew hot" }
   if (-not $ops.Read -or -not $ops.Tab) { return $unsure }
-  & $ops.Sleep 700
-  $screen = & $ops.Read $term
-  $info = & $ops.Get $term
-  $st = Get-TermStatus $info
-  if (-not $info -or $info.state -ne 'live' -or $st.App -ne 'codex' -or $st.State -ne 'working' -or (Get-ScreenDialog $screen)) { return $unsure }
-  $box = Get-InputBox $screen
-  if (-not $box -or $box.Kind -ne 'codex') { return $unsure }
-  if (-not $box.Text) { return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: Codex đang bận đã nhận tin khỏi ô nhập (xem: crew hot)" } }
-  if (-not (Test-SentInput $box.Lines $text $bare)) { return $unsure }
+  # tin dài: TUI có thể chưa vẽ xong ô nhập ở lần đọc đầu ⇒ đọc lại tối đa 3 lần; MỖI lần kiểm lại trạng thái + hộp thoại, Tab ngay sau lần đọc khớp
+  $match = $false
+  for ($k = 0; $k -lt 3 -and -not $match; $k++) {
+    & $ops.Sleep $(if ($k) { 500 } else { 700 })
+    $screen = & $ops.Read $term
+    $info = & $ops.Get $term
+    $st = Get-TermStatus $info
+    if (-not $info -or $info.state -ne 'live' -or $st.App -ne 'codex' -or $st.State -ne 'working' -or (Get-ScreenDialog $screen)) { return $unsure }
+    $box = Get-InputBox $screen
+    if ($box -and $box.Kind -eq 'codex' -and -not $box.Text) { return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: Codex đang bận đã nhận tin khỏi ô nhập (xem: crew hot)" } }
+    $match = $box -and $box.Kind -eq 'codex' -and (Test-SentInput $box.Lines $text $bare)
+  }
+  if (-not $match) { return $unsure }
   & $ops.Tab $term
   for ($i = 0; $i -lt 3; $i++) {
     & $ops.Sleep 500
@@ -125,8 +130,18 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
           if ($s.App -eq 'codex') { return Send-CodexQueue $term $text $ops $bare }
           return @{ Ok = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin nằm chờ, agent đọc khi xong lượt (xem: crew hot)" }
         }
+        # Codex không chạy lượt mà ô nhập còn chữ ⇒ tin chưa đi (vd. phiên chưa sẵn sàng nuốt mất đầu tin): báo kẹt, không Enter
+        if (-not $session -and -not $busy -and $s.App -eq 'codex' -and $s.State -ne 'working' -and $ops.Read) {
+          $left = Get-InputBox (& $ops.Read $term)
+          if ($left -and $left.Kind -eq 'codex' -and $left.Text) { $seen.Text = $left.Text; return & $verdict 'stuck' $info }
+        }
         return @{ Ok = $true; Message = "đã gửi -> $term ($(if ($s.App) { $s.State } else { 'shell' }))" }
       }
+      'stuck' {
+        $shown = if ($seen.Text.Length -gt 200) { $seen.Text.Substring(0, 200) + '…' } else { $seen.Text }
+        return & $fail "đã gửi tới $term nhưng ô nhập Codex còn chữ khác tin vừa gửi: $shown — không bấm Enter. Xử lý: sang pane $term, xóa chữ (hoặc Enter nếu đúng), rồi gửi lại."
+      }
+      'nobox' { return & $fail "đã gửi tới $term nhưng không nhận ra ô nhập Codex để kiểm tin — không bấm Enter; xem: hc read $term --lines 20" }
       'dead' { return & $fail "terminal $term tắt sau khi gửi." }
       'blocked' { return & $fail "đã gửi tới $term nhưng nó đang chờ duyệt — chủ dự án xử lý (không bấm Enter)." }
       'dialog' { return & $fail "$term đang hiện một hộp thoại lạ sau '$text' — không bấm phím; xem: hc read $term --lines 20" }
@@ -136,12 +151,23 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   # kế hoạch sau gửi; chế độ phiên mới: 'ok' chỉ khi phiên mới sẵn sàng, agent đang chạy ⇒ 'wait' (không Enter);
   # màn hình đọc lại mỗi lần, hộp thoại xét TRƯỚC mọi kiểm sẵn sàng: hộp lạ ⇒ 'dialog' (dừng, 0 Enter);
   # hộp chọn Codex /new ⇒ 'pick' (1 lần, sau đó 'wait'). Tin thường: chỉ đọc màn hình ngay trước Enter (có $ops.Read).
+  # Codex (tin thường): chỉ Enter khi ô nhập có ĐÚNG tin vừa gửi (Test-SentInput); chữ khác ⇒ 'stuck', ô trống ⇒ 'wait', không nhận ra ô ⇒ 'nobox'.
   $picked = 0
+  $seen = @{ Text = '' }
   $judge = {
     param($info)
     $plan = Get-SendPlan $info $result $turn
     if (-not $session) {
-      if ($plan -eq 'press-enter' -and $ops.Read -and (Get-ScreenDialog (& $ops.Read $term))) { return 'dialog' }
+      if ($plan -eq 'press-enter' -and $ops.Read) {
+        $screen = & $ops.Read $term
+        if (Get-ScreenDialog $screen) { return 'dialog' }
+        if ((Get-TermStatus $info).App -eq 'codex') {
+          $box = Get-InputBox $screen
+          if (-not $box -or $box.Kind -ne 'codex') { return 'nobox' }
+          if (-not $box.Text) { return 'wait' }
+          if (-not (Test-SentInput $box.Lines $text $bare)) { $seen.Text = $box.Text; return 'stuck' }
+        }
+      }
       return $plan
     }
     if ($plan -notin 'ok', 'press-enter') { return $plan }
@@ -180,9 +206,18 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   & $fail "đã gửi tới $term nhưng agent chưa chạy (vẫn $((Get-TermStatus $info).State)); xem: hc read $term --lines 20"
 }
 
-# Gửi tin tới terminal, dùng chung cho crew send/review. Lỗi ⇒ Die (exit 1). Agent bận ⇒ in báo tin nằm chờ (exit 0).
-# $root khác rỗng ⇒ terminal live phải thuộc project đó (Get-ForeignTermError), sai chủ ⇒ Die trước khi gửi.
-# $ops: bảng hc (test tiêm bảng giả); $null ⇒ New-HcOps.
+# Task/repair không được xóa bản nháp khi reset phiên; kiểm ô nhập thật của cả Claude và Codex.
+# hc không phân biệt được chữ gợi ý mờ của Claude: giữ ô có chữ để người dùng xử lý trong pane.
+function Get-WorkerInputError([string]$term, [string]$screen) {
+  if (Get-ScreenDialog $screen) { return '' }
+  $box = Get-InputBox $screen
+  if (-not $box -or -not $box.Text) { return '' }
+  $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
+  "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+}
+
+# Gửi tin tới terminal, dùng chung cho crew send/review. Lỗi ⇒ Die (exit 1). Agent bận ⇒ báo tin nằm chờ (exit 0).
+# $root khác rỗng ⇒ kiểm chủ project; $ops = $null ⇒ New-HcOps.
 function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '', $ops = $null) {
   if (-not $ops) { $ops = New-HcOps }
   if ($root) {
@@ -190,15 +225,31 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
     if ($why) { Die "$why Không gửi." }
   }
   # tin cũ còn ở ô nhập: gửi nữa sẽ dính vào nó, Enter sẽ gửi cả hai ⇒ để người quyết
+  # Codex rảnh: chỉ gửi khi màn hình có ô nhập thật và không có hộp thoại (vừa /new: hộp chọn worktree hoặc phiên chưa vẽ xong
+  # ⇒ phím gõ vào hộp, '1' trong '<hc from="t1…' chọn hộ dòng 1). Chờ tối đa ~10s, vẫn chưa ⇒ Die, không gửi.
   $st = Get-TermStatus (& $ops.Get $term)
-  if ($ops.Read -and $st.App -eq 'codex' -and $st.State -in 'idle', 'done') {
-    $stuck = Get-StuckText $st.App $st.State (& $ops.Read $term)
-    if ($stuck) {
-      $shown = if ($stuck.Length -gt 200) { $stuck.Substring(0, 200) + '…' } else { $stuck }
-      Die "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+  for ($w = 0; $ops.Read -and $st.App -eq 'codex' -and $st.State -in 'idle', 'done'; $w++) {
+    $screen = & $ops.Read $term
+    $dlg = Get-ScreenDialog $screen
+    $box = Get-InputBox $screen
+    if (-not $dlg -and $box -and $box.Kind -eq 'codex') {
+      if ($box.Text) {
+        $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
+        Die "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+      }
+      break
     }
+    if ($w -ge 5) {
+      $why = if ($dlg -eq 'codex-new') { "đang mở hộp chọn của /new" } elseif ($dlg) { 'đang hiện hộp thoại' } else { 'chưa hiện ô nhập sẵn sàng' }
+      Die "$term $why, chưa gửi (không bấm phím); xem: hc read $term --lines 20"
+    }
+    & $ops.Sleep 2000
+    $st = Get-TermStatus (& $ops.Get $term)
   }
-  $r = Invoke-SendFlow $term $text $ops '' 6 $raw
+  # /new tới Codex, /clear tới Claude: chờ phiên mới như crew task (Test-SessionReady).
+  $session = if ($st.App -eq 'codex' -and $text.Trim() -ceq '/new') { 'codex' }
+    elseif ($st.App -in 'claude', 'claude-code' -and $text.Trim() -ceq '/clear') { 'claude' } else { '' }
+  $r = Invoke-SendFlow $term $text $ops $session $(if ($session) { 10 } else { 6 }) $raw
   if (-not $r.Ok) { Die $r.Message }
   Say $r.Message
 }
@@ -212,9 +263,37 @@ function Invoke-Send {
     if ($Name -like "$(Get-CrewName $root (Get-Config $root))-*") { $guard = $root }
     if ($guard) { try { $mv = Get-MoveInfo $root (Get-Config $root) } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint } }
   }
+  # Chụp người gửi trước khi gửi (-Raw tạm xóa biến HC); không tin tên terminal từ nội dung tin.
+  $sender = if ($root -and $env:HC_TERMINAL_ID) { Get-TermInfo $env:HC_TERMINAL_ID } else { $null }
   Send-CrewMessage $Name $PromptFile $Raw.IsPresent $guard
+  # Chỉ cập nhật sau khi luồng gửi xác nhận thành công; lỗi gửi không đổi task.
+  if ($root -and (Test-Path -LiteralPath (Join-Path $root '.crew/config.json')) -and
+      $sender -and $sender.state -eq 'live' -and $sender.address -ceq $env:HC_TERMINAL_ID) {
+    Update-TaskDone $root $sender.name $Name $PromptFile $Raw.IsPresent (Get-CrewName $root (Get-Config $root))
+  }
 }
 
+# Chỉ crew send đổi tín hiệu worker xong; review dùng reviewSentAt riêng.
+function Update-TaskDone([string]$root, [string]$sender, [string]$target, [string]$text, [bool]$raw, [string]$slug) {
+  if (-not $sender) { return }
+  $done = $text -match '^XONG'
+  $reopen = $sender -ceq "$slug-planner" -and -not $raw -and $text -notmatch '^/'
+  if (-not $done -and -not $reopen) { return }
+  $current = Get-Tasks $root
+  $candidate = @($current | Where-Object { ($done -and $_.terminal -and $sender -ceq $_.terminal) -or ($reopen -and $_.terminal -and $target -ceq $_.terminal -and $_.doneAt) })
+  if (-not $candidate.Count) { return }
+  Update-Tasks $root { param($tasks)
+    foreach ($t in $tasks) {
+      if ($done -and $t.terminal -and $sender -ceq $t.terminal) {
+        $t | Add-Member -NotePropertyName doneAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+      }
+      elseif ($reopen -and $t.terminal -and $target -ceq $t.terminal -and $t.doneAt) {
+        $t.PSObject.Properties.Remove('doneAt')
+      }
+    }
+    $tasks
+  } | Out-Null
+}
 # Repo chính, kể cả khi gọi từ trong worktree: thư mục cha của git common dir.
 function Get-MainRoot([string]$p) {
   $r = Invoke-GitQuiet -C $p rev-parse --path-format=absolute --git-common-dir
@@ -287,5 +366,5 @@ function Invoke-Review {
   for ($i = 0; $i -lt $sel.Count; $i++) {
     $sel[$i] | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $now.AddMilliseconds($i).ToString('o') -Force
   }
-  Save-Tasks $root $tasks
+  Update-Tasks $root { param($current) foreach ($item in $sel) { $found = $current | Where-Object { $_.name -eq $item.name }; if ($found) { $found | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $item.reviewSentAt -Force } }; $current } | Out-Null
 }

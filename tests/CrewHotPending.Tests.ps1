@@ -117,6 +117,59 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
       }
     }
   }
+  It 'fixture nền Codex v0.166/Claude v2.1 thay done và idle, chỉ đọc một lần' {
+    foreach ($fixture in 'codex-v0.166/background-running.txt', 'codex-v0.166/background-waiting.txt', 'claude-v2.1/background-running.txt') {
+      $app = if ($fixture -like 'codex*') { 'codex' } else { 'claude-code' }
+      $script:BackgroundApp = $app
+      function Get-LiveTerminals { [pscustomobject]@{name='demo-w1'; state='live'; status=@{app=$script:BackgroundApp; state=$script:BackgroundState}; agent=$script:BackgroundApp} }
+      $screen = Get-Content (Join-Path $PSScriptRoot "fixtures/$fixture") -Raw -Encoding UTF8
+      foreach ($state in 'done', 'idle', 'working') {
+        $script:BackgroundState = $state
+        $script:PendingReads = @{}
+        $script:PendingScreens['demo-w1'] = $screen
+        $out = Invoke-Hot 6>&1 | Out-String
+        $out | Should Match 'demo-w1\s+working \(nền\)'
+        $out | Should Not Match 'tin kẹt'
+        $script:PendingReads['demo-w1'] | Should Be 1
+      }
+    }
+    $script:PendingSend | Should Be 0
+    $script:PendingKeys | Should Be 0
+  }
+  It 'Claude footer 1 shell vẫn là nền, số 0 và blocked không đổi trạng thái' {
+    function Get-LiveTerminals { [pscustomobject]@{name='demo-w1'; state='live'; status='done'; agent='claude-code'} }
+    $script:PendingScreens['demo-w1'] = $ClaudeQueued.Replace('Press up to edit queued messages', '')
+    (Invoke-Hot 6>&1 | Out-String) | Should Match 'working \(nền\)'
+    $script:PendingScreens['demo-w1'] = $script:PendingScreens['demo-w1'].Replace('1 shell', '0 shells')
+    (Invoke-Hot 6>&1 | Out-String) | Should Not Match 'working \(nền\)'
+    $script:PendingScreens['demo-w1'] = '• Working · 1 background terminal running · /ps to view'
+    function Get-LiveTerminals { [pscustomobject]@{name='demo-w1'; state='live'; status='blocked'; agent='codex'} }
+    (Invoke-Hot 6>&1 | Out-String) | Should Not Match 'working \(nền\)'
+  }
+  It 'không marker UI còn chạy thì giữ done/idle, không lấy lời kể hoặc số 0' {
+    function Get-LiveTerminals { [pscustomobject]@{name='demo-w1'; state='live'; status='done'; agent='codex'} }
+    foreach ($screen in $CodexEmpty, "• Ran tests: 1 background terminal running`n$CodexEmpty", "• Working · 0 background terminals running · /ps to view`n$CodexEmpty") {
+      $script:PendingScreens['demo-w1'] = $screen
+      $out = Invoke-Hot 6>&1 | Out-String
+      $out | Should Match 'demo-w1\s+done'
+      $out | Should Not Match 'working \(nền\)'
+    }
+  }
+  It 'nhãn xong của task mới cần doneAt và sạch; task cũ vẫn đoán theo commit và note' {
+    $script:HotTask = [pscustomobject]@{ name='a'; worker=1; agent='claude'; branch='crew/a'; worktree=$TestDrive; doneTracking=$true }
+    $script:HotClean = $true
+    function Get-Tasks { ,@($script:HotTask) }
+    function Get-TaskGitFacts { @{ Ahead=1; HasNote=$true; Clean=$script:HotClean } }
+    (Invoke-Hot 6>&1 | Out-String) | Should Not Match 'đã xong, chờ planner'
+    $script:HotTask | Add-Member NoteProperty doneAt '2026-11-18T00:00:00Z'
+    (Invoke-Hot 6>&1 | Out-String) | Should Match 'đã xong, chờ planner'
+    $script:HotClean = $false
+    (Invoke-Hot 6>&1 | Out-String) | Should Not Match 'đã xong, chờ planner'
+    $script:HotClean = $true
+    $script:HotTask.PSObject.Properties.Remove('doneAt')
+    $script:HotTask.PSObject.Properties.Remove('doneTracking')
+    (Invoke-Hot 6>&1 | Out-String) | Should Match 'đã xong, chờ planner'
+  }
   It 'pane sai config cảnh báo đúng vai, vẫn đọc một lần và không gửi phím' {
     function Get-Config { @{ workers=@('codex','claude','claude','codex'); planner='none'; rev='none'; review='lean'; access='wide' } }
     function Get-LiveTerminals {
@@ -136,7 +189,7 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
   }
   It 'hiện cột và cảnh báo hai hàng đợi, không báo gợi ý' {
     $out = Invoke-Hot 6>&1 | Out-String
-    $out | Should Match 'demo-w1\s+tin chờ'
+    $out | Should Match 'demo-w1\s+working \(nền\)'
     $out | Should Match 'demo-w2\s+tin chờ'
     $out | Should Match 'demo-w1: có tin chờ, agent đọc khi xong lượt'
     $out | Should Match 'demo-w2: có tin chờ, agent đọc khi xong lượt'
@@ -159,6 +212,7 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
     $out | Should Match 'demo-w1: tin kẹt ở ô nhập — sang pane demo-w1: Enter để gửi hoặc xóa chữ'
   }
   It 'plumbing stuck hiện đúng cột và cảnh báo khi bộ nhận diện trả stuck' {
+    $script:PendingScreens['demo-w1'] = $ClaudeQueued.Replace(' · 1 shell', '')
     function Get-PendingInput($app, $state, $screen) { if ($app -eq 'claude-code') { 'stuck' } else { '' } }
     $out = Invoke-Hot 6>&1 | Out-String
     $out | Should Match 'demo-w1\s+tin kẹt'

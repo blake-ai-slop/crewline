@@ -1,0 +1,14 @@
+﻿• Working (3m 41s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+
+• Queued follow-up inputs
+  ↳ <hc from="t1h crewline-planner">Rev Gọn: merge crew/queue-p2 (0ab8962). Đọc context/tasks/queue-p2.md. Full test, crew…
+    shift+← edit last queued message
+
+› <hc from="t1h crewline-planner">Rev Gọn: merge crew/codex-queue-wrap (f1b2b51) rồi crew/small-win (e867d4f) (đúng thứ tự
+  này). Đọc context/tasks/codex-queue-wrap.md, context/tasks/small-win.md của từng task. Full test, crew clean codex-
+  queue-wrap, crew clean small-win, báo planner. Không push.</hc>
+
+
+  GPT-6.1-Sol medium · ~\Crewline · Đọc vai trò rev và chờ giao việc · Context 58% left · 5h 41% left · weekly 12% left
+  tab to queue message                                                                                ⚠ 3 warnings · f2 to view
+[hc] only its screen: it is working; read again once it stops for its history

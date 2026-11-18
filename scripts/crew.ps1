@@ -35,6 +35,7 @@ param(
   [switch]$Force,
   [switch]$Raw,
   [switch]$All,
+  [ValidateRange(0, 2147483647)][int]$Timeout = 300,
   [switch]$NoTest,
   [switch]$Strict,
   [string]$After,

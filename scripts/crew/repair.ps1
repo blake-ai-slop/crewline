@@ -30,9 +30,12 @@ function Get-TaskGitFacts([string]$root, $t, [string]$main) {
   $f
 }
 
-# Worker xong thì commit cả task note và để worktree sạch (roles/worker.md). Áp dụng cả task đã giao Rev: việc của Rev giao lại riêng qua Get-PendingReview.
-# Task đã giao Rev được phép hết commit mới so với main, vì Rev có thể đã merge mà chưa crew clean. Hàm thuần.
+# Bản ghi mới cần tín hiệu XONG hoặc đã giao Rev và worktree sạch.
+# Bản ghi cũ chưa có doneTracking giữ cách đoán commit + note để tương thích. Hàm thuần.
 function Test-TaskFinished($t, $facts) {
+  if ($t.doneTracking -eq $true -or $t.doneAt) {
+    return ([bool]$t.doneAt -or [bool]$t.reviewSentAt) -and $facts.Clean -eq $true
+  }
   ([int]$facts.Ahead -ge 1 -or [bool]$t.reviewSentAt) -and $facts.Clean -eq $true -and [bool]$facts.HasNote
 }
 

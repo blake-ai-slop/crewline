@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 # Test crew repair: trích hàm bằng AST từ crew.ps1, repo git tạm trong $TestDrive, hc giả tiêm qua $ops (Get/Send/Keys/Read/Sleep/Up) — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
+$want = 'Get-WorkerInputError', 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Format-DirtyFiles',
   'Test-KeepTask', 'New-TaskRecord', 'Get-WorktreeMeta', 'Get-ResumeLine', 'Get-TreeState', 'Wait-WorkerReady', 'Get-ResumeCheck', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Format-TaskFinished', 'Invoke-RepairCore',
   'Get-ReviewLevel', 'Format-ReviewMessage', 'Get-ReviewLine', 'Get-MainOp', 'Get-PendingReview', 'Get-RevGuard', 'Invoke-Review', 'Get-MainRoot', 'Get-Config', 'Get-Slug', 'Get-LegacySlug', 'Test-CrewName', 'Get-CrewName',
@@ -53,7 +53,10 @@ function Add-Task([string]$root, [string]$name, [int]$n) {
   New-Item -ItemType Directory -Force (Join-Path $wt '.crew') | Out-Null
   'prompt' | Set-Content (Join-Path $wt '.crew/prompt.md')
   $tasks = Get-Tasks $root
-  Save-Tasks $root (@($tasks) + (New-TaskRecord $name "crew/$name" $wt $n "x-w$n" 'claude' ''))
+  # Fixture mặc định là bản ghi cũ; các ca doneTracking thêm cờ riêng.
+  $record = New-TaskRecord $name "crew/$name" $wt $n "x-w$n" 'claude' ''
+  $record.PSObject.Properties.Remove('doneTracking')
+  Save-Tasks $root (@($tasks) + $record)
 }
 
 # hc giả: $terms = tên -> info ($null = thiếu); Up bật mọi terminal thiếu thành $upInfo.
@@ -422,7 +425,7 @@ Describe 'crew repair: Rev bị đóng giữa review (hc giả)' {
     @($res.Human).Count | Should Be 0
   }
 
-  It '-DryRun: Rev thiếu + task chờ review + merge dở -> (sẽ làm) giao lại review, 0 Send/Keys/Up/Read' {
+  It '-DryRun: Rev thiếu + task chờ review + merge dở -> (sẽ làm) giao lại review, 0 Send/Keys/Up, đọc ô nhập worker' {
     $root = New-RepairRepo
     Add-Task $root 'a' 1; Add-Task $root 'b' 2
     New-MergeConflict $root
@@ -435,7 +438,7 @@ Describe 'crew repair: Rev bị đóng giữa review (hc giả)' {
     $ops.State.Up | Should Be 0
     $ops.State.Sent.Count | Should Be 0
     $ops.State.Keys | Should Be 0
-    $ops.State.Ri | Should Be 0
+    $ops.State.Ri | Should Be 2
     (git -C $root rev-parse HEAD).Trim() | Should Be $head
     Test-Path (Join-Path $root '.git/MERGE_HEAD') | Should Be $true
     $script:HcCalls | Should Be 0
@@ -715,5 +718,83 @@ Describe 'crew review ghi reviewSentAt' {
     try { Invoke-Review } finally { Pop-Location }
     $script:ReviewSent.Count | Should Be 0
     @((Get-Tasks $root) | ForEach-Object { $_ } | Where-Object { $_.reviewSentAt }).Count | Should Be 0
+  }
+}
+
+
+Describe 'doneTracking: task mới chỉ xong khi có tín hiệu và sạch' {
+  It 'commit note sạch chưa báo XONG (L4) vẫn tiếp tục; doneAt hoặc reviewSentAt thì không' {
+    foreach ($signal in '', 'doneAt', 'reviewSentAt') {
+      $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+      $tasks = Get-Tasks $root
+      $tasks[0] | Add-Member NoteProperty doneTracking $true
+      if ($signal) { $tasks[0] | Add-Member NoteProperty $signal '2026-11-18T00:00:00Z' }
+      Save-Tasks $root $tasks
+      $dryOps = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+      $dry = Invoke-Rep $root $dryOps $true
+      $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) }
+      $res = Invoke-Rep $root $ops
+      if ($signal) {
+        $ops.State.Sent.Count | Should Be 0
+        @($res.Finished).Count | Should Be 1
+        @($dry.Finished).Count | Should Be 1
+      } else {
+        $ops.State.Sent.Count | Should Be 1
+        $ops.State.Sent[0] | Should Be (Get-ResumeLine 'a' (Get-WorkerTree $root 1) 'crew/a')
+        @($res.Finished).Count | Should Be 0
+        ($dry.Done -join '|') | Should Match 'giao lại task a'
+      }
+    }
+  }
+  It 'quy tắc mới không đòi commit/note, vẫn bắt buộc sạch và biết trạng thái' {
+    $t = [pscustomobject]@{ doneTracking = $true }
+    Test-TaskFinished $t @{ Ahead = 5; Clean = $true; HasNote = $true } | Should Be $false
+    foreach ($signal in 'doneAt', 'reviewSentAt') {
+      $t = [pscustomobject]@{ doneTracking = $true; $signal = '2026-11-18T00:00:00Z' }
+      Test-TaskFinished $t @{ Ahead = 0; Clean = $true; HasNote = $false } | Should Be $true
+      foreach ($clean in $false, $null) { Test-TaskFinished $t @{ Clean = $clean } | Should Be $false }
+    }
+  }
+  It 'shell mất sau reboot + commit note sạch chưa XONG vẫn nhận Tiếp tục' -Skip:($IsWindows -eq $false) {
+    $root = New-RepairRepo; Add-Task $root 'a' 1; Set-TaskDone $root 'a' 1
+    $tasks = Get-Tasks $root; $tasks[0] | Add-Member NoteProperty doneTracking $true; Save-Tasks $root $tasks
+    $lost = [pscustomobject]@{ name = 'x-w1'; state = 'live'; address = 't7'; status = $null; turn = 0; cwd = (Get-WorkerTree $root 1); argv = @('pwsh.exe', '-NoExit', '-Command', '$global:__hc_prompt = $function:prompt; function global:prompt { }') }
+    $ops = New-FakeOps @{ 'x-w1' = $lost; 'x-w2' = (New-Info) } @('PS C:\repo> ', '')
+    $st = $ops.State; $fresh = New-Info
+    $ops.Up = { $st.Up++; $st.Terms['x-w1'] = $fresh }.GetNewClosure()
+    $res = Invoke-Rep $root $ops
+    $st.Up | Should Be 1
+    $st.Sent.Count | Should Be 1
+    $st.Sent[0] | Should Match 'Tiếp tục task a'
+  }
+}
+
+Describe 'repair chặn tin kẹt' {
+  It 'Claude/Codex live có bản nháp: chạy thật và DryRun chặn, 0 send/keys' {
+    foreach ($kind in 'claude', 'codex') {
+      foreach ($dry in $false, $true) {
+        $root = New-RepairRepo
+        Add-Task $root 'a' 1
+        $screen = if ($kind -eq 'claude') { "────────────────────────────`n❯ tin chưa gửi`n────────────────────────────`n  bypass permissions on" }
+          else { "› tin chưa gửi`n`n  GPT-6 · Context 62% left" }
+        $app = if ($kind -eq 'claude') { 'claude-code' } else { 'codex' }
+        $cfgStuck = [pscustomobject]@{ planner = 'none'; workers = @($kind, 'claude'); rev = 'none'; access = 'work' }
+        $ops = New-FakeOps @{ 'x-w1' = (New-Info 'idle' $app); 'x-w2' = (New-Info) } @($screen)
+        $res = Invoke-RepairCore $root $cfgStuck 'x' 'main' $dry $ops
+        ($res.Human -join '|') | Should Match $(if ($dry) { 'sẽ chặn: tin kẹt ở x-w1' } else { 'Xử lý: sang pane x-w1' })
+        $ops.State.Sent.Count | Should Be 0
+        $ops.State.Keys | Should Be 0
+      }
+    }
+  }
+  It 'worker vừa bật lại có chữ: không gửi prompt và không bấm phím' {
+    $root = New-RepairRepo
+    Add-Task $root 'a' 1
+    $screen = "────────────────────────────`n❯ tin chưa gửi`n────────────────────────────`n  bypass permissions on"
+    $ops = New-FakeOps @{ 'x-w1' = $null; 'x-w2' = (New-Info) } @($screen)
+    $res = Invoke-Rep $root $ops
+    ($res.Human -join '|') | Should Match 'tin kẹt'
+    $ops.State.Sent.Count | Should Be 0
+    $ops.State.Keys | Should Be 0
   }
 }

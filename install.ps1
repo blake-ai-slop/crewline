@@ -49,7 +49,9 @@ if (`$PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host 'crew: LOI: crew can PowerShell 7 (pwsh). Cai tu https://aka.ms/powershell (hoac: winget install Microsoft.PowerShell), mo terminal moi roi chay lai.' -ForegroundColor Red
     exit 1
   }
-  try { & `$pwshCmd.Source -NoLogo -NoProfile -File '$crewQ' @args }
+  # pwsh -File nhan chuoi: mang (crew review a,b,c) phai noi lai bang dau phay, khong thi bung thanh doi so roi.
+  `$crewArgs = @(foreach (`$a in `$args) { if (`$a -is [array]) { (@(`$a) | ForEach-Object { "`$_" }) -join ',' } else { `$a } })
+  try { & `$pwshCmd.Source -NoLogo -NoProfile -File '$crewQ' @crewArgs }
   catch { Write-Host "crew: LOI: khong chay duoc pwsh (`$(`$pwshCmd.Source)): `$(`$_.Exception.Message)" -ForegroundColor Red; exit 1 }
   exit `$LASTEXITCODE
 }

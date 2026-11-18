@@ -88,6 +88,54 @@ function Get-SkeletonVersion {
 function Say($msg) { Write-Host "crew: $msg" }
 function Die($msg) { Write-Host "crew: LỖI: $msg" -ForegroundColor Red; exit 1 }
 
+# Ghi nguyên tử file state: $text ghi đúng byte (UTF-8 không BOM, người gọi tự thêm xuống dòng cuối như trước) vào file tạm
+# cùng thư mục rồi đổi tên đè lên. Lỗi ⇒ xóa file tạm, file cũ còn nguyên, ném lỗi. Đổi tên thử lại ~2 giây vì trên Windows
+# người đọc không khóa (Get-Tasks) đang mở file thì đè tạm thời bị từ chối.
+function Write-CrewStateFile([string]$file, [string]$text) {
+  $dir = Split-Path -Parent $file
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+  $tmp = Join-Path $dir ('.{0}.{1}.{2}.tmp' -f [IO.Path]::GetFileName($file), $PID, [guid]::NewGuid().ToString('N').Substring(0, 8))
+  try {
+    Set-Content -LiteralPath $tmp -Value $text -NoNewline -Encoding utf8NoBOM -ErrorAction Stop
+    for ($try = 1; ; $try++) {
+      try { [IO.File]::Move($tmp, $file, $true); break }
+      catch {
+        if ($try -ge 50) {
+          $why = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+          throw "không ghi được $file ($why) — file cũ giữ nguyên"
+        }
+        Start-Sleep -Milliseconds 40
+      }
+    }
+  } finally {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+# Khóa chuỗi đọc-sửa-ghi tasks.json/queue.json theo root: .crew/state.lock mở FileShare.None (tiến trình khác chờ).
+# Lồng nhau trong cùng tiến trình thì chạy thẳng. Chờ quá $timeoutMs ⇒ ném lỗi, không chạy $body. Nhả trong finally (cả khi Die/exit).
+# Không giữ khóa qua tiến trình con crew (queue gọi crew task) — con cũng cần khóa này.
+function Use-CrewStateLock([string]$root, [scriptblock]$body, [int]$timeoutMs = 10000) {
+  $lockFile = [IO.Path]::GetFullPath((Join-Path $root '.crew/state.lock'))
+  if ($null -eq $script:CrewStateLocks) { $script:CrewStateLocks = @{} }
+  if ($script:CrewStateLocks.ContainsKey($lockFile)) { return & $body }
+  $dir = Split-Path -Parent $lockFile
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $fs = $null
+  while (-not $fs) {
+    try { $fs = [IO.File]::Open($lockFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    catch {
+      if ($sw.ElapsedMilliseconds -ge $timeoutMs) {
+        throw "$lockFile đang bị lệnh crew khác giữ quá $([math]::Round($timeoutMs / 1000, 1)) giây — chưa ghi gì; đợi lệnh kia xong rồi chạy lại (lệnh treo thì tắt nó)."
+      }
+      Start-Sleep -Milliseconds 50
+    }
+  }
+  $script:CrewStateLocks[$lockFile] = $fs
+  try { & $body }
+  finally { $script:CrewStateLocks.Remove($lockFile); $fs.Dispose() }
+}
+
 # Chạy git, gom stdout+stderr thành chuỗi; không ném lỗi khi git ghi stderr (PS 5.1 + EAP Stop).
 function Invoke-GitQuiet {
   $ErrorActionPreference = 'Continue'

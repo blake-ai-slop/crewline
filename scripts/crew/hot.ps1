@@ -103,10 +103,19 @@ function Invoke-Hot {
         $dialog = Get-ScreenDialog $screen
         if ($dialog -eq 'trust' -and $st.State -in 'idle', 'blocked') { $status = 'chờ trust' }
         elseif (-not $dialog) {
-          $inputState = Get-PendingInput $app $st.State $screen
+          # Chỉ marker UI đang chạy, không lấy lời kể về lệnh nền trong hội thoại.
+          $background = if ($app -eq 'codex') {
+            $screen -match '(?m)^\s*• (?:Waiting for background terminal(?:[^\r\n]*)|Working[^\r\n]*· [1-9]\d* background terminals? running(?:[^\r\n]*))\r?$' -or
+              $screen -match '(?m)^\s*[1-9]\d* background terminals? running · /ps to view(?:[^\r\n]*)\r?$'
+          } else {
+            $screen -match '(?m)^\s*(?:⏵⏵|⏸)[^\r\n]*permissions on[^\r\n]*· [1-9]\d* (?:background tasks?|shells?|bash)(?: ·[^\r\n]*)?\s*$' -or
+              $screen -match '(?m)^\s*[↓·] [1-9]\d* background tasks? running(?:\s*·[^\r\n]*)?\s*$'
+          }
+          if ($background -and $st.State -in 'idle', 'done', 'working') { $status = 'working (nền)' }
+          $inputState = Get-PendingInput $app $(if ($background) { 'working' } else { $st.State }) $screen
           if ($inputState) {
             $pending[$_.name] = $inputState
-            $status = if ($inputState -eq 'queued') { 'tin chờ' } else { 'tin kẹt' }
+            if (-not $background) { $status = if ($inputState -eq 'queued') { 'tin chờ' } else { 'tin kẹt' } }
           }
         }
       }

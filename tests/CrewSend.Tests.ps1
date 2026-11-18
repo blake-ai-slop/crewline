@@ -1,8 +1,9 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFile', 'Use-CrewStateLock') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test crew send/review/task -Review: trích hàm thuần bằng AST từ crew.ps1, không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady'
+$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady', 'Invoke-Send', 'Update-TaskDone', 'Update-Tasks'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $wanted } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -261,5 +262,79 @@ Describe 'Send-CrewMessage (review tới Rev đang bận)' {
     $script:died | Should Be $null
     ($script:said -join "`n") | Should Match 'demo-rev nhưng agent đang bận: tin nằm chờ'
     $ops.State.Keys | Should Be 0
+  }
+}
+
+
+Describe 'crew send ghi tín hiệu XONG sau khi gửi thành công' {
+  BeforeEach {
+    $script:DoneRoot = Join-Path $TestDrive 'done'
+    New-Item -ItemType Directory -Force (Join-Path $script:DoneRoot '.crew') | Out-Null
+    '{}' | Set-Content (Join-Path $script:DoneRoot '.crew/config.json')
+    $script:DoneTasks = @([pscustomobject]@{ name = 'a'; terminal = 'demo-w1'; doneTracking = $true })
+    $script:DoneSaves = 0; $script:SendFail = $false
+    $script:Sender = [pscustomobject]@{ name = 'demo-w1'; address = 'fake-source'; state = 'live' }
+    $script:OldSenderId = $env:HC_TERMINAL_ID
+    $env:HC_TERMINAL_ID = 'fake-source'
+    $script:Name = 'demo-planner'; $script:PromptFile = 'xOnG a'; $script:Raw = [switch]$false
+    function Get-MainRoot { $script:DoneRoot }
+    function Get-Config { @{} }
+    function Get-CrewName { 'demo' }
+    function Get-MoveInfo { $null }
+    function Get-TermInfo { $script:Sender }
+    function Get-Tasks { ,$script:DoneTasks }
+    function Save-Tasks($root, $tasks) { $script:DoneSaves++; $script:DoneTasks = @($tasks) }
+    function Send-CrewMessage { if ($script:SendFail) { throw 'gửi lỗi' } }
+  }
+  AfterEach { $env:HC_TERMINAL_ID = $script:OldSenderId }
+  It 'worker giữ task gửi XONG không phân biệt hoa thường -> doneAt ISO' {
+    Invoke-Send
+    $script:DoneSaves | Should Be 1
+    $script:DoneTasks[0].doneAt | Should Match '^\d{4}-\d{2}-\d{2}T.*Z$'
+  }
+  It 'XONG từ terminal khác hoặc không rõ người gửi không đổi task' {
+    foreach ($sender in 'demo-w2', 'demo-planner', '') {
+      $script:Sender.name = $sender
+      Invoke-Send
+    }
+    $script:DoneSaves | Should Be 0
+  }
+  It 'địa chỉ không khớp hoặc sender đã thoát không được đánh dấu' {
+    $script:Sender.address = 'wrong'; Invoke-Send
+    $script:Sender.address = 'fake-source'; $script:Sender.state = 'exited'; Invoke-Send
+    $script:DoneSaves | Should Be 0
+  }
+  It 'tin thường của worker không đánh dấu; XONG không ở đầu không đánh dấu' {
+    foreach ($text in 'đang làm', 'chưa XONG', ' XONG a') { $script:PromptFile = $text; Invoke-Send }
+    $script:DoneSaves | Should Be 0
+  }
+  It 'gửi thất bại không ghi doneAt' {
+    $script:SendFail = $true
+    { Invoke-Send } | Should Throw 'gửi lỗi'
+    $script:DoneSaves | Should Be 0
+    $script:DoneTasks[0].doneAt | Should BeNullOrEmpty
+  }
+  It 'planner gửi sửa tới đúng worker xóa doneAt, giữ trường khác' {
+    $script:DoneTasks[0] | Add-Member NoteProperty doneAt '2026-11-18T00:00:00Z'
+    $script:Sender.name = 'demo-planner'; $script:Name = 'demo-w1'; $script:PromptFile = 'chưa đạt, sửa test'
+    Invoke-Send
+    $script:DoneTasks[0].PSObject.Properties.Name -contains 'doneAt' | Should Be $false
+    $script:DoneTasks[0].doneTracking | Should Be $true
+    $script:DoneSaves | Should Be 1
+  }
+  It 'tin sửa lỗi gửi không được thì giữ doneAt' {
+    $script:DoneTasks[0] | Add-Member NoteProperty doneAt 'old'
+    $script:Sender.name = 'demo-planner'; $script:Name = 'demo-w1'; $script:PromptFile = 'sửa'; $script:SendFail = $true
+    { Invoke-Send } | Should Throw 'gửi lỗi'
+    $script:DoneTasks[0].doneAt | Should Be 'old'
+  }
+  It 'worker khác, planner gửi sai đích hoặc slash/Raw không xóa doneAt' {
+    $script:DoneTasks[0] | Add-Member NoteProperty doneAt 'old'
+    $script:Sender.name = 'demo-w2'; $script:Name = 'demo-w1'; $script:PromptFile = 'sửa'; Invoke-Send
+    $script:Sender.name = 'demo-planner'; $script:Name = 'demo-w2'; Invoke-Send
+    $script:Name = 'demo-w1'; $script:PromptFile = '/new'; Invoke-Send
+    $script:PromptFile = 'shell command'; $script:Raw = [switch]$true; Invoke-Send
+    $script:DoneSaves | Should Be 0
+    $script:DoneTasks[0].doneAt | Should Be 'old'
   }
 }

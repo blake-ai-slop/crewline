@@ -146,11 +146,32 @@ function Update-ConfigName($root, $dry) { }  # ghi sổ project cũ: test ở Cr
       $script:ShellStarts | Should Be 0
     }
   }
-  It 'exited chỉ cảnh báo: không kill/bật chồng' {
+  It 'exited đọc lại lệch tên/address/chủ/cwd/trạng thái: không kill/bật chồng' {
+    foreach ($mode in 'address', 'name', 'cwd', 'missing-cwd', 'null', 'agent', 'lost') {
+      $script:ShellCalls = @(); $script:ShellGi = 0
+      $script:ShellFirst = New-CoreShell; $script:ShellFresh = New-CoreShell
+      $script:ShellFirst.argv = @('pwsh', '-NoExit', '-EncodedCommand', 'YQ==')
+      $script:ShellFresh.argv = $script:ShellFirst.argv
+      switch ($mode) {
+        address { $script:ShellFresh.address = 't9' }
+        name { $script:ShellFresh.name = 'other' }
+        cwd { $script:ShellFresh.cwd = Join-Path $TestDrive 'OtherProject' }
+        missing-cwd { $script:ShellFresh.PSObject.Properties.Remove('cwd') }
+        null { $script:ShellFresh = $null }
+        agent { $script:ShellFresh.argv = @('claude') }
+        lost { $script:ShellFresh = New-CoreShell }
+      }
+      Invoke-Up
+      @($script:ShellCalls | Where-Object { $_ -eq 'kill' }).Count | Should Be 0
+      $script:ShellStarts | Should Be 0
+    }
+  }
+  It 'exited xác minh lại rồi kill đúng address và bật lại' {
     $script:ShellFirst.argv = @('pwsh', '-NoExit', '-EncodedCommand', 'YQ==')
+    $script:ShellFresh.argv = $script:ShellFirst.argv
     Invoke-Up
-    @($script:ShellCalls | Where-Object { $_ -eq 'kill' }).Count | Should Be 0
-    $script:ShellStarts | Should Be 0
+    ($script:ShellCalls -join ',') | Should Be 'ls,get,read,get,read,kill,rm'
+    $script:ShellStarts | Should Be 1
     ($script:ShellMessages -join ' ') | Should Match 'đã thoát'
   }
 }

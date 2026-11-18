@@ -1,6 +1,32 @@
 # Crewline
 
-Đội agent trong **herdr-app + hc** trên Windows, Linux và macOS: 1 **planner** điều phối, các **worker** làm việc trong git worktree riêng, 1 **Rev** review và gộp nhánh, cùng một bộ **context chung** nằm trong git của project.
+Crewline runs a team of coding agents (Claude Code and Codex) in **herdr-app + hc**. A planner coordinates workers in separate Git worktrees, while shared project context stays in Git and a reviewer merges completed work.
+
+## Quick start (Windows)
+
+Open herdr-app and use a PowerShell pane. You need Git, PowerShell 7, and Claude Code and/or Codex installed and signed in; the installer checks prerequisites and offers help with missing software.
+
+```powershell
+irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex
+```
+
+Open a new terminal for the `crew` command, then run this in your project directory inside herdr-app:
+
+```powershell
+crew up
+```
+
+Follow the setup prompts and approve folder trust in each agent pane when asked. For a new Git repository, setup asks before committing all project files. Then tell the planner what you want to build.
+
+| Platform | Status |
+|---|---|
+| Windows 10/11 | Supported |
+| Linux | Experimental, not tested |
+| macOS | Experimental, not tested |
+
+Documentation (Vietnamese): [Windows behavior](docs/herdr-windows.md), [upgrades](docs/upgrade.md), [troubleshooting](docs/troubleshooting.md). The full Vietnamese guide follows.
+
+Đội agent trong **herdr-app + hc** trên Windows (Linux/macOS: thử nghiệm): 1 **planner** điều phối, các **worker** làm việc trong git worktree riêng, 1 **Rev** review và gộp nhánh, cùng một bộ **context chung** nằm trong git của project.
 
 Mục tiêu: nhiều agent (Claude Code, Codex) cùng làm một dự án, song song, không giẫm file nhau và không mất context khi đổi phiên. Cài bằng một dòng lệnh, sau đó tự tinh chỉnh.
 
@@ -38,6 +64,8 @@ crew:<repo>  (space trong herdr-app)
 5. **Cập nhật Crewline:** chạy lại lệnh cài ở bước 2, rồi trong mỗi project chạy `crew upgrade`. Có gì mới: xem [`CHANGELOG.md`](CHANGELOG.md).
 
 Mặc định của riêng bạn (đội, cấp review, quyền agent) đặt trong `~/.crewline/config.json`, xem [`docs/upgrade.md`](docs/upgrade.md). Cấu hình, skill và memory của Claude/Codex vẫn là của riêng từng người, Crewline không đụng tới.
+
+Gặp lỗi thường gặp: xem [Hướng dẫn xử lý lỗi](docs/troubleshooting.md).
 
 ## Cách crew chia việc
 
@@ -222,6 +250,7 @@ skeleton/context/      khung chép vào project (README, PROJECT, HOT, PITFALLS,
 templates/             template hc: crew-planner, crew-rev, crew-worker-claude, crew-worker-codex
 PROMPT.md              prompt dán vào agent để nó cài và dựng crew giúp bạn
 docs/herdr-windows.md  herdr-app + hc trên Windows khác tài liệu/bản Linux ở đâu
+docs/troubleshooting.md xử lý lỗi thường gặp (trust, tin kẹt, Git, upgrade, queue, terminal)
 docs/herdr-unix.md     herdr-app + hc trên Linux/macOS: đường dẫn, PATH, phần chưa kiểm
 ```
 

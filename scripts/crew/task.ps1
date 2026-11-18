@@ -42,7 +42,7 @@ function Get-ScopeConflicts([string]$root, $tasks, [string[]]$scope, [string]$ex
 # ---------------- task ----------------
 # Bản ghi task trong .crew/tasks.json. $review rỗng ⇒ không ghi khóa review (mức lấy theo HOT/config).
 function New-TaskRecord([string]$name, [string]$branch, [string]$wt, [int]$worker, [string]$term, [string]$kind, [string]$review) {
-  $rec = [ordered]@{ name = $name; branch = $branch; worktree = $wt; worker = $worker; terminal = $term; agent = $kind; created = (Get-Date -Format s) }
+  $rec = [ordered]@{ name = $name; branch = $branch; worktree = $wt; worker = $worker; terminal = $term; agent = $kind; created = (Get-Date -Format s); doneTracking = $true }
   if ($review) { $rec.review = $review }
   [pscustomobject]$rec
 }
@@ -107,7 +107,7 @@ function Show-StartupTrust($roles, $ops) {
 }
 
 # Hàm thuần: ô nhập thường ở cuối màn hình, nhận theo khung đã thấy thật. Không chắc ⇒ $null.
-# Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2), dòng trống, chân GPT-… hoặc Context N% left.
+# Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2, có thể thêm ≤3 dòng trống cuối ô), dòng trống, chân GPT-… hoặc Context N% left.
 # Ra @{ Kind = 'claude'|'codex'; Text = chữ trong ô ('' nếu trống/placeholder); Lines = các dòng của ô (chỉ Codex); After = các dòng dưới ô chưa rõ là gì }.
 function Get-InputBox([string]$screen) {
   $lines = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' } | ForEach-Object { $_.TrimEnd() })
@@ -118,7 +118,9 @@ function Get-InputBox([string]$screen) {
   $f = $n
   if ($lines[$f] -match '^\s*(\? for shortcuts|tab to queue message)') { $f-- }
   if ($f -ge 2 -and $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left' -and -not $lines[$f - 1]) {
-    $i = $f - 2; $text = @()
+    # Enter của hc send lúc Codex bận có thể thành xuống dòng trong ô: tối đa 3 dòng trống cuối ô, không tính vào Lines
+    $i = $f - 2; $text = @(); $gap = 0
+    while ($i -ge 0 -and $gap -lt 3 -and -not $lines[$i]) { $i--; $gap++ }
     while ($i -ge 0 -and $f - $i -le 30 -and $lines[$i] -match '^\s{2,}\S' -and $lines[$i] -notmatch '^\s*›') { $text = @($lines[$i].Trim()) + $text; $i-- }
     if ($i -ge 0 -and $f - $i -le 30 -and $lines[$i] -match '^\s*›(\s|$)' -and $lines[$i] -notmatch '^\s*›\s*\d+\.\s') {
       $rows = @(($lines[$i] -replace '^\s*›\s*', '')) + $text
@@ -199,12 +201,17 @@ function Send-WorkerTask([string]$term, [string]$kind, [string]$mode, [string]$w
     $cmd = "Set-Location -LiteralPath $(Quote $wt); if ((Get-Location).Path -eq $(Quote $wt)) { $(Get-AgentCommand $kind $access $line) } else { Write-Host 'crew: sai thư mục, không bật agent' }"
     return Invoke-SendFlow $term $cmd $ops
   }
+  $why = Get-WorkerInputError $term (& $ops.Read $term)
+  if ($why) { return @{ Ok = $false; Message = $why } }
   $reset = if ($kind -eq 'codex') { '/new' } else { '/clear' }
   # claude: ~15s để xác nhận /clear; codex: thêm thời gian cho hộp chọn + phiên mới
   $r = Invoke-SendFlow $term $reset $ops $kind $(if ($kind -eq 'codex') { 10 } else { 7 })
   if (-not $r.Ok) { return @{ Ok = $false; Message = "$reset chưa xong, chưa giao việc: $($r.Message)" } }
   # đọc lại màn hình ngay trước khi gửi dòng giao việc: có hộp thoại ⇒ không gửi
-  if (Get-ScreenDialog (& $ops.Read $term)) {
+  $screen = & $ops.Read $term
+  $why = Get-WorkerInputError $term $screen
+  if ($why) { return @{ Ok = $false; Message = $why } }
+  if (Get-ScreenDialog $screen) {
     return @{ Ok = $false; Message = "$term hiện hộp thoại sau $reset — chưa giao việc, không bấm phím; xem: hc read $term --lines 20" }
   }
   Invoke-SendFlow $term $line $ops
@@ -225,8 +232,19 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
   # Phiên vừa mở lại chưa có lượt mới thì hc có thể chưa báo app: đừng gõ lệnh shell vào ô nhập của agent.
   $mode = $m.Mode
   if ($mode -eq 'shell' -and (Test-AgentScreen $kind (& $ops.Read $term))) { $mode = 'agent' }
+  if ($mode -eq 'agent') {
+    $why = Get-WorkerInputError $term (& $ops.Read $term)
+    if ($why) { throw $why }
+  }
   $wt = Initialize-TaskBranch $root $n $main $name $promptPath
-  Save-Tasks $root $tasks
+  # Thêm bản ghi vào tasks.json hiện tại dưới khóa (không ghi đè bằng danh sách đọc từ trước — lệnh song song có thể vừa đổi).
+  $rec = @($tasks | Where-Object { $_ -and $_.name -eq $name })[-1]
+  $null = Update-Tasks $root {
+    param($current)
+    $taken = @($current | Where-Object { $_.name -eq $name -or [int]$_.worker -eq [int]$rec.worker })
+    if ($taken.Count) { throw "tasks.json vừa có task $($taken[0].name) (w$($taken[0].worker)) do lệnh khác ghi — chưa giao $name; nhánh crew/$name đã tạo trong $wt." }
+    @($current) + $rec
+  }
   $line = Get-TaskLine $wt "crew/$name"
   if ($mode -eq 'shell') { Say "bật $kind trong $term" } else { Say "phiên mới cho $kind trong $term" }
   $r = Send-WorkerTask $term $kind $mode $wt $line $access $ops

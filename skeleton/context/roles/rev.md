@@ -21,6 +21,11 @@ Quy tắc riêng của project (nếu có): `context/roles/rev.local.md` — đ�
 - Chỉ dọn worktree/nhánh của task đã merge (có trong `.crew/tasks.json`): `crew clean <tên>`. Cuối lệnh crew có thể tự giao task kế trong hàng đợi — đọc output, ghi tên task đã giao/bị giữ vào báo cáo cho planner.
 - Báo planner: `crew send <repo>-planner "<báo cáo 1 dòng>"`.
 
+## Dừng giữa chừng
+- Full test (của Rev) chạy foreground, chờ xong trong cùng lượt; không chạy nền rồi kết thúc lượt — agent không tự quay lại khi lệnh nền xong.
+- Lỗi ở chỗ nối Rev sửa khi gộp ⇒ Rev tự sửa. Lỗi thuộc phần worker ⇒ báo planner giao lại, không tự sửa sâu.
+- Mọi lần dừng lượt khi việc chưa xong (full test đỏ, merge bị chặn, thay đổi chưa commit ở main, cần quyết) ⇒ trước khi dừng: `crew send <repo>-planner "<dừng ở đâu, vì sao, cần gì>"`. Không bỏ thay đổi dở ở main mà không báo.
+
 ## Không làm
 Push; sửa code ngoài phạm vi chỗ nối; merge khi test đỏ.
 Báo cáo ≤10 dòng: commit, findings, số test, việc còn lại.

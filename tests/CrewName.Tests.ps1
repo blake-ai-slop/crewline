@@ -8,10 +8,10 @@ $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
-$want = 'Get-LegacySlug', 'Get-Slug', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
+$want = 'Get-WorkerInputError', 'Get-LegacySlug', 'Get-Slug', 'Get-FreshCrewName', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
   'Get-ForeignTermError', 'Read-ProjectRegistry', 'Save-ProjectRegistry', 'Get-NameOwner', 'Resolve-CrewName', 'Register-CrewName',
   'Get-NameConflict', 'Update-ConfigName', 'Get-Config', 'Invoke-Up', 'Invoke-Send', 'Send-CrewMessage', 'Get-MainRoot',
-  'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
+  'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',
   'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady',
   'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask', 'Start-WorkerTask', 'New-TaskRecord',
   'ConvertTo-IdKey', 'Get-LegacyIdKey', 'Test-IdKey', 'Get-CrewIdKey', 'Test-OtherAlive', 'Get-IdKeyOwner', 'Get-Ids',
@@ -119,6 +119,32 @@ Describe 'Get-CrewName' {
   }
   It 'không name và slug cũ rỗng -> dừng, gợi ý upgrade/-Name' {
     { Get-CrewName (Join-Path $TestDrive '项目') ([pscustomobject]@{}) } | Should Throw 'crew upgrade'
+  }
+  It '-DryRun, không name và slug cũ rỗng -> tên + idKey mà upgrade sẽ ghi, không ghi config/sổ' {
+    New-RegFile | Out-Null
+    $root = New-Project 'dry/项目'
+    $before = Get-Content (Join-Path $root '.crew/config.json') -Raw
+    $script:DryRun = $true
+    try {
+      $n = Get-CrewName $root (Get-Config $root)
+      $k = Get-CrewIdKey $root (Get-Config $root)
+    } finally { Remove-Variable -Name DryRun -Scope Script }
+    $n | Should BeExactly (Get-Slug $root)
+    $n | Should Match '^crew-[0-9a-f]{6}$'
+    $k | Should BeExactly (ConvertTo-IdKey $n)
+    Get-Content (Join-Path $root '.crew/config.json') -Raw | Should BeExactly $before
+    Test-Path $script:RegFile | Should Be $false
+    # khớp tên Update-ConfigName ghi khi chạy thật
+    Update-ConfigName $root $false
+    (Get-Config $root).name | Should BeExactly $n
+    (Get-Config $root).idKey | Should BeExactly $k
+  }
+  It '-DryRun không đổi project có slug cũ: vẫn slug cũ + khóa cũ' {
+    $script:DryRun = $true
+    try {
+      Get-CrewName (Join-Path $TestDrive 'my-app') ([pscustomobject]@{}) | Should BeExactly 'my-app'
+      Get-CrewIdKey (Join-Path $TestDrive 'my-app') ([pscustomobject]@{}) | Should BeExactly 'myapp'
+    } finally { Remove-Variable -Name DryRun -Scope Script }
   }
 }
 

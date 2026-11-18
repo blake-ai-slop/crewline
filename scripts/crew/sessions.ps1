@@ -44,11 +44,7 @@ function Save-SessionBook([string]$root, $book) {
   $state | Add-Member NoteProperty roles $roles -Force
   $state | Add-Member NoteProperty codexRootRoles @($book.CodexRootRoles) -Force
   try {
-    New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null
-    $text = ConvertTo-Json -InputObject $state -Depth 100
-    $tmp = "$file.tmp"
-    [IO.File]::WriteAllText($tmp, $text, [Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $tmp -Destination $file -Force -ErrorAction Stop
+    Write-CrewStateFile $file (ConvertTo-Json -InputObject $state -Depth 100)
   } catch { Say "cảnh báo: không ghi được sổ phiên $file ($($_.Exception.Message)); lần khôi phục sau sẽ mở hội thoại mới." }
 }
 
@@ -225,7 +221,8 @@ function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [
   $r = $out | ConvertFrom-Json
   # chờ herdr-app nhận terminal để tab/pane hiện đúng thứ tự
   for ($i = 0; $i -lt 40; $i++) {
-    $ls = herdr-app ls | ConvertFrom-Json
+    $ls = Get-HerdrSpaces
+    if (-not $ls.Ok) { throw $ls.Error }
     if ($ls.spaces.tabs.terminals.terminal -contains $r.address) { break }
     Start-Sleep -Milliseconds 250
   }
@@ -234,7 +231,8 @@ function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [
 
 function Wait-Tab([string]$tab) {
   for ($i = 0; $i -lt 40; $i++) {
-    $ls = herdr-app ls | ConvertFrom-Json
+    $ls = Get-HerdrSpaces
+    if (-not $ls.Ok) { throw $ls.Error }
     foreach ($sp in $ls.spaces) { foreach ($t in $sp.tabs) { if ($t.id -eq $tab) { return $true } } }
     Start-Sleep -Milliseconds 250
   }

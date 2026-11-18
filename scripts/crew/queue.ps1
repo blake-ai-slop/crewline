@@ -1,6 +1,7 @@
 ﻿# ---------------- queue ----------------
 # Hàng đợi task: planner xếp sẵn, crew giao khi có worker rảnh (crew clean, crew up, tay crew queue -Run). Không tiến trình nền.
-# .crew/queue.json = mảng (giữ thứ tự) @{ name; prompt (.crew/queue/<tên>.md); worker (0 = tự chọn); review; after; size; added; hold }.
+# .crew/queue.json = mảng (giữ thứ tự) @{ name; prompt (.crew/queue/<tên>.md); worker (0 = tự chọn); review; after; size; added; hold; source }.
+# source = đường dẫn tuyệt đối file prompt gốc lúc xếp (mục cũ không có): `crew queue` cảnh báo khi file gốc mới hơn bản chép.
 
 function Get-QueueFile([string]$root) { Join-Path $root '.crew/queue.json' }
 function Get-QueuePromptPath([string]$root, [string]$name) { Join-Path $root ".crew/queue/$name.md" }
@@ -26,16 +27,39 @@ function Get-QueueItems([string]$root) {
   return , @($items | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
 }
 
+# Ghi nguyên tử, dưới khóa root. Chuỗi đọc-sửa-ghi dùng Update-QueueItems.
 function Save-QueueItems([string]$root, $items) {
   $f = Get-QueueFile $root
-  if (Test-Path -LiteralPath $f) { $null = Read-CrewState $f -ThrowOnError }
-  $list = @($items | Where-Object { $null -ne $_ })
-  New-Item -ItemType Directory -Force (Join-Path $root '.crew') | Out-Null
-  ConvertTo-Json -InputObject $list -Depth 100 | Set-Content -LiteralPath (Get-QueueFile $root) -Encoding utf8
+  Use-CrewStateLock $root {
+    if (Test-Path -LiteralPath $f) { $null = Read-CrewState $f -ThrowOnError }
+    $list = @($items | Where-Object { $null -ne $_ })
+    Write-CrewStateFile $f ((ConvertTo-Json -InputObject $list -Depth 100) + [Environment]::NewLine)
+  }
 }
 
-function New-QueueItem([string]$name, [string]$prompt, [int]$worker, [string]$review, [string]$after, [string]$size) {
-  [pscustomobject][ordered]@{ name = $name; prompt = $prompt; worker = $worker; review = $review; after = $after; size = $size; added = (Get-Date -Format s); hold = '' }
+# Đọc-sửa-ghi queue.json dưới khóa root (như Update-Tasks). Lỗi ⇒ throw, không ghi. Trả danh sách đã ghi.
+function Update-QueueItems([string]$root, [scriptblock]$change, [int]$TimeoutMs = 10000) {
+  Use-CrewStateLock $root {
+    $current = Get-QueueItems $root
+    $next = @(& $change $current | Where-Object { $null -ne $_ })
+    Save-QueueItems $root $next
+    , $next
+  } $TimeoutMs
+}
+
+function New-QueueItem([string]$name, [string]$prompt, [int]$worker, [string]$review, [string]$after, [string]$size, [string]$source = '') {
+  [pscustomobject][ordered]@{ name = $name; prompt = $prompt; worker = $worker; review = $review; after = $after; size = $size; added = (Get-Date -Format s); hold = ''; source = $source }
+}
+
+# Hàm thuần: file prompt gốc của mục đã sửa sau khi chép? Mục cũ không có source, thiếu file gốc/bản chép ⇒ $false.
+function Test-QueueSourceNewer([string]$root, $item) {
+  $src = [string]$item.source
+  if (-not $src -or -not (Test-Path -LiteralPath $src -PathType Leaf)) { return $false }
+  $copy = Get-QueuePromptPath $root $item.name
+  if (-not (Test-Path -LiteralPath $copy -PathType Leaf)) { return $false }
+  if ((Get-Item -LiteralPath $src).LastWriteTimeUtc -le (Get-Item -LiteralPath $copy).LastWriteTimeUtc) { return $false }
+  # chỉ chạm (touch) mà nội dung y hệt thì không cảnh báo
+  [IO.File]::ReadAllText($src) -cne [IO.File]::ReadAllText($copy)
 }
 
 # Hàm thuần: mốc limit của agent chặn mục này? $used = % 5h đã dùng ($null = không rõ ⇒ giao). Trả lý do giữ hoặc ''.
@@ -94,7 +118,7 @@ function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = 
     $n = @($cfg.workers).Count
     $tasks = Get-Tasks $root -ThrowOnError
     $limits = @{}
-    $keep = @(); $given = 0; $stopped = $false
+    $keep = @(); $given = 0; $stopped = $false; $sent = [Collections.Generic.HashSet[string]]::new()
     for ($ix = 0; $ix -lt $items.Count; $ix++) {
       $item = $items[$ix]
       if ($stopped) {
@@ -155,10 +179,18 @@ function Invoke-QueueRun([string]$root, [bool]$dryRun = $false, [bool]$manual = 
       $log.Add("$($item.name): đã giao → w$pick")
       Say "$($item.name): đã giao → w$pick"
       Remove-Item -LiteralPath $prompt -Force -ErrorAction SilentlyContinue
-      $given++
+      $given++; $null = $sent.Add([string]$item.name)
       $tasks = Get-Tasks $root -ThrowOnError
     }
-    if (-not $dryRun) { Save-QueueItems $root $keep }
+    if (-not $dryRun) {
+      # Không giữ khóa suốt lượt (crew task con cần khóa): gộp vào bản hiện tại — bỏ mục đã giao, cập nhật hold mục giữ,
+      # giữ mục lệnh khác vừa thêm, mục vừa bị bỏ thì không thêm lại.
+      $kept = @{}; foreach ($k in $keep) { $kept[[string]$k.name] = $k }
+      $null = Update-QueueItems $root {
+        param($current)
+        foreach ($c in $current) { if ($kept.ContainsKey([string]$c.name)) { $kept[[string]$c.name] } elseif (-not $sent.Contains([string]$c.name)) { $c } }
+      }
+    }
     if ($stopped) { Say 'dừng giao tiếp vì crew task lỗi; sửa rồi chạy: crew queue -Run' }
     $given
   } catch {
@@ -195,6 +227,11 @@ function Show-Queue([string]$root) {
     $w = if ([int]$i.worker) { "w$($i.worker)" } else { '-' }
     Write-Host ($fmt -f $i.name, $w, $i.size, $(if ($i.after) { $i.after } else { '-' }), $(if ($i.hold) { $i.hold } else { '-' }))
   }
+  foreach ($i in $items) {
+    if (Test-QueueSourceNewer $root $i) {
+      Write-Host "crew: CẢNH BÁO: $($i.source) mới hơn bản chép của $($i.name) — chạy lại: crew queue $($i.name) <file-prompt> để cập nhật." -ForegroundColor Yellow
+    }
+  }
 }
 
 function Invoke-Queue {
@@ -211,8 +248,13 @@ function Invoke-Queue {
   }
   try { $items = Get-QueueItems $root } catch { Die $_.Exception.Message }
   if ($Remove) {
-    if (-not @($items | Where-Object { $_.name -eq $Name }).Count) { Die "không có $Name trong hàng đợi." }
-    Save-QueueItems $root @($items | Where-Object { $_.name -ne $Name })
+    try {
+      $null = Update-QueueItems $root {
+        param($current)
+        if (-not @($current | Where-Object { $_.name -eq $Name }).Count) { throw "không có $Name trong hàng đợi." }
+        $current | Where-Object { $_.name -ne $Name }
+      }
+    } catch { Die $_.Exception.Message }
     Remove-Item -LiteralPath (Get-QueuePromptPath $root $Name) -Force -ErrorAction SilentlyContinue
     Say "đã bỏ $Name khỏi hàng đợi."
     return
@@ -222,7 +264,6 @@ function Invoke-Queue {
   if (-not (Test-Path -LiteralPath $PromptFile)) { Die "không thấy file prompt $PromptFile" }
   $cfg = Get-Config $root; $tasks = Get-Tasks $root
   if ($tasks | Where-Object { $_.name -eq $Name }) { Die "task $Name đã có trong .crew/tasks.json." }
-  if ($items | Where-Object { $_.name -eq $Name }) { Die "$Name đã có trong hàng đợi." }
   $n = @($cfg.workers).Count
   if ($Worker -and ($Worker -lt 1 -or $Worker -gt $n)) { Die "-Worker phải từ 1 tới $n." }
   if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/crew/$Name").Code -eq 0) { Die "nhánh crew/$Name đã có — đặt tên khác hoặc xóa nhánh cũ." }
@@ -231,9 +272,33 @@ function Invoke-Queue {
     Die "-After $After không phải task đang chạy (.crew/tasks.json) hay mục trong hàng đợi — kiểm lại tên."
   }
   $dest = Get-QueuePromptPath $root $Name
-  New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-  Copy-Item -LiteralPath (Resolve-Path -LiteralPath $PromptFile).Path $dest -Force
+  $source = (Resolve-Path -LiteralPath $PromptFile).Path
   $rv = if ($InitParameters.ContainsKey('Review')) { $Review } else { '' }
-  Save-QueueItems $root (@($items) + (New-QueueItem $Name ".crew/queue/$Name.md" $Worker $rv $After $Size))
-  Say "đã xếp $Name vào hàng đợi (vị trí $($items.Count + 1)). Giao khi có worker rảnh: crew clean, crew up, hoặc crew queue -Run."
+  $item = New-QueueItem $Name ".crew/queue/$Name.md" $Worker $rv $After $Size $source
+  $upd = @{ At = 0 }
+  try {
+    $items = Update-QueueItems $root {
+      param($current)
+      New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
+      # Tên đã trong hàng đợi (kiểm dưới khóa) ⇒ cập nhật bản chép tại chỗ, giữ vị trí; chỉ đổi cờ được truyền.
+      $old = @($current | Where-Object { $_.name -eq $Name }) | Select-Object -First 1
+      if ($old) {
+        if ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($dest)) { Copy-Item -LiteralPath $source $dest -Force }
+        $old | Add-Member -NotePropertyName source -NotePropertyValue $source -Force
+        if ($InitParameters.ContainsKey('Worker')) { $old | Add-Member -NotePropertyName worker -NotePropertyValue $Worker -Force }
+        if ($InitParameters.ContainsKey('Review')) { $old | Add-Member -NotePropertyName review -NotePropertyValue $Review -Force }
+        if ($InitParameters.ContainsKey('After')) { $old | Add-Member -NotePropertyName after -NotePropertyValue $After -Force }
+        if ($InitParameters.ContainsKey('Size')) { $old | Add-Member -NotePropertyName size -NotePropertyValue $Size -Force }
+        $upd.At = [array]::IndexOf(@($current), $old) + 1
+        return @($current)
+      }
+      Copy-Item -LiteralPath $source $dest -Force
+      @($current) + $item
+    }
+  } catch { Die $_.Exception.Message }
+  if ($upd.At) {
+    Say "đã cập nhật $Name trong hàng đợi (vị trí $($upd.At), prompt chép lại từ $source)."
+    return
+  }
+  Say "đã xếp $Name vào hàng đợi (vị trí $($items.Count)). Giao khi có worker rảnh: crew clean, crew up, hoặc crew queue -Run."
 }

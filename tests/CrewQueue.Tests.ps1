@@ -13,7 +13,7 @@ $queueAst = [System.Management.Automation.Language.Parser]::ParseFile($queueFile
 foreach ($fn in $queueAst.FindAll({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
-foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks', 'Get-LimitTiers', 'Get-LimitLevel', 'Get-WorkerTree', 'Invoke-GitQuiet', 'Get-MainRoot', 'Get-PromptScope', 'Get-ScopeConflicts' } -Recurse:$false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks', 'Update-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Get-LimitTiers', 'Get-LimitLevel', 'Get-WorkerTree', 'Invoke-GitQuiet', 'Get-MainRoot', 'Get-PromptScope', 'Get-ScopeConflicts' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 $script:Said = [Collections.Generic.List[string]]::new()
@@ -270,6 +270,28 @@ Describe 'Invoke-QueueRun (ops giả)' {
   }
 }
 
+Describe 'Test-QueueSourceNewer' {
+  It 'mục cũ không source, thiếu file gốc/bản chép, cùng giờ hoặc chỉ touch ⇒ false; gốc sửa sau ⇒ true' {
+    $root = New-QueueRoot
+    $src = Join-Path $root 'p.md'; 'v1' | Set-Content $src -Encoding utf8
+    Add-Q $root 'a'
+    Copy-Item $src (Get-QueuePromptPath $root 'a') -Force
+    Test-QueueSourceNewer $root ([pscustomobject]@{ name = 'a' }) | Should Be $false
+    $item = [pscustomobject]@{ name = 'a'; source = $src }
+    (Get-Item $src).LastWriteTimeUtc = (Get-Item (Get-QueuePromptPath $root 'a')).LastWriteTimeUtc
+    Test-QueueSourceNewer $root $item | Should Be $false
+    (Get-Item $src).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddMinutes(5)
+    Test-QueueSourceNewer $root $item | Should Be $false
+    'v2' | Set-Content $src -Encoding utf8
+    (Get-Item $src).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddMinutes(5)
+    Test-QueueSourceNewer $root $item | Should Be $true
+    Remove-Item (Get-QueuePromptPath $root 'a')
+    Test-QueueSourceNewer $root $item | Should Be $false
+    $item.source = (Join-Path $root 'khong-co.md')
+    Test-QueueSourceNewer $root $item | Should Be $false
+  }
+}
+
 Describe 'Get-QueueLimitHold / Get-QueueSpawnError (thuần)' {
   It 'theo mốc Get-LimitTiers' {
     Get-QueueLimitHold 'claude' $null 'L' | Should Be ''
@@ -506,7 +528,7 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     (Run-Crew $c @('queue', 'a2', $p, '-After', 'a')).Code | Should Be 0
     (Run-Crew $c @('queue', 'a2', '-Remove')).Code | Should Be 0
     Test-Path (Join-Path $c.Root '.crew/queue/a.md') | Should Be $true
-    (Run-Crew $c @('queue', 'a', $p)).Text | Should Match 'a đã có trong hàng đợi'
+    (Run-Crew $c @('queue', 'a', $p)).Text | Should Match 'đã cập nhật a trong hàng đợi \(vị trí 1'
     (Run-Crew $c @('queue', 'Bad_Name', $p)).Text | Should Match 'tên task chỉ gồm a-z 0-9'
     (Run-Crew $c @('queue', 'b', $p, '-Worker', '3')).Text | Should Match '-Worker phải từ 1 tới 1'
     (Run-Crew $c @('queue', 'b', $p, '-After', 'b')).Text | Should Match '-After không được là chính nó'
@@ -594,6 +616,52 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     $limitLog = @(Get-Content (Join-Path $c.State 'limits.log') -Encoding utf8)
     ($limitLog -join '|') | Should Be 'claude -p /usage --output-format json --no-session-persistence|codex app-server|claude -p /usage --output-format json --no-session-persistence|codex app-server'
     (Run-Crew $c @('queue')).Text | Should Match '(?m)^b\s.*trùng file với a'
+  }
+
+  It 'xếp lại cùng tên ⇒ cập nhật bản chép tại chỗ, chỉ đổi cờ được truyền; liệt kê cảnh báo khi file gốc mới hơn' {
+    $c = New-E2E
+    $pa = Join-Path $c.Root 'pa.md'; 'prompt A1' | Set-Content $pa -Encoding utf8
+    $pb = Join-Path $c.Root 'pb.md'; 'prompt B' | Set-Content $pb -Encoding utf8
+    (Run-Crew $c @('queue', 'a', $pa, '-Size', 'L', '-Review', 'fast')).Code | Should Be 0
+    (Run-Crew $c @('queue', 'b', $pb, '-After', 'a')).Code | Should Be 0
+    $copy = Join-Path $c.Root '.crew/queue/a.md'
+    (Run-Crew $c @('queue')).Text | Should Not Match 'CẢNH BÁO'
+    'prompt A2' | Set-Content $pa -Encoding utf8
+    (Get-Item $pa).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddMinutes(5)
+    $list = Run-Crew $c @('queue')
+    $list.Code | Should Be 0
+    $list.Text | Should Match ([regex]::Escape("CẢNH BÁO: $pa mới hơn bản chép của a"))
+    $list.Text | Should Not Match 'bản chép của b'
+    $r = Run-Crew $c @('queue', 'a', $pa, '-Worker', '1')
+    $r.Code | Should Be 0
+    $r.Text | Should Match 'đã cập nhật a trong hàng đợi \(vị trí 1'
+    (Get-Content $copy -Raw).Trim() | Should Be 'prompt A2'
+    $items = @(Get-Content (Join-Path $c.Root '.crew/queue.json') -Raw -Encoding utf8 | ConvertFrom-Json)
+    ($items | ForEach-Object { $_.name }) -join ',' | Should Be 'a,b'
+    $items[0].worker | Should Be 1
+    $items[0].size | Should Be 'L'
+    $items[0].review | Should Be 'fast'
+    $items[0].source | Should Be $pa
+    $items[1].after | Should Be 'a'
+    (Run-Crew $c @('queue')).Text | Should Not Match 'CẢNH BÁO'
+    # file prompt khác, đổi -Size/-After; b vẫn đứng sau
+    $p2 = Join-Path $c.Root 'p2.md'; 'prompt B2' | Set-Content $p2 -Encoding utf8
+    (Run-Crew $c @('queue', 'b', $p2, '-Size', 'S', '-After', '')).Code | Should Be 0
+    $items = @(Get-Content (Join-Path $c.Root '.crew/queue.json') -Raw -Encoding utf8 | ConvertFrom-Json)
+    ($items | ForEach-Object { $_.name }) -join ',' | Should Be 'a,b'
+    $items[1].size | Should Be 'S'
+    $items[1].after | Should Be ''
+    $items[1].source | Should Be $p2
+    (Get-Content (Join-Path $c.Root '.crew/queue/b.md') -Raw).Trim() | Should Be 'prompt B2'
+    # mục cũ không có source ⇒ không cảnh báo
+    $raw = Get-Content (Join-Path $c.Root '.crew/queue.json') -Raw -Encoding utf8 | ConvertFrom-Json
+    $legacy = @($raw | ForEach-Object { $_ | Select-Object name, prompt, worker, review, after, size, added, hold })
+    ConvertTo-Json -InputObject $legacy | Set-Content (Join-Path $c.Root '.crew/queue.json') -Encoding utf8
+    'prompt A3' | Set-Content $pa -Encoding utf8
+    (Get-Item $pa).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddMinutes(10)
+    $list = Run-Crew $c @('queue')
+    $list.Code | Should Be 0
+    $list.Text | Should Not Match 'CẢNH BÁO'
   }
 
   It 'limit thật qua New-QueueOps (claude giả 95%) ⇒ giữ mốc dừng, không gọi crew task' {

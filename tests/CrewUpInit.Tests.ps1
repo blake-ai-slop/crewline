@@ -267,4 +267,36 @@ Describe 'crew up init' {
     Assert-NoInit $c $dir
   }
 }
+
+Describe 'crew up -DryRun project cũ có slug cũ rỗng' {
+  It 'in tên mới sẽ ghi và việc sẽ làm, không lỗi, không ghi config/sổ, không gọi hc bật/gửi' {
+    $c = New-Ctx
+    Set-Content (Join-Path $c.Home.Home 'gitconfig') "[user]`n name = t`n email = t@t`n[core]`n autocrlf = false"
+    # tên thư mục toàn ký tự ngoài a-z0-9 ⇒ Get-LegacySlug rỗng (project cũ chưa có name/idKey)
+    $dir = Join-Path $c.Home.Home ([string][char]0x9879 + [char]0x76EE)
+    New-Item -ItemType Directory -Force (Join-Path $dir '.crew') | Out-Null
+    git -C $dir init -qb main
+    '.crew/' | Set-Content (Join-Path $dir '.gitignore')
+    git -C $dir add -A; git -C $dir -c user.name=t -c user.email=t@t commit -qm init
+    $cfgFile = Join-Path $dir '.crew/config.json'
+    ConvertTo-Json -InputObject ([ordered]@{ planner = 'claude'; workers = @('claude'); rev = 'none'; review = 'lean'; access = 'work' }) | Set-Content $cfgFile -Encoding utf8
+    $before = Get-Content $cfgFile -Raw
+    $r = Run-Up $c @('up', '-Path', $dir, '-DryRun')
+    $r.Output | Should Not Match 'không suy ra được tên crew'
+    $r.Output | Should Not Match 'LỖI'
+    $r.Output | Should Match "sẽ ghi name 'crew-[0-9a-f]{6}' \+ idKey 'crewzd[0-9a-f]{6}'"
+    $name = [regex]::Match($r.Output, "name '(crew-[0-9a-f]{6})'").Groups[1].Value
+    $r.Output | Should Match ([regex]::Escape("$name-planner"))
+    $r.Output | Should Match ([regex]::Escape("$name-w1"))
+    $r.Output | Should Match 'DryRun: không ghi git'
+    $r.ExitCode | Should Be 0
+    Get-Content $cfgFile -Raw | Should BeExactly $before
+    Test-Path (Join-Path $c.Home.Home '.crewline/projects.json') | Should Be $false
+    $hcLog = Join-Path $c.State 'hc.log'
+    if (Test-Path $hcLog) { (Get-Content $hcLog -Raw) | Should Not Match '(?m)^(run|send|kill) ' }
+    # chạy thật sau đó ghi đúng tên DryRun đã báo
+    $real = Run-Up $c @('up', '-Path', $dir)
+    (Get-Content $cfgFile -Raw | ConvertFrom-Json).name | Should BeExactly $name
+  }
+}
 [Console]::OutputEncoding = $savedUpEncoding

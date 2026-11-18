@@ -145,3 +145,62 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $output | Should Match 'bản chép.*crew init -Name'
   }
 }
+
+Describe 'herdr-app ls gom stderr khi chờ space/tab (lệnh giả)' {
+  BeforeEach {
+    foreach ($fn in 'Get-HerdrSpaces', 'Start-Term', 'Wait-Tab') { . ([scriptblock]::Create((Get-CrewFunction $fn).Extent.Text)) }
+    $script:HerdrLsWarnings = @{}
+    $script:HerdrCalls = 0
+    $script:HerdrReadyAt = 10
+    $script:HerdrExit = 0
+    function herdr-app {
+      $script:HerdrCalls++
+      Write-Error 'same warning' -ErrorAction Continue
+      $global:LASTEXITCODE = $script:HerdrExit
+      if ($script:HerdrCalls -ge $script:HerdrReadyAt) { '{"spaces":[{"tabs":[{"id":"target","terminals":[{"terminal":"tx"}]}]}]}' }
+      else { '{"spaces":[]}' }
+    }
+    function hc { $global:LASTEXITCODE = 0; '{"address":"tx"}' }
+    function Start-Sleep { }
+    function Die($message) { throw $message }
+  }
+  It 'Wait-Tab gọi 10 lần chỉ in cùng cảnh báo một lần, nhận tab đúng' {
+    $out = & { Wait-Tab target | Should Be $true } 6>&1 | Out-String
+    $script:HerdrCalls | Should Be 10
+    ([regex]::Matches($out, 'same warning')).Count | Should Be 1
+  }
+  It 'Start-Term gọi 10 lần chỉ in cùng cảnh báo một lần, trả terminal đúng' {
+    $out = & { (Start-Term demo $TestDrive space target test).address | Should Be tx } 6>&1 | Out-String
+    $script:HerdrCalls | Should Be 10
+    ([regex]::Matches($out, 'same warning')).Count | Should Be 1
+  }
+  It 'Get-HerdrSpaces lặp giữ cảnh báo khác nhau và JSON stdout riêng' {
+    $out = & { 1..10 | ForEach-Object { (Get-HerdrSpaces).Ok | Should Be $true } } 6>&1 | Out-String
+    ([regex]::Matches($out, 'same warning')).Count | Should Be 1
+    function herdr-app { Write-Error 'different warning' -ErrorAction Continue; '{"spaces":[]}' }
+    $out = & { (Get-HerdrSpaces).Ok | Should Be $true } 6>&1 | Out-String
+    $out | Should Match 'different warning'
+  }
+  It 'stderr native giữ riêng stdout, cảnh báo trùng vẫn chỉ in một lần' {
+    $script:NativeHerdrFake = Join-Path $TestDrive 'native-herdr.ps1'
+    [IO.File]::WriteAllText($script:NativeHerdrFake, '[Console]::Error.WriteLine("native warning"); [Console]::Out.WriteLine(''{"spaces":[]}''); exit 0')
+    function herdr-app { & pwsh -NoProfile -File $script:NativeHerdrFake }
+    $out = & { 1..10 | ForEach-Object { (Get-HerdrSpaces).Ok | Should Be $true } } 6>&1 | Out-String
+    ([regex]::Matches($out, 'native warning')).Count | Should Be 1
+    [IO.File]::WriteAllText($script:NativeHerdrFake, '[Console]::Error.WriteLine("native failure"); exit 9')
+    $result = Get-HerdrSpaces
+    $result.Ok | Should Be $false
+    $result.Error | Should Match 'exit 9.*native failure'
+  }
+  It 'lỗi exit thật dừng vòng chờ và giữ chi tiết lỗi; JSON hỏng cũng báo' {
+    $script:HerdrExit = 7
+    { Wait-Tab target } | Should Throw 'exit 7'
+    $script:HerdrCalls | Should Be 1
+    $script:HerdrCalls = 0
+    { Start-Term demo $TestDrive space target test } | Should Throw 'exit 7'
+    function herdr-app { $global:LASTEXITCODE = 0; 'invalid json' }
+    $result = Get-HerdrSpaces
+    $result.Ok | Should Be $false
+    $result.Error | Should Match 'không đọc được'
+  }
+}

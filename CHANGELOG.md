@@ -2,6 +2,35 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## 2026-11-18 (2) — Windows chắc hơn sau khi thử trên máy thật
+
+### Mới
+- **Agent tự thoát (`/quit`, `/exit`) thì `crew up` mở lại đúng hội thoại cũ,** gõ trong chính pane đó hay ở pane khác đều được; worker đang có task thì được giao lại. `crew up -Restart` vẫn mở hội thoại mới.
+- **Crew biết chắc worker đã xong:** khi worker gửi `crew send <repo>-planner "XONG …"`, crew ghi nhận. Worker dừng giữa chừng (kể cả đã commit, worktree sạch) thì `crew up` giao lại với lời nhắc "tiếp tục"; `crew hot` chỉ hiện "đã xong, chờ planner" khi worker đã báo XONG. Task tạo bằng bản cũ giữ cách đoán cũ.
+- **`crew up -All` không còn treo vì một project:** mỗi project tối đa 300 giây (`-Timeout <giây>`, `0` = không giới hạn), cuối lệnh in bảng kết quả/thời gian; mã thoát khác 0 nếu có project lỗi, hết giờ hoặc bị bỏ qua.
+- **`crew upgrade` in sẵn lệnh xem khác biệt** (`git diff --no-index`) cho từng file được giữ bản của bạn (`.new`).
+- **README có phần tiếng Anh;** thêm `docs/troubleshooting.md` (trust, tin kẹt ô nhập, danh tính git, `.new`, limit) và phần self-pane trong `docs/herdr-windows.md`.
+- **Hướng dẫn agent (skeleton v12):** Rev và worker phải báo planner trước khi dừng giữa chừng (test đỏ, merge bị chặn, kẹt) và chạy test ở foreground. Project cũ nhận qua `crew upgrade`.
+- **`crew queue <tên> <file-prompt>` với tên đã có trong hàng đợi cập nhật prompt** (giữ vị trí); `crew queue` cảnh báo khi file prompt gốc đã sửa sau lúc xếp hàng.
+- **`crew hot` hiện `working (nền)`** khi agent đang chờ lệnh chạy nền, thay vì báo nhầm `done`.
+
+### Sửa
+- **Không còn mất task khi planner và Rev chạy lệnh crew cùng lúc:** `.crew/tasks.json`, `queue.json`, `sessions.json` và sổ project ghi nguyên tử, đọc-sửa-ghi tasks/queue có khóa (`.crew/state.lock`).
+- **`crew send` tới Codex đang bận:** tin dài (nhiều dòng) hoặc tin thứ hai liên tiếp tự vào hàng đợi của Codex, không còn nằm lại ô nhập.
+- **`crew send <codex> "/new"`** không còn báo nhầm "hộp thoại lạ"; tin gửi ngay sau đó không bị mất chữ đầu.
+- **Gọi `crew` từ Windows PowerShell 5.1 với ≥3 tên task** (`crew review a,b,c`) không còn lỗi tham số. Cần chạy lại lệnh cài 1 dòng để nhận shim mới.
+- **`crew task` và `crew repair` không gửi chồng lên tin còn kẹt trong ô nhập của worker** — dừng và chỉ chỗ cần xử lý, như `crew send`/`crew review`.
+- **`crew send <claude> "/clear"`** chờ phiên mới sẵn sàng, tin gửi ngay sau đó không mất chữ.
+- **`crew up -DryRun` trên project tạo bằng bản rất cũ** (chưa có tên crew) không còn báo lỗi.
+- **Cảnh báo lặp của herdr-app** khi crew chờ space/tab chỉ in một lần.
+- `crew help` hiển thị đúng trên console code page 437.
+
+### Khác
+- CI bỏ qua push/PR chỉ đổi tài liệu/context; lượt mới hủy lượt cũ cùng nhánh. `crew check` chạy cả test trong `tools/` được sửa; CI dùng `actions/checkout@v5`; công cụ kiểm phát hành chọn đúng Pester < 5.
+
+### Chưa kiểm
+- Linux/macOS (tạm ngưng). Reboot thật và gõ chữ Việt bằng IME chưa thử; đã thử giả lập reboot và các luồng trên trên herdr-app/hc/Claude/Codex thật.
+
 ## 2026-11-18 — hàng đợi chắc hơn, CI chỉ Windows
 
 ### Sửa

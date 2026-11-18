@@ -79,36 +79,32 @@ function Invoke-Up {
     }
   }
 
-  # Sau reboot/crash core giữ tên terminal nhưng chỉ còn shell trống ⇒ bật lại agent, mở lại hội thoại cũ nếu sổ phiên cho phép.
+  # Sau reboot/crash core hoặc agent thoát, terminal chỉ còn shell trống ⇒ bật lại agent, mở lại hội thoại cũ nếu sổ phiên cho phép.
   $shellOps = New-HcOps
   foreach ($n in @($mine | Where-Object { $live -contains $_ })) {
     if ($self -and $n -ceq $self.name) {
-      if ($selfState -eq 'exited' -and -not $selfJob) { Say "cảnh báo: agent của $n đã thoát, pane chỉ còn shell. Bật lại: crew up -Restart $($n.Substring($slug.Length + 1))" }
       continue
     }
     try {
       $info = & $shellOps.Get $n
       if (-not $info) { throw 'hc get không trả terminal' }
       $shell = Get-TermShellState $info { & $shellOps.Read $n }
-      if ($shell -eq 'lost') {
+      if ($shell -in 'lost', 'exited') {
         # Đọc lại ngay trước kill: tên/address/chủ và dấu hiệu shell phải còn đúng.
         $fresh = & $shellOps.Get $n
         if (-not $info.address -or $info.name -cne $n -or
             -not (Test-TermOwner $fresh $root) -or $fresh.address -cne $info.address -or $fresh.name -cne $info.name -or
-            (Get-TermShellState $fresh { & $shellOps.Read $n }) -ne 'lost') {
+            (Get-TermShellState $fresh { & $shellOps.Read $n }) -ne $shell) {
           throw 'không xác minh được chủ, tên/địa chỉ hoặc shell trống ở lần đọc mới'
         }
         Stop-Term $fresh.address
         $live = @($live | Where-Object { $_ -ne $n })
         $lostTerms += $n
-        Say "$n chỉ còn shell trống (máy khởi động lại hoặc core mất chương trình), bật lại agent."
+        Say "$n chỉ còn shell trống (máy khởi động lại hoặc agent đã thoát), bật lại agent."
       }
     } catch {
       Say "cảnh báo: không tắt $n — $($_.Exception.Message); giữ pane, không bật agent chồng lên."
       continue
-    }
-    if ($shell -eq 'exited') {
-      Say "cảnh báo: agent của $n đã thoát, pane chỉ còn shell. Bật lại: crew up -Restart $($n.Substring($slug.Length + 1))"
     }
   }
 

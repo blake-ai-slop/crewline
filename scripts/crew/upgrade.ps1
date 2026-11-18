@@ -151,6 +151,12 @@ function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual,
   Write-Host "$(if ($dry) { 'Sẽ cập nhật' } else { 'Đã cập nhật' }) ($($replace.Count)): $(if ($replace.Count) { & $join $replace } else { '-' })"
   $pairs = @($manual | ForEach-Object { "$_ -> $_.new" })
   Write-Host "Giữ bản của bạn, bản mới $(if ($dry) { 'sẽ ' })ở .new ($($manual.Count)): $(if ($pairs.Count) { $pairs -join ', ' } else { '-' })" -ForegroundColor $(if ($pairs.Count) { 'Yellow' } else { 'Gray' })
+  if ($manual.Count -and $dry) { Write-Host 'Xem khác biệt sau khi chạy crew upgrade thật (.new sẽ có sau khi chạy thật):' }
+  foreach ($file in $manual) {
+    $quoted = "'" + $file.Replace("'", "''") + "'"
+    $quotedNew = "'" + ($file + '.new').Replace("'", "''") + "'"
+    Write-Host "  git diff --no-index -- $quoted $quotedNew"
+  }
   $kept = @($keep) + @($openBlocks | ForEach-Object { "$_ (thiếu <!-- /crew -->)" })
   Write-Host "Giữ nguyên ($($kept.Count)): $(if ($kept.Count) { & $join $kept } else { '-' })"
   $todo = @()

@@ -112,7 +112,7 @@ function Invoke-Clean {
     try { $warn = Remove-TaskGit $root $t ([bool]$Force) }
     catch { Die "$($_.Exception.Message)`n  Bản ghi task $Name vẫn giữ trong .crew/tasks.json — sửa xong chạy lại: crew clean $Name" }
   }
-  Save-Tasks $root @($tasks | Where-Object { $_.name -ne $Name })
+  $null = Update-Tasks $root { param($current) $current | Where-Object { $_.name -ne $Name } }
   foreach ($w in $warn) { Write-Host "crew: CẢNH BÁO: $w" -ForegroundColor Yellow }
   Say "đã dọn task $Name."
   Invoke-QueueAuto $root

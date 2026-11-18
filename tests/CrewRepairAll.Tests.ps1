@@ -13,6 +13,14 @@ $FakeHc = @'
 #!/usr/bin/env pwsh
 $dir = $env:FAKE_HC_DIR
 $file = Join-Path $dir 'terminals.json'
+if ($env:FAKE_HC_HANG -and ($args -join ' ') -like "*$($env:FAKE_HC_HANG)*") {
+  $childInfo = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+  $childInfo.UseShellExecute = $false
+  foreach ($arg in @('-NoProfile', '-Command', 'Start-Sleep -Seconds 180')) { $childInfo.ArgumentList.Add($arg) }
+  $child = [Diagnostics.Process]::Start($childInfo)
+  "$PID,$($child.Id)" | Set-Content -LiteralPath (Join-Path $dir 'hang-pids.txt')
+  Start-Sleep -Seconds 180
+}
 Add-Content -LiteralPath (Join-Path $dir 'hc.log') -Value ($args -join ' ') -Encoding utf8
 $terms = @(if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json | ForEach-Object { $_ } })
 switch ($args[0]) {
@@ -84,7 +92,7 @@ function New-Ctx {
       if (-not $src.StartsWith($bin)) { throw "PATH test trỏ tới $c thật: $src" }
     }
   } finally { $env:PATH = $saved }
-  @{ Home = $h; State = $state; Env = @{ PATH = $path; FAKE_HC_DIR = $state; FAKE_HC_FAIL = $null; HC_SESSION = "crew-test-$([guid]::NewGuid().ToString('N'))"; HC_TERMINAL_ID = $null; HC_TERMINAL_SOCKET = $null } }
+  @{ Home = $h; State = $state; Env = @{ PATH = $path; FAKE_HC_DIR = $state; FAKE_HC_FAIL = $null; FAKE_HC_HANG = $null; HC_SESSION = "crew-test-$([guid]::NewGuid().ToString('N'))"; HC_TERMINAL_ID = $null; HC_TERMINAL_SOCKET = $null } }
 }
 
 # Repo git thật + .crew/config.json. $name/$key rỗng ⇒ config kiểu cũ thiếu khóa đó.
@@ -201,6 +209,76 @@ Describe 'Get-UpChildResult + Format-UpAllSummary' {
 }
 
 Describe 'crew up -All (hc giả)' {
+  It 'ba project: một treo bị kill cả cây, hai project khác vẫn ok dưới 60 giây' {
+    $ctx = New-Ctx
+    $a = New-Repo $ctx 'before' 'before' 'before'
+    $hang = New-Repo $ctx 'hangdir' 'hang' 'hang'
+    $b = New-Repo $ctx 'after' 'after' 'after'
+    $ctx.Env.FAKE_HC_HANG = 'hangdir'
+    Set-Reg $ctx @(@('before', $a, 'before'), @('hang', $hang, 'hang'), @('after', $b, 'after'))
+    # Terminal đã bật thuộc server, không bị gọi hc kill khi timeout.
+    Set-Terms $ctx @(New-Term 'kept-w1' 't90' (Join-Path $hang '.crew/worktrees/w1'))
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+      $r = Invoke-Crew $ctx @('up', '-All', '-Timeout', '10')
+      $watch.Elapsed.TotalSeconds -lt 60 | Should Be $true
+      $r.ExitCode | Should Be 1
+      Get-SummaryRow $r.Output $a | Should Match '  ok\s+\d+[.,]\d+s$'
+      Get-SummaryRow $r.Output $hang | Should Match 'hết giờ\s+\d+[.,]\d+s$'
+      Get-SummaryRow $r.Output $b | Should Match '  ok\s+\d+[.,]\d+s$'
+      $r.Output | Should Match 'hết giờ: hang'
+      $r.Output | Should Match 'thời gian'
+      foreach ($name in 'before-w1', 'after-w1') {
+        @(Get-HcLog $ctx | Where-Object { $_ -match "^run .*--name $name " }).Count | Should Be 1
+      }
+      @(Get-HcLog $ctx | Where-Object { $_ -match '^kill ' }).Count | Should Be 0
+      $pidsFile = Join-Path $ctx.State 'hang-pids.txt'
+      Test-Path $pidsFile | Should Be $true
+      $hangPids = (Get-Content $pidsFile -Raw).Trim() -split ','
+      $hangPids.Count | Should Be 2
+      # Kill(true) có thể trả trước khi hệ điều hành hoàn tất dọn con.
+      $until = [DateTime]::UtcNow.AddSeconds(3)
+      do {
+        $alive = @($hangPids | ForEach-Object { Get-Process -Id ([int]$_) -ErrorAction SilentlyContinue })
+        if ($alive.Count) { Start-Sleep -Milliseconds 50 }
+      } while ($alive.Count -and [DateTime]::UtcNow -lt $until)
+      $alive.Count | Should Be 0
+      @(Get-Content (Join-Path $ctx.State 'terminals.json') -Raw | ConvertFrom-Json | Where-Object { $_.name -eq 'kept-w1' }).Count | Should Be 1
+    } finally {
+      $watch.Stop()
+      $pidsFile = Join-Path $ctx.State 'hang-pids.txt'
+      if (Test-Path $pidsFile) {
+        foreach ($childPid in ((Get-Content $pidsFile -Raw).Trim() -split ',')) { Stop-Process -Id ([int]$childPid) -Force -ErrorAction SilentlyContinue }
+      }
+    }
+  }
+
+  It 'ba project đều ok, -Timeout 0 không giới hạn -> exit 0 và từng dòng ok' {
+    $ctx = New-Ctx
+    $roots = @(foreach ($n in 'one', 'two', 'three') { New-Repo $ctx $n $n $n })
+    Set-Reg $ctx @(@('one', $roots[0], 'one'), @('two', $roots[1], 'two'), @('three', $roots[2], 'three'))
+    $r = Invoke-Crew $ctx @('up', '-All', '-Timeout', '0')
+    $r.ExitCode | Should Be 0
+    foreach ($root in $roots) { Get-SummaryRow $r.Output $root | Should Match '  ok\s+\d+[.,]\d+s$' }
+    foreach ($n in 'one', 'two', 'three') {
+      @(Get-HcLog $ctx | Where-Object { $_ -match "^run .*--name $n-w1 " }).Count | Should Be 1
+    }
+  }
+
+  It 'ba project có một lỗi: ghi mã 1, hai project còn lại ok' {
+    $ctx = New-Ctx
+    $a = New-Repo $ctx 'gooda' 'gooda' 'gooda'
+    $bad = New-Repo $ctx 'bad' 'bad' 'bad'
+    $b = New-Repo $ctx 'goodb' 'goodb' 'goodb'
+    $ctx.Env.FAKE_HC_FAIL = 'bad'
+    Set-Reg $ctx @(@('gooda', $a, 'gooda'), @('bad', $bad, 'bad'), @('goodb', $b, 'goodb'))
+    $r = Invoke-Crew $ctx @('up', '-All')
+    $r.ExitCode | Should Be 1
+    Get-SummaryRow $r.Output $a | Should Match '  ok\s+\d+[.,]\d+s$'
+    Get-SummaryRow $r.Output $bad | Should Match 'lỗi mã 1'
+    Get-SummaryRow $r.Output $b | Should Match '  ok\s+\d+[.,]\d+s$'
+  }
+
   It 'trộn ok, lỗi, cần người quyết, bỏ qua: project lỗi không chặn project sau, exit 1, sổ giữ nguyên' {
     $ctx = New-Ctx
     $ctx.Env.FAKE_HC_FAIL = 'boomdir'
@@ -215,7 +293,7 @@ Describe 'crew up -All (hc giả)' {
     $r.ExitCode | Should Be 1
     Get-SummaryRow $r.Output $boom | Should Match 'lỗi'
     Get-SummaryRow $r.Output $hum | Should Match 'cần người quyết'
-    Get-SummaryRow $r.Output $spaced | Should Match '  ok$'
+    Get-SummaryRow $r.Output $spaced | Should Match '  ok\s+\d+[.,]\d+s$'
     Get-SummaryRow $r.Output $gone | Should Match 'bỏ qua: thư mục không còn'
     Get-SummaryRow $r.Output $noCfg | Should Match 'bỏ qua: không còn \.crew/config\.json'
     # project sau project lỗi vẫn chạy, đường dẫn có dấu cách tới đúng worktree
@@ -230,13 +308,13 @@ Describe 'crew up -All (hc giả)' {
     @(Get-ChildItem -LiteralPath $noCfg -Force).Count | Should Be 0
   }
 
-  It 'chỉ có ok và bỏ qua -> exit 0' {
+  It 'chỉ có ok và bỏ qua -> exit 1 vì không phải mọi project ok' {
     $ctx = New-Ctx
     $a = New-Repo $ctx 'aa' 'aa' 'aa'
     Set-Reg $ctx @(@('aa', $a, 'aa'), @('gone', (Join-Path $TestDrive 'khong-co'), 'gone'))
     $r = Invoke-Crew $ctx @('up', '-All')
-    $r.ExitCode | Should Be 0
-    Get-SummaryRow $r.Output $a | Should Match '  ok$'
+    $r.ExitCode | Should Be 1
+    Get-SummaryRow $r.Output $a | Should Match '  ok\s+\d+[.,]\d+s$'
   }
 
   It 'đứng trong project cũ chưa có trong sổ (từ thư mục con và worktree) -> được khôi phục, ghi tên vào config và sổ theo slug cũ' {
@@ -247,7 +325,7 @@ Describe 'crew up -All (hc giả)' {
     New-Item -ItemType Directory -Force (Join-Path $old 'src') | Out-Null
     $r = Invoke-Crew $ctx @('up', '-All') (Join-Path $old 'src')
     $r.ExitCode | Should Be 0
-    Get-SummaryRow $r.Output $old | Should Match '  ok$'
+    Get-SummaryRow $r.Output $old | Should Match '  ok\s+\d+[.,]\d+s$'
     $cfg = Get-Content -LiteralPath (Join-Path $old '.crew/config.json') -Raw | ConvertFrom-Json
     $cfg.name | Should BeExactly 'project-trac'
     $cfg.idKey | Should BeExactly 'projecttrac'
@@ -268,9 +346,9 @@ Describe 'crew up -All (hc giả)' {
     Set-Reg $ctx @(@('aa', $a, 'aa'), @('gone', $gone, 'gone'))
     $before = Get-Snapshot @($a, $old, (Join-Path $ctx.Home.Home '.crewline'))
     $r = Invoke-Crew $ctx @('up', '-All', '-DryRun') $old
-    $r.ExitCode | Should Be 0
+    $r.ExitCode | Should Be 1
     $r.Output | Should Match 'sẽ ghi name ''project-trac'''
-    Get-SummaryRow $r.Output $old | Should Match '  ok$'
+    Get-SummaryRow $r.Output $old | Should Match '  ok\s+\d+[.,]\d+s$'
     Get-Snapshot @($a, $old, (Join-Path $ctx.Home.Home '.crewline')) | Should Be $before
     @(Get-Written $ctx).Count | Should Be 0
     Test-Path -LiteralPath $gone | Should Be $false

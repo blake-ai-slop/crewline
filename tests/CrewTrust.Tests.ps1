@@ -176,11 +176,56 @@ Describe 'crew up với terminal giả' {
       @($script:Stopped).Count | Should Be 0
       @($script:Started).Count | Should Be 0
     }
-    It 'agent crew bật đã thoát: chỉ cảnh báo kèm lệnh bật lại, không tự tắt' {
-      $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' } @{ 'demo-w1' = $exitedInfo; 'demo-w2' = $okInfo }
+    It 'agent crew bật đã thoát: đủ dữ liệu thì tắt đúng t7, resume w1, không nhắc -Restart' -Skip:($IsWindows -eq $false) {
+      $complete = $exitedInfo.PSObject.Copy()
+      $complete | Add-Member name 'demo-w1'
+      $complete | Add-Member cwd ([string]$TestDrive)
+      $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' } @{ 'demo-w1' = $complete; 'demo-w2' = $okInfo }
+      $script:TrustBook = New-SessionBook
+      Set-SessionRecord $script:TrustBook ([string]$TestDrive) (Get-Config $TestDrive) 'w1' 'claude' $null
+      function Read-SessionBook($root) { $script:TrustBook }
+      $script:ResumedSession = $null
+      function Start-WorkerTerm($r, $c, $ids, $slug, $n, $m, $session) {
+        $script:Started += "w$n"
+        $script:ResumedSession = $session
+        $script:UpOps.State.Infos['demo-w1'] = New-TrustInfo claude
+        @{ address = "t$n" }
+      }
       Invoke-Up
-      @($script:Stopped).Count | Should Be 0
-      ($script:Messages -join "`n") | Should Match 'crew up -Restart w1'
+      $script:Stopped | Should Be 't7'
+      $script:Started | Should Be 'w1'
+      $script:ResumedSession.Mode | Should Be 'continue'
+      ($script:Messages -join "`n") | Should Match 'demo-w1: mở lại hội thoại'
+      ($script:Messages -join "`n") | Should Not Match '-Restart'
+      $script:UpOps.State.Keys | Should Be 0
+    }
+    It 'agent crew bật đã thoát: fresh thiếu tên/cwd/address thì giữ pane, không Stop hoặc bật chồng' -Skip:($IsWindows -eq $false) {
+      foreach ($missing in 'name', 'cwd', 'address') {
+        $script:Stopped = @(); $script:Started = @()
+        $script:Messages.Clear()
+        $complete = $exitedInfo.PSObject.Copy()
+        $complete | Add-Member name 'demo-w1'
+        $complete | Add-Member cwd ([string]$TestDrive)
+        $fresh = $complete.PSObject.Copy()
+        $fresh.PSObject.Properties.Remove($missing)
+        $getState = @{ Calls = 0 }
+        $other = $okInfo
+        $script:UpOps = New-TrustOps @{ 'demo-w1' = 'PS C:\repo> '; 'demo-w2' = '' }
+        $script:UpOps.Get = {
+          param($t)
+          if ($t -eq 'demo-w1') {
+            $getState.Calls++
+            if ($getState.Calls -eq 1) { $complete } else { $fresh }
+          } else { $other }
+        }.GetNewClosure()
+        Invoke-Up
+        $getState.Calls | Should Be 2
+        @($script:Stopped).Count | Should Be 0
+        @($script:Started).Count | Should Be 0
+        ($script:Messages -join "`n") | Should Match 'không xác minh được.*giữ pane'
+        ($script:Messages -join "`n") | Should Not Match '-Restart'
+        $script:UpOps.State.Keys | Should Be 0
+      }
     }
   }
 }

@@ -5,7 +5,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
 $want = 'Get-Flags', 'Quote', 'Get-AgentCommand', 'ConvertTo-RootKey', 'Test-SamePath', 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode',
-  'Get-TermShellState', 'Get-InputBox', 'Get-ScreenDialog', 'Wait-WorkerReady', 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook',
+  'Get-TermShellState', 'Get-InputBox', 'Get-ScreenDialog', 'Wait-WorkerReady', 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Write-CrewStateFile',
   'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
@@ -377,6 +377,23 @@ Describe 'crew up: lần đầu rồi khôi phục (hc giả)' {
     (Get-Cmds $ctx 'lost-w1') | Should BeExactly "codex resume --last $px"
     @(Get-Sends $ctx).Count | Should Be 0
   }
+  It 'agent đã thoát (exited) ⇒ kill đúng address, mở lại đúng phiên' -Skip:(-not $OnWindows) {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'lost' 'claude' 'none' @('codex')
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    $id = (Get-Book $root).roles.planner.sessionId
+    Set-LostPanes $ctx $root @{ 'lost-planner' = $root; 'lost-w1' = (Join-Path $root '.crew/worktrees/w1') }
+    $terms = @(Get-Content -LiteralPath (Get-TermsFile $ctx) -Raw | ConvertFrom-Json)
+    foreach ($term in $terms) { $term.argv = @('pwsh', '-NoExit', '-EncodedCommand', 'x') }
+    ConvertTo-Json -InputObject $terms -Depth 6 | Set-Content -LiteralPath (Get-TermsFile $ctx) -Encoding utf8
+    $r = Invoke-Crew $ctx @('up') $root
+    $r.ExitCode | Should Be 0
+    @(Get-Log $ctx 'hc.log' | Where-Object { $_ -match '^kill ' }).Count | Should Be 2
+    (Get-Cmds $ctx 'lost-planner') | Should BeExactly "claude $pc --resume $id"
+    (Get-Cmds $ctx 'lost-w1') | Should BeExactly "codex resume --last $px"
+    foreach ($term in $terms) { @(Get-Log $ctx 'hc.log') -contains "kill $($term.address)" | Should Be $true }
+    @(Get-Sends $ctx).Count | Should Be 0
+  }
   It 'worker Codex/Claude có task dở: mở lại rồi nhận đúng 1 dòng tiếp tục task; lần hai 0 tin' {
     $ctx = New-Ctx
     $root = New-Repo $ctx 'dodang' 'none' 'none' @('claude')
@@ -397,6 +414,60 @@ Describe 'crew up: lần đầu rồi khôi phục (hc giả)' {
     Clear-Log $ctx
     (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
     @(Get-Sends $ctx).Count | Should Be 0
+  }
+  It 'worker exited có task dở: mở lại rồi nhận đúng 1 dòng tiếp tục task; lần hai 0 tin' {
+    $ctx = New-Ctx
+    $root = New-Repo $ctx 'dodang' 'none' 'none' @('claude')
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    $wt = Join-Path $root '.crew/worktrees/w1'
+    git -C $wt switch -q -c crew/viec main
+    New-Item -ItemType Directory -Force (Join-Path $wt '.crew') | Out-Null
+    'prompt' | Set-Content -LiteralPath (Join-Path $wt '.crew/prompt.md')
+    $rec = [ordered]@{ name = 'viec'; branch = 'crew/viec'; worktree = $wt; worker = 1; terminal = 'dodang-w1'; agent = 'claude'; created = '2026-11-02T00:00:00' }
+    ConvertTo-Json -InputObject @($rec) -Depth 5 | Set-Content -LiteralPath (Join-Path $root '.crew/tasks.json') -Encoding utf8
+    Set-LostPanes $ctx $root @{ 'dodang-w1' = $wt }
+    $terms = @(Get-Content -LiteralPath (Get-TermsFile $ctx) -Raw | ConvertFrom-Json)
+    $terms[0].argv = @('pwsh', '-NoExit', '-EncodedCommand', 'x')
+    ConvertTo-Json -InputObject $terms -Depth 6 | Set-Content -LiteralPath (Get-TermsFile $ctx) -Encoding utf8
+    $r = Invoke-Crew $ctx @('up') $root
+    $r.ExitCode | Should Be 0
+    (Get-Cmds $ctx 'dodang-w1') | Should BeExactly "claude $pc --continue"
+    $sends = @(Get-Sends $ctx)
+    $sends.Count | Should Be 1
+    $sends[0] | Should Match 'Tiếp tục task viec'
+    Clear-Log $ctx
+    (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+    @(Get-Sends $ctx).Count | Should Be 0
+  }
+  It 'L4: commit note sạch chưa XONG được giao Tiếp tục, doneAt thì không (bản ghi mới)' {
+    foreach ($done in $false, $true) {
+      $ctx = New-Ctx
+      $root = New-Repo $ctx 'l4' 'none' 'none' @('claude')
+      (Invoke-Crew $ctx @('up') $root).ExitCode | Should Be 0
+      $wt = Join-Path $root '.crew/worktrees/w1'
+      git -C $wt switch -q -c crew/viec main
+      New-Item -ItemType Directory -Force (Join-Path $wt '.crew'), (Join-Path $wt 'context/tasks') | Out-Null
+      'prompt' | Set-Content (Join-Path $wt '.crew/prompt.md')
+      'note, tests not yet run' | Set-Content (Join-Path $wt 'context/tasks/viec.md')
+      git -C $wt add -A
+      git -C $wt -c user.name=t -c user.email=t@t commit -q -m note
+      $LASTEXITCODE | Should Be 0
+      (git -C $wt status --porcelain) | Should BeNullOrEmpty
+      $rec = [ordered]@{ name='viec'; branch='crew/viec'; worktree=$wt; worker=1; terminal='l4-w1'; agent='claude'; doneTracking=$true }
+      if ($done) { $rec.doneAt = '2026-11-18T00:00:00Z' }
+      ConvertTo-Json -InputObject @($rec) | Set-Content (Join-Path $root '.crew/tasks.json') -Encoding utf8
+      Clear-Terms $ctx
+      $r = Invoke-Crew $ctx @('up') $root
+      $r.ExitCode | Should Be 0
+      $sends = @(Get-Sends $ctx)
+      if ($done) {
+        $sends.Count | Should Be 0
+        $r.Output | Should Match 'task viec có vẻ đã xong, không giao lại'
+      } else {
+        $sends.Count | Should Be 1
+        $sends[0] | Should Match 'Tiếp tục task viec'
+      }
+    }
   }
   It 'crew up -All: mở lại theo từng project' {
     $ctx = New-Ctx

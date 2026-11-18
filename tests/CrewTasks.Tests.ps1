@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 # Test Get-Tasks/Save-Tasks: trích hàm bằng AST từ crew.ps1, không chạy phần dispatch cuối file (task/hot/clean gọi hc thật).
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks' } -Recurse:$false)) {
+foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in 'Get-Tasks', 'Save-Tasks', 'Update-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock' } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
 

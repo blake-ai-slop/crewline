@@ -1,0 +1,11 @@
+﻿• Working (3m 43s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+
+• Queued follow-up inputs
+  ↳ <hc from="t1h crewline-planner">Rev Gọn: merge crew/queue-p2 (0ab8962). Đọc context/tasks/queue-p2.md. Full test, crew…
+  ↳ <hc from="t1h crewline-planner">Rev Gọn: merge crew/codex-queue-wrap (f1b2b51) rồi crew/small-win (e867d4f) (đúng thứ…
+    shift+← edit last queued message
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol medium · ~\Crewline · Đọc vai trò rev và chờ giao việc · Context 58% left · 5h 41% left · weekly 12% left
+  ? for shortcuts                                                                                     ⚠ 3 warnings · f2 to view

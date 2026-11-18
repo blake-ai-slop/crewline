@@ -4,11 +4,15 @@ name: test
 # trên Linux đang có lỗi đã biết). Repo dev: đủ test, chia 3 shard. Repo public (blake-ai-slop/crewline): push vào
 # main (phát hành) chỉ kiểm nhanh, vì bản đó đã qua full test ở repo dev.
 # workflow_dispatch: chọn os (all/windows/ubuntu/macos) để chạy tay Linux/macOS khi cần.
+# Tiết kiệm phút CI: push/PR mà MỌI file đổi đều thuộc context/, docs/ hoặc là .md thì không chạy (có lẫn code
+# là vẫn chạy). Lượt mới cùng ref hủy lượt cũ đang chạy (concurrency); lượt trên ref khác không bị đụng.
 on:
   push:
     branches: [main]
+    paths-ignore: ['context/**', 'docs/**', '**/*.md']
   pull_request:
     branches: [main]
+    paths-ignore: ['context/**', 'docs/**', '**/*.md']
   workflow_dispatch:
     inputs:
       os:
@@ -28,6 +32,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: ${{ matrix.shard == 'nhanh' && format('kiểm nhanh ({0})', matrix.os) || matrix.shard == 'file' && format('test ({0}, một file)', matrix.os) || format('test ({0}, shard {1}/3)', matrix.os, matrix.shard) }}
@@ -39,7 +47,7 @@ jobs:
         shard: ${{ fromJSON((github.event_name == 'push' && github.repository == 'blake-ai-slop/crewline' || inputs.quick) && '["nhanh"]' || inputs.test_file && '["file"]' || '["1","2","3"]') }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Chỉ khi thử kiểm nhanh trên repo dev: bỏ phần không phát hành để giống bản public.
       - name: Bỏ phần không có trên repo public

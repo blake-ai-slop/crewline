@@ -4,7 +4,21 @@ function Get-HerdrSpaces {
   if (-not (Get-Command herdr-app -ErrorAction SilentlyContinue)) { return @{ Ok = $false; Spaces = @(); Error = 'không có herdr-app' } }
   try {
     # herdr-app.exe là app GUI trên Windows: gán thẳng `$x = herdr-app ls` không chờ (stdout trống); qua pipe thì PowerShell chờ đọc hết.
-    $text = & { $ErrorActionPreference = 'Continue'; herdr-app ls 2>$null | Out-String }
+    $stderrFile = [IO.Path]::GetTempFileName()
+    try {
+      $text = & { $ErrorActionPreference = 'Continue'; herdr-app ls 2>$stderrFile | Out-String }
+      $code = $LASTEXITCODE
+      $stderrText = [IO.File]::ReadAllText($stderrFile).Trim()
+    } finally { Remove-Item -LiteralPath $stderrFile -ErrorAction SilentlyContinue }
+    # Cache theo lần chạy crew: các vòng chờ cùng cảnh báo chỉ in một lần.
+    if (-not (Get-Variable HerdrLsWarnings -Scope Script -ErrorAction SilentlyContinue)) { $script:HerdrLsWarnings = @{} }
+    foreach ($line in @($stderrText -split '\r?\n' | Where-Object { $_.Trim() })) {
+      if (-not $script:HerdrLsWarnings.ContainsKey($line)) {
+        $script:HerdrLsWarnings[$line] = $true
+        Write-Host "crew: herdr-app ls: $line" -ForegroundColor Yellow
+      }
+    }
+    if ($code -ne 0) { return @{ Ok = $false; Spaces = @(); Error = "herdr-app ls lỗi (exit $code): $stderrText" } }
     if (-not "$text".Trim()) { return @{ Ok = $false; Spaces = @(); Error = 'herdr-app ls không trả gì' } }
     $j = $text | ConvertFrom-Json
     if ($null -eq $j -or $j.PSObject.Properties.Name -notcontains 'spaces') { return @{ Ok = $false; Spaces = @(); Error = 'herdr-app ls thiếu spaces' } }
@@ -132,11 +146,27 @@ function Get-Tasks([string]$root, [switch]$ThrowOnError) {
   return , @((Read-CrewState $f -ThrowOnError:$ThrowOnError) | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
 }
 
+# Ghi nguyên tử, dưới khóa root. Ghi đè cả danh sách: chuỗi đọc-sửa-ghi mới dùng Update-Tasks để không mất task của lệnh chạy song song.
 function Save-Tasks([string]$root, $tasks) {
   $file = Join-Path $root '.crew/tasks.json'
-  if (Test-Path -LiteralPath $file) { $null = Read-CrewState $file }
-  $list = @($tasks | Where-Object { $null -ne $_ })
-  ConvertTo-Json -InputObject $list -Depth 100 | Set-Content (Join-Path $root '.crew/tasks.json') -Encoding utf8
+  Use-CrewStateLock $root {
+    if (Test-Path -LiteralPath $file) { $null = Read-CrewState $file }
+    $list = @($tasks | Where-Object { $null -ne $_ })
+    Write-CrewStateFile $file ((ConvertTo-Json -InputObject $list -Depth 100) + [Environment]::NewLine)
+  }
+}
+
+# Đọc-sửa-ghi tasks.json dưới khóa root: $change nhận danh sách hiện tại (luôn mảng), trả danh sách mới. Trả danh sách đã ghi.
+# $change ném lỗi ⇒ không ghi. Khóa bận quá $TimeoutMs ⇒ ném lỗi.
+function Update-Tasks([string]$root, [scriptblock]$change, [switch]$ThrowOnError, [int]$TimeoutMs = 10000) {
+  Use-CrewStateLock $root {
+    $current = Get-Tasks $root -ThrowOnError:$ThrowOnError
+    $before = ConvertTo-Json -InputObject @($current) -Depth 100
+    $next = @(& $change $current | Where-Object { $null -ne $_ })
+    $after = ConvertTo-Json -InputObject $next -Depth 100
+    if ($after -cne $before) { Save-Tasks $root $next }
+    , $next
+  } $TimeoutMs
 }
 
 function Get-Flags([string]$kind, [string]$access) {

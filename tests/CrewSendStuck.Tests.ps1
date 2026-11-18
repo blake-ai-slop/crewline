@@ -1,8 +1,8 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tin kẹt ở ô nhập + nhận nhầm hộp thoại: hàm thật qua AST, hc giả. Fixture Codex lấy từ màn hình thật 2026-11-02 (hc 0.1.16, codex-cli 0.166.0).
 
-$want = 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review'
+$want = 'Get-WorkerInputError', 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Test-SessionReady', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review', 'Update-Tasks'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -188,8 +188,9 @@ Describe 'Get-ScreenDialog không nhận nhầm do lịch sử' {
   }
   It 'gửi tới Rev rảnh có Allow command trong lịch sử: Enter bình thường, không báo hộp lạ' {
     $screen = "Allow command`n$Stuck"
+    # Codex chỉ Enter khi ô nhập đúng tin vừa gửi ⇒ gửi đúng chữ đang nằm trong ô ($Stuck chứa $Msg)
     $ops = New-StuckOps @((New-StuckInfo), (New-StuckInfo), (New-StuckInfo), (New-StuckInfo -status 'working')) @($screen) '{"started":false}'
-    $r = Invoke-SendFlow 'demo-rev' 'tin' $ops
+    $r = Invoke-SendFlow 'demo-rev' 'nội dung tin' $ops
     $r.Ok | Should Be $true
     $ops.State.Enter | Should Be 1
   }
@@ -494,5 +495,166 @@ Describe 'Send-CodexQueue: chữ khác tin vừa gửi hoặc trạng thái đ�
     $ops = New-StuckOps @((& $w)) @($screen, $CodexEmpty)
     (Send-CodexQueue 't' $sent @{ Read = $ops.Read; Get = { param($t) $last }.GetNewClosure(); Tab = $ops.Tab; Sleep = $ops.Sleep }).Message | Should Match 'tin vào hàng đợi của Codex'
     $ops.State.Tab | Should Be 1
+  }
+}
+
+# Fixture dựng theo màn hình Codex v0.166 (lỗi Q3/Q4 realcheck-win 2026-11-18): tests/fixtures/codex-v0.166/*.txt
+function Get-CodexFixture([string]$n) { ([IO.File]::ReadAllText((Join-Path $PSScriptRoot "fixtures/codex-v0.166/$n.txt")) -replace "`r`n", "`n").TrimEnd("`n") }
+$QWrap = Get-CodexFixture 'queue-wrap'
+$QWrapAfter = Get-CodexFixture 'queue-wrap-after-tab'
+$NewSession = Get-CodexFixture 'new-session'
+$NewDrawing = Get-CodexFixture 'new-session-drawing'
+$NewPicker = Get-CodexFixture 'new-picker'
+$QText = 'Rev Gọn: merge crew/codex-queue-wrap (f1b2b51) rồi crew/small-win (e867d4f) (đúng thứ tự này). Đọc context/tasks/codex-queue-wrap.md, context/tasks/small-win.md của từng task. Full test, crew clean codex-queue-wrap, crew clean small-win, báo planner. Không push.'
+
+Describe 'Codex v0.166 bận: tin dài gói dòng, có khối queued sẵn (Q3)' {
+  $w = { New-StuckInfo -status 'working' }
+  It 'Get-InputBox nhận ô nhập gói 3 dòng + dòng trống cuối ô, bỏ qua khối queued phía trên' {
+    $box = Get-InputBox $QWrap
+    $box.Kind | Should Be 'codex'
+    @($box.Lines).Count | Should Be 3
+    $box.Text | Should Match '^<hc from="t1h crewline-planner">Rev Gọn: merge crew/codex-queue-wrap .*Không push\.</hc>$'
+    Test-SentInput $box.Lines $QText | Should Be $true
+    Get-ScreenDialog $QWrap | Should Be ''
+    (Get-InputBox $QWrapAfter).Text | Should Be ''
+  }
+  It 'tin dài gói dòng: đúng 1 Tab, 0 Enter, xác nhận ô trống sau Tab, báo vào hàng đợi' {
+    foreach ($screen in $QWrap, ($QWrap -replace "</hc>`n`n`n", "</hc>`n`n")) {
+      $ops = New-StuckOps @((& $w)) @($screen, $QWrapAfter)
+      $r = Invoke-SendFlow 'crewline-rev' $QText $ops
+      $r.Ok | Should Be $true
+      $r.Queued | Should Be $true
+      $r.Message | Should Match 'tin vào hàng đợi của Codex'
+      $ops.State.Tab | Should Be 1
+      $ops.State.Enter | Should Be 0
+    }
+  }
+  It 'lần đọc đầu ô nhập chưa vẽ xong: đọc lại, rồi đúng 1 Tab' {
+    $half = $QWrap -replace '(?s)\n  này\)\..*?</hc>', ''
+    $ops = New-StuckOps @((& $w)) @($half, $QWrap, $QWrapAfter)
+    (Invoke-SendFlow 'crewline-rev' $QText $ops).Message | Should Match 'tin vào hàng đợi của Codex'
+    $ops.State.Tab | Should Be 1
+  }
+  It 'tin ngắn 1 dòng vẫn đạt khi có khối queued' {
+    $short = $QWrap -replace '(?s)\n› <hc.*</hc>', "`n› <hc from=`"t1h crewline-planner`">alpha không push</hc>"
+    $ops = New-StuckOps @((& $w)) @($short, $QWrapAfter)
+    (Invoke-SendFlow 'crewline-rev' 'alpha không push' $ops).Message | Should Match 'tin vào hàng đợi của Codex'
+    $ops.State.Tab | Should Be 1
+  }
+  It 'ô nhập có chữ người dùng gõ khác tin (cả khi gói dòng, có khối queued): 0 Tab, 0 Enter' {
+    $user = $QWrap -replace 'Không push\.</hc>', 'Không push.</hc> rồi push public luôn'
+    $draft = $QWrap -replace '(?s)\n› <hc.*</hc>', "`n› bản nháp của người dùng về crew/codex-queue-wrap, chưa gửi`n  dòng hai của bản nháp"
+    foreach ($screen in $user, $draft) {
+      $ops = New-StuckOps @((& $w)) @($screen)
+      $r = Invoke-SendFlow 'crewline-rev' $QText $ops
+      $r.Message | Should Match 'tin có thể nằm lại ô nhập'
+      $ops.State.Tab | Should Be 0
+      $ops.State.Enter | Should Be 0
+    }
+  }
+  It 'sau Tab ô vẫn còn chữ: báo không chắc, không bấm thêm' {
+    $ops = New-StuckOps @((& $w)) @($QWrap)
+    (Invoke-SendFlow 'crewline-rev' $QText $ops).Message | Should Match 'tin có thể nằm lại ô nhập'
+    $ops.State.Tab | Should Be 1
+    $ops.State.Enter | Should Be 0
+  }
+  It 'hộp thoại hoặc hết working ngay trước phím: 0 Tab' {
+    foreach ($c in @(@{ Get = (& $w); Screen = "$QWrap`nAllow command?`n› 1. Yes, proceed (y)" }, @{ Get = (New-StuckInfo -status 'blocked'); Screen = $QWrap })) {
+      $ops = New-StuckOps @((& $w)) @($c.Screen)
+      $last = $c.Get
+      (Send-CodexQueue 't' $QText @{ Read = $ops.Read; Get = { param($t) $last }.GetNewClosure(); Tab = $ops.Tab; Sleep = $ops.Sleep }).Message | Should Match 'tin có thể nằm lại ô nhập'
+      $ops.State.Tab | Should Be 0
+    }
+  }
+  It 'Codex rảnh, tin dài nằm lại với dòng trống cuối ô: crew hot thấy tin kẹt' {
+    Get-StuckText codex idle $QWrap | Should Match '^<hc from="t1h crewline-planner">Rev Gọn'
+  }
+}
+
+Describe 'Codex v0.166: crew send /new rồi tin thường (Q4)' {
+  BeforeEach { $script:Said = @() }
+  It 'màn hình phiên mới có logo + banner Update available: sẵn sàng, không phải hộp thoại' {
+    Get-ScreenDialog $NewSession | Should Be ''
+    Test-SessionReady 'codex' (New-StuckInfo) $NewSession | Should Be $true
+    (Get-InputBox $NewSession).Text | Should Be ''
+    Get-ScreenDialog $NewPicker | Should Be 'codex-new'
+  }
+  It "crew send '/new': hộp chọn worktree thì đúng 1 Enter, chờ phiên mới rồi báo đã gửi" {
+    $ops = New-StuckOps @((New-StuckInfo)) @($CodexEmpty, $NewPicker, $NewPicker, $NewDrawing, $NewSession) '{"started":false}'
+    Send-CrewMessage 'crewline-rev' '/new' $true '' $ops
+    $ops.State.Enter | Should Be 1
+    $ops.State.Send | Should Be 1
+    ($script:Said -join "`n") | Should Match 'đã gửi -> crewline-rev'
+  }
+  It "crew send '/new' mở thẳng phiên mới: 0 Enter" {
+    $ops = New-StuckOps @((New-StuckInfo)) @($CodexEmpty, $NewSession) '{"started":false}'
+    Send-CrewMessage 'crewline-rev' '/new' $false '' $ops
+    $ops.State.Enter | Should Be 0
+    ($script:Said -join "`n") | Should Match 'đã gửi -> crewline-rev'
+  }
+  It "crew send '/new' mà hộp lạ hiện ra: lỗi, 0 Enter" {
+    $ops = New-StuckOps @((New-StuckInfo)) @($CodexEmpty, "Allow command?`n› 1. Yes, proceed (y)`n  2. No (esc)") '{"started":false}'
+    { Send-CrewMessage 'crewline-rev' '/new' $false '' $ops } | Should Throw 'hộp thoại lạ'
+    $ops.State.Enter | Should Be 0
+  }
+  It 'tin thường khi hộp chọn /new còn mở: không gửi, 0 phím' {
+    $ops = New-StuckOps @((New-StuckInfo)) @($NewPicker)
+    { Send-CrewMessage 'crewline-rev' $Msg $false '' $ops } | Should Throw 'hộp chọn của /new'
+    $ops.State.Send | Should Be 0
+    $ops.State.Enter | Should Be 0
+    $ops.State.Tab | Should Be 0
+  }
+  It 'tin thường khi phiên mới chưa vẽ ô nhập: chờ tới khi sẵn sàng rồi mới gửi' {
+    $ops = New-StuckOps @((New-StuckInfo), (New-StuckInfo), (New-StuckInfo), (New-StuckInfo -status 'working')) @($NewDrawing, $NewDrawing, $NewSession)
+    Send-CrewMessage 'crewline-rev' 'nội dung tin' $false '' $ops
+    $ops.State.Send | Should Be 1
+    $ops.State.Ri -ge 3 | Should Be $true   # 3 lần đọc chờ sẵn sàng trước khi gửi
+    $ops.State.Enter | Should Be 0
+  }
+  It 'phiên mới mãi chưa sẵn sàng: không gửi' {
+    $ops = New-StuckOps @((New-StuckInfo)) @($NewDrawing)
+    { Send-CrewMessage 'crewline-rev' 'nội dung tin' $false '' $ops } | Should Throw 'chưa hiện ô nhập sẵn sàng'
+    $ops.State.Send | Should Be 0
+  }
+  It 'sau gửi ô nhập còn tin mất đầu: báo kẹt, 0 Enter (started false hoặc true)' {
+    $cut = $NewSession -replace '› Ask Codex to do anything', '› h crewline-planner">nội dung tin</hc>'
+    foreach ($json in '{"started":false}', '{"started":true}') {
+      $ops = New-StuckOps @((New-StuckInfo)) @($NewSession, $cut) $json
+      $err = try { Send-CrewMessage 'crewline-rev' 'nội dung tin' $false '' $ops; '' } catch { "$_" }
+      $err | Should Match ([regex]::Escape('còn chữ khác tin vừa gửi: h crewline-planner">nội dung tin</hc>'))
+      $err | Should Match 'không bấm Enter'
+      $ops.State.Enter | Should Be 0
+    }
+  }
+  It 'sau gửi Enter bị nuốt, ô nhập có ĐÚNG tin (kể cả dòng trống cuối ô): Enter 1 lần như cũ' {
+    $left = $NewSession -replace '› Ask Codex to do anything', "› $Msg`n"
+    $ops = New-StuckOps @((New-StuckInfo), (New-StuckInfo), (New-StuckInfo), (New-StuckInfo), (New-StuckInfo -status 'working')) @($NewSession, $left) '{"started":false}'
+    Send-CrewMessage 'crewline-rev' 'nội dung tin' $false '' $ops
+    $ops.State.Enter | Should Be 1
+  }
+  It 'sau gửi không nhận ra ô nhập Codex: không Enter mù' {
+    $ops = New-StuckOps @((New-StuckInfo)) @($NewSession, $NewDrawing) '{"started":false}'
+    { Send-CrewMessage 'crewline-rev' 'nội dung tin' $false '' $ops } | Should Throw 'không nhận ra ô nhập Codex'
+    $ops.State.Enter | Should Be 0
+  }
+}
+
+# Fixture dựng lại theo bố cục Claude Code v2.1, không phải bản chụp máy thật.
+Describe 'Claude v2.1 /clear qua crew send' {
+  It 'chờ màn hình clear sẵn sàng rồi gửi được tin tiếp theo nguyên vẹn' {
+    $ready = Get-Content (Join-Path $PSScriptRoot 'fixtures/claude-v2.1-after-clear-reconstructed.txt') -Raw
+    $ops = New-StuckOps @((New-StuckInfo -app 'claude-code')) @($ClaudeHistory, $ready, $ClaudeHistory)
+    Send-CrewMessage 't' '/clear' $false '' $ops
+    $ops.State.Ri | Should Be 2
+    $ops.State.Enter | Should Be 0
+    Send-CrewMessage 't' 'tin ngay sau clear' $false '' $ops
+    $ops.State.Sent[0] | Should Be '/clear'
+    $ops.State.Sent[1] | Should Be 'tin ngay sau clear'
+  }
+  It 'hộp thoại thật sau clear vẫn chặn, không bấm phím' {
+    $ops = New-StuckOps @((New-StuckInfo -app 'claude-code')) @("Do you want to proceed?`n❯ 1. Yes`n  2. No")
+    { Send-CrewMessage 't' '/clear' $false '' $ops } | Should Throw 'hộp thoại lạ'
+    $ops.State.Enter | Should Be 0
+    $ops.State.Send | Should Be 1
   }
 }

@@ -104,6 +104,8 @@ Describe 'crew upgrade an toàn' {
     $r.Text | Should Match ([regex]::Escape("== crew upgrade: context v10 -> v$newVersion"))
     $r.Text | Should Match 'Đã cập nhật \(\d+\): .*context/roles/rev\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới ở .new (2): context/roles/planner.md -> context/roles/planner.md.new, CLAUDE.md -> CLAUDE.md.new'))
+    $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))
+    $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'CLAUDE.md' 'CLAUDE.md.new'"))
     $r.Text | Should Match ([regex]::Escape('AGENTS.md (thiếu <!-- /crew -->)'))
     $r.Text | Should Match 'Việc cần làm: mở từng cặp .*context/roles/<vai>\.local\.md'
     $r.Text | Should Match ([regex]::Escape('thêm dòng <!-- /crew --> ngay sau khối crew trong AGENTS.md rồi chạy lại crew upgrade'))
@@ -134,6 +136,8 @@ Describe 'crew upgrade an toàn' {
     $r.Text | Should Match ([regex]::Escape("== crew upgrade -DryRun: context v10 -> v$newVersion"))
     $r.Text | Should Match 'Sẽ cập nhật \(\d+\): .*context/roles/worker\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới sẽ ở .new (1): context/roles/planner.md -> context/roles/planner.md.new'))
+    $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))
+    $r.Text | Should Match ([regex]::Escape('.new sẽ có sau khi chạy thật'))
     $r.Text | Should Match 'Giữ nguyên \(\d+\): .*context/README\.md'
     (git -C $repo rev-parse HEAD) | Should Be $head
     Get-TreeSnapshot $repo | Should BeExactly $snap

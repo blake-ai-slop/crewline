@@ -103,6 +103,25 @@ Describe 'crew check committed task changes' {
     $r.Code | Should Be 0
     $r.Text | Should Match 'test : OK'
   }
+  It 'runs changed tests under tools/ too' {
+    Save-CheckFixture @{ 'tools/Example.Tests.ps1' = 'Describe "tool" { It "failure" { 1 | Should Be 2 } }' } 'Được sửa: `tools/Example.Tests.ps1`'
+    $r = Run-FixtureCheck
+    $r.Code | Should Be 1
+    $r.Text | Should Match 'test : LỖI'
+    $r.Text | Should Match 'Passed: 0 Failed: 1'
+  }
+  It 'runs changed tests in tests/ and tools/ together' {
+    Save-CheckFixture @{ 'tools/Example.Tests.ps1' = 'Describe "tool" { It "pass" { 1 | Should Be 1 } }'; 'tests/Example.Tests.ps1' = 'Describe "child" { It "pass" { 1 | Should Be 1 } }' } 'Được sửa: `tools/Example.Tests.ps1`, `tests/Example.Tests.ps1`'
+    $r = Run-FixtureCheck
+    $r.Code | Should Be 0
+    $r.Text | Should Match 'Passed: 2 Failed: 0'
+  }
+  It 'ignores nested or non-test files under tools/' {
+    Save-CheckFixture @{ 'tools/sub/Deep.Tests.ps1' = 'Describe "deep" { It "f" { 1 | Should Be 2 } }'; 'tools/helper.ps1' = '# ok' } 'Được sửa: `tools/`'
+    $r = Run-FixtureCheck
+    $r.Code | Should Be 0
+    $r.Text | Should Match 'không có test thay đổi'
+  }
   It '-NoTest does not run a failing changed test and exits 0' {
     Save-CheckFixture @{ 'tests/Example.Tests.ps1' = 'Describe "child" { It "failure" { 1 | Should Be 2 } }' }
     $r = Run-FixtureCheck -Extra '-NoTest'

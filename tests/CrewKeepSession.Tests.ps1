@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 # Test worker giữ phiên (worktree cố định w<N>): trích hàm bằng AST từ crew.ps1, repo git tạm trong $TestDrive, hc giả tiêm qua $ops — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
+$want = 'Get-WorkerInputError', 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
   'Initialize-WorkerTree', 'Get-RestartTargets', 'Get-WorkerStartLine', 'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus',
   'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask',
   'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord',
@@ -68,7 +68,7 @@ $CodexPicker = @'
 '@
 
 # hc giả: Get/Read trả lần lượt phần tử của danh sách (hết thì giữ phần tử cuối); ghi lại các lệnh (Raw = cờ gửi trần của từng lần Send).
-function New-FakeOps($gets, $screens = @(''), [string]$sendJson = '{"started":true}') {
+function New-FakeOps($gets, $screens = @(''), [string]$sendJson = '{"started":true}', [string]$initialScreen = '') {
   $st = @{ Gets = @($gets); Gi = 0; Screens = @($screens); Ri = 0; Keys = 0; Sent = [Collections.Generic.List[string]]::new(); Raw = [Collections.Generic.List[bool]]::new(); Log = [Collections.Generic.List[string]]::new() }
   @{
     State = $st
@@ -76,7 +76,7 @@ function New-FakeOps($gets, $screens = @(''), [string]$sendJson = '{"started":tr
     Send  = { param($t, $x, $sh) $st.Log.Add("send:$x"); $st.Sent.Add($x); $st.Raw.Add([bool]$sh); @{ Code = 0; Text = $sendJson } }.GetNewClosure()
     Keys  = { param($t) $st.Log.Add('enter'); $st.Keys++ }.GetNewClosure()
     Sleep = { param($ms) }
-    Read  = { param($t) $k = [math]::Min($st.Ri, $st.Screens.Count - 1); $st.Ri++; $st.Screens[$k] }.GetNewClosure()
+    Read  = { param($t) if (-not $st.Sent.Count) { return $initialScreen }; $k = [math]::Min($st.Ri, $st.Screens.Count - 1); $st.Ri++; $st.Screens[$k] }.GetNewClosure()
   }
 }
 
@@ -290,7 +290,7 @@ Describe 'crew task trên worktree cố định (hc giả)' {
     $r = New-KeepRepo
     $tui = "❯`n─────`n  ⏵⏵ accept edits on (shift+tab to cycle)"
     $cleared = "❯ /clear`n❯`n─────`n  ⏵⏵ accept edits on (shift+tab to cycle)"
-    $ops = New-FakeOps @((New-Info '')) @($tui, $cleared)
+    $ops = New-FakeOps @((New-Info '')) @($cleared) '{"started":true}' $tui
     $res = Start-Task $r 'a' $ops
     $res.Ok | Should Be $true
     $ops.State.Sent[0] | Should Be '/clear'
@@ -474,5 +474,30 @@ Describe 'Get-ScreenDialog' {
     Get-ScreenDialog $NotCleared | Should Be ''
     Get-ScreenDialog $Cleared | Should Be ''
     Get-ScreenDialog 'Context 37% left' | Should Be ''
+  }
+}
+
+Describe 'crew task chặn bản nháp trước reset' {
+  It 'Claude và Codex còn chữ: lỗi trước tạo nhánh, 0 send/keys' {
+    foreach ($kind in 'claude', 'codex') {
+      $r = New-KeepRepo
+      $screen = if ($kind -eq 'claude') { "────────────────────────────`n❯ tin chưa gửi`n────────────────────────────`n  bypass permissions on" }
+        else { "› tin chưa gửi`n`n  GPT-6 · Context 62% left" }
+      $app = if ($kind -eq 'claude') { 'claude-code' } else { 'codex' }
+      $ops = New-FakeOps @((New-Info $app)) @($Cleared) '{"started":true}' $screen
+      { Start-Task $r 'stuck' $ops $kind } | Should Throw 'Xử lý: sang pane x-w1'
+      $ops.State.Sent.Count | Should Be 0
+      $ops.State.Keys | Should Be 0
+      Test-Branch $r.Root 'crew/stuck' | Should Be $false
+    }
+  }
+  It 'bản nháp mới xuất hiện sau reset: không gửi prompt' {
+    $screen = "────────────────────────────`n❯ bản nháp mới`n────────────────────────────`n  bypass permissions on"
+    $ops = New-FakeOps @((New-Info)) @($Cleared, $screen)
+    $r = Send-WorkerTask 'x-w1' 'claude' 'agent' 'unused' 'prompt' 'work' $ops
+    $r.Ok | Should Be $false
+    $r.Message | Should Match 'tin kẹt'
+    $ops.State.Sent.Count | Should Be 1
+    $ops.State.Keys | Should Be 0
   }
 }

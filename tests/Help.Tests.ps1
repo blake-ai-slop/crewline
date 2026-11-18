@@ -1,15 +1,36 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+# Không phụ thuộc code page của console: cả file chạy dưới IBM437 (console mặc định khi pwsh đầu tiên mở từ Git Bash),
+# output của pwsh con đọc bằng UTF-8 cố định (help.ps1/crew.ps1 tự ghi UTF-8). Khôi phục mã hóa cũ ở cuối file.
+$savedHelpEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)
 $repo = Split-Path $PSScriptRoot -Parent
 $helpScript = Join-Path $repo 'scripts/help.ps1'
 $commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
 
+# Chạy pwsh con, đọc stdout+stderr bằng UTF-8 qua ProcessStartInfo (không qua [Console]::OutputEncoding của tiến trình cha).
+function Invoke-PwshText([string[]]$Arguments) {
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+  foreach ($a in $Arguments) { $info.ArgumentList.Add($a) }
+  $info.UseShellExecute = $false
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+  $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+  $process = [Diagnostics.Process]::Start($info)
+  $stdout = $process.StandardOutput.ReadToEndAsync()
+  $stderr = $process.StandardError.ReadToEndAsync()
+  $process.WaitForExit()
+  $text = ($stdout.Result + $stderr.Result) -replace "`r`n", "`n"
+  $result = [pscustomobject]@{ ExitCode = $process.ExitCode; Text = $text.TrimEnd("`n") }
+  $process.Dispose()
+  $result
+}
 # Help chỉ xuất văn bản, không chạy crew/hc hoặc ghi cấu hình người dùng.
 function Invoke-HelpPage([string]$Topic) {
   $arguments = @('-NoProfile', '-File', $helpScript)
   if ($Topic) { $arguments += @('-Topic', $Topic) }
-  $output = & pwsh @arguments 2>&1
-  [pscustomobject]@{ ExitCode = $LASTEXITCODE; Text = ($output -join "`n") }
+  Invoke-PwshText $arguments
 }
 function Get-HelpParameters([string]$File) {
   $ast = [System.Management.Automation.Language.Parser]::ParseFile($File, [ref]$null, [ref]$null)
@@ -17,6 +38,20 @@ function Get-HelpParameters([string]$File) {
 }
 
 Describe 'crew help' {
+  It 'chạy dưới console IBM437 mà vẫn đọc đúng tiếng Việt' {
+    [Console]::OutputEncoding.CodePage | Should Be 437
+    (Invoke-HelpPage 'up').Text | Should Match 'mặc định 300 giây'
+  }
+
+  It 'up giải thích timeout mỗi project và mã thoát tổng hợp' {
+    $text = (Invoke-HelpPage 'up').Text
+    $text | Should Match '-Timeout <giây>'
+    $text | Should Match 'mặc định 300 giây, 0 = không giới hạn'
+    $text | Should Match 'dừng cây tiến trình con'
+    $text | Should Match 'Exit 0 chỉ khi mọi project ok'
+    $text | Should Match 'thời gian'
+  }
+
   It 'task giải thích chặn trùng file và -Force' {
     $text = (Invoke-HelpPage 'task').Text
     $text | Should Match '\[-Force\]'
@@ -41,27 +76,29 @@ Describe 'crew help' {
     $up | Should Match 'chữ đã in mất cùng pane'
     $up | Should Match '\.crew/self-pane\.log'
     $up | Should Match 'Linux/macOS.*mở tab khác rồi chạy lại'
-    $up | Should Match 'Task đã xong.*không giao lại'
+    $up | Should Match 'Task mới:.*XONG.*worktree sạch.*không giao lại'
+    $up | Should Match 'chưa báo XONG.*giao lại Tiếp tục dù đã commit note'
+    $up | Should Match 'Task cũ giữ cách đoán'
     (Invoke-HelpPage 'status').Text | Should Match 'đã xong, chờ planner'
   }
 
   It 'dispatch crew help dùng help.ps1 thật cho danh sách, repair và topic lạ' {
     $crew = Join-Path $repo 'scripts/crew.ps1'
-    $list = & pwsh -NoProfile -File $crew help 2>&1
-    $LASTEXITCODE | Should Be 0
-    ($list -join "`n") | Should Be (Invoke-HelpPage '').Text
-    $default = & pwsh -NoProfile -File $crew 2>&1
-    $LASTEXITCODE | Should Be 0
-    ($default -join "`n") | Should Be ($list -join "`n")
-    $agent = & pwsh -NoProfile -File $crew help agent 2>&1
-    $LASTEXITCODE | Should Be 0
-    ($agent -join "`n") | Should Be (Invoke-HelpPage 'agent').Text
-    $repair = & pwsh -NoProfile -File $crew help repair 2>&1
-    $LASTEXITCODE | Should Be 0
-    ($repair -join "`n") | Should Match '^crew repair \[-Path \.\] \[-DryRun\]'
-    $unknown = & pwsh -NoProfile -File $crew help khong-ton-tai 2>&1
-    $LASTEXITCODE | Should Be 1
-    ($unknown -join "`n") | Should Match "không có lệnh 'khong-ton-tai'"
+    $list = Invoke-PwshText @('-NoProfile', '-File', $crew, 'help')
+    $list.ExitCode | Should Be 0
+    $list.Text | Should Be (Invoke-HelpPage '').Text
+    $default = Invoke-PwshText @('-NoProfile', '-File', $crew)
+    $default.ExitCode | Should Be 0
+    $default.Text | Should Be $list.Text
+    $agent = Invoke-PwshText @('-NoProfile', '-File', $crew, 'help', 'agent')
+    $agent.ExitCode | Should Be 0
+    $agent.Text | Should Be (Invoke-HelpPage 'agent').Text
+    $repair = Invoke-PwshText @('-NoProfile', '-File', $crew, 'help', 'repair')
+    $repair.ExitCode | Should Be 0
+    $repair.Text | Should Match '^crew repair \[-Path \.\] \[-DryRun\]'
+    $unknown = Invoke-PwshText @('-NoProfile', '-File', $crew, 'help', 'khong-ton-tai')
+    $unknown.ExitCode | Should Be 1
+    $unknown.Text | Should Match "không có lệnh 'khong-ton-tai'"
   }
 
   It 'trang chính đúng nội dung và thứ tự đã duyệt, không có lệnh agent hay Mẹo' {
@@ -208,3 +245,4 @@ Describe 'crew help' {
     }
   }
 }
+[Console]::OutputEncoding = $savedHelpEncoding

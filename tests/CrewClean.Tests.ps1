@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWa
 # Test phần git của crew clean (Remove-TaskGit): trích hàm bằng AST từ crew.ps1, chạy trên repo git tạm trong $TestDrive, không gọi hc.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Say', 'Get-Tasks', 'Save-Tasks', 'Invoke-GitQuiet', 'Test-WorktreeListed', 'Remove-TaskGit', 'Remove-TaskBranch'
+$want = 'Say', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Invoke-GitQuiet', 'Test-WorktreeListed', 'Remove-TaskGit', 'Remove-TaskBranch'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
