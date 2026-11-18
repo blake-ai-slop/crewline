@@ -1,4 +1,23 @@
-﻿function Get-CrewBlock {
+﻿# Phiên bản sản phẩm độc lập với skeleton/VERSION.
+function Get-CrewVersion {
+  $root = Split-Path $CrewScriptsDir -Parent
+  $file = Join-Path $root 'VERSION'
+  $version = '?'
+  try {
+    $text = [IO.File]::ReadAllText($file).Trim()
+    if ($text -notmatch '\A[1-9][0-9]*\z') { throw 'cần một số nguyên dương' }
+    $version = $text
+  } catch { Write-Warning "Không đọc được VERSION '$file': $($_.Exception.Message)" }
+  [pscustomobject]@{ Version = $version; Root = $root }
+}
+
+function Invoke-Version {
+  $info = Get-CrewVersion
+  Write-Host "Crewline v$($info.Version)"
+  Write-Host "Cài tại: $($info.Root)"
+}
+
+function Get-CrewBlock {
   return @'
 <!-- crew -->
 ## Context dùng chung (crew)

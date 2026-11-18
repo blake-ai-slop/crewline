@@ -99,6 +99,7 @@ if ($Command -eq 'up' -and $Restart -and $DryRun) { Die '-DryRun không đi vớ
 if ($Command -ne 'queue' -and ($After -or $Run -or $Remove -or $InitParameters.ContainsKey('Size'))) { Die "-After, -Size, -Run, -Remove chỉ dùng với crew queue, không dùng với crew $Command." }
 
 switch ($Command) {
+  'version' { Invoke-Version }
   'setup' { & (Join-Path $PSScriptRoot 'setup.ps1'); exit $LASTEXITCODE }
   'doctor' { Invoke-Doctor }
   'init' { Invoke-Init; Say 'xong. Bật đội: crew up' }

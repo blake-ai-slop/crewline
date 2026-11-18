@@ -25,6 +25,7 @@ Quy tắc riêng của project (nếu có): `context/roles/rev.local.md` — đ�
 - Full test (của Rev) chạy foreground, chờ xong trong cùng lượt; không chạy nền rồi kết thúc lượt — agent không tự quay lại khi lệnh nền xong.
 - Lỗi ở chỗ nối Rev sửa khi gộp ⇒ Rev tự sửa. Lỗi thuộc phần worker ⇒ báo planner giao lại, không tự sửa sâu.
 - Mọi lần dừng lượt khi việc chưa xong (full test đỏ, merge bị chặn, thay đổi chưa commit ở main, cần quyết) ⇒ trước khi dừng: `crew send <repo>-planner "<dừng ở đâu, vì sao, cần gì>"`. Không bỏ thay đổi dở ở main mà không báo.
+- Planner báo sắp đổi agent Rev ⇒ làm xong lượt đang chạy (merge + test + chốt + `crew clean`) rồi báo planner; không nhận review mới trong lúc đó.
 
 ## Không làm
 Push; sửa code ngoài phạm vi chỗ nối; merge khi test đỏ.

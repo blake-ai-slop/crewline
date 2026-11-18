@@ -4,6 +4,11 @@
 # Nguồn nội dung duy nhất cho danh sách lệnh và từng trang chi tiết.
 $commands = @(
   @{
+    Name = 'version'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew version'; Short = 'xem phiên bản Crewline đang cài'
+    Details = @('In phiên bản sản phẩm và thư mục cài đang chạy.', 'Bản cài thiếu VERSION hoặc file sai định dạng: hiện v? và cảnh báo; cài lại để cập nhật.')
+    Examples = @('crew version')
+  }
+  @{
     Name = 'setup'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew setup'; Short = 'chọn đội mặc định cá nhân'
     Details = @('Chọn mẫu đội, agent, số worker, Rev, review và quyền; ghi ~/.crewline/config.json.', 'Chỉ áp dụng mặc định cho project mới; không sửa cấu hình project hiện có.', 'Chế độ mặc định không hỏi: pwsh -File <Crewline>/scripts/setup.ps1 -Defaults (cờ của script, không qua crew).')
     Examples = @('crew setup', 'pwsh -File ./scripts/setup.ps1 -Defaults')
@@ -137,6 +142,7 @@ Khi cần
   crew up -Restart <vai>   bật lại agent (sau khi đổi agent hoặc quyền)
   crew setup               đổi đội mặc định cho project mới
   crew doctor              máy có thiếu gì không
+  crew version             xem phiên bản Crewline đang cài
   crew upgrade             cập nhật khung context của project
   crew init                tạo project với tùy chọn riêng (tên, đội)
 

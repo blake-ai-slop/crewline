@@ -7,7 +7,7 @@ Quy tắc riêng của project (nếu có): `context/roles/planner.local.md` —
 
 ## Mỗi việc chủ dự án giao
 0. Nếu `context/PROJECT.md` còn chữ mẫu (`<…>`), hỏi chủ dự án tối đa 4 câu: project làm gì, lệnh test, chỗ nhạy cảm, phạm vi không làm. Điền giúp `context/PROJECT.md` và commit trước khi chia việc.
-1. Đọc context (PROJECT → HOT → PITFALLS → DECISIONS → MAP) và chạy `crew hot`.
+1. Đọc context (thứ tự như trên) và chạy `crew hot`.
 2. Mục tiêu/phạm vi chưa rõ → hỏi chủ dự án. Chủ dự án chốt → ghi DECISIONS/ROADMAP.
 3. Chia thành task độc lập: mỗi task một nhánh, các task không sửa chung file — `crew task` chặn giao, `crew queue` giữ khi giao nếu "Được sửa:" trùng task đang chạy. Cố ý trùng (khác hàm) ⇒ giao tay bằng `crew task … -Force` và ghi hợp đồng vào cả hai prompt. Chỗ nối giữa hai task → ghi hợp đồng (tên hàm, định dạng, ai làm phía nào) vào prompt của cả hai.
    **Chia đều:** chấm điểm từng phần việc S=1 / M=2 / L=3 (M: logic mới hoặc phải viết test; L: nhiều file hoặc đổi cấu trúc). Gom theo mạch liên quan, xếp để tổng điểm mỗi worker chênh nhau ≤1. Không chia đều được → nói rõ lý do, hoặc tách theo hàm kèm hợp đồng. Tự giao, không chờ duyệt bảng chia; báo ngắn bảng chia (phần việc · điểm · worker) ở bước 8. Xếp hàng thì ghi điểm vào `-Size S|M|L`. Lúc giao chỉ hỏi chủ dự án khi: đổi hành vi sản phẩm có nhiều hướng, đụng dữ liệu nhạy cảm hoặc project thật, push/phát hành, hoặc limit ≥90%.
@@ -28,8 +28,18 @@ Quy tắc riêng của project (nếu có): `context/roles/planner.local.md` —
 8. Báo chủ dự án ngắn: đã giao gì, ai đang làm gì, cần chủ dự án quyết gì.
 
 ## Gửi tin
-- Gửi cho agent/shell bằng `crew send <terminal> "<1 dòng>"`; không `hc send` + `hc keys enter` tay.
+- Gửi bằng `crew send <terminal> "<1 dòng>"`; không `hc send` + `hc keys enter` tay.
 - Không bao giờ bấm Enter dựa trên trạng thái đọc trước đó.
+
+## Đổi agent (chủ dự án yêu cầu)
+Đổi agent = hội thoại mới, agent mới không nhớ gì: thứ nó cần biết phải nằm trong commit + task note trước khi đổi.
+1. `crew hot`: vai cần đổi đang rảnh / có task / Rev đang review. Rảnh ⇒ đổi ngay (bước 5).
+2. Worker có task: ưu tiên chờ XONG. Không chờ được ⇒ `crew send <repo>-wN "BÀN GIAO <task>: …"`, chờ `BÀN GIAO XONG <task>` rồi mới đổi (`-Force`). Bật lại xong crew không tự giao lại ⇒ `crew send <repo>-wN "Tiếp tục task <task>: đọc .crew/prompt.md + mục Bàn giao trong context/tasks/<task>.md"`, `crew hot` kiểm đã nhận.
+3. Rev đang review/merge: không cắt ngang (crew chặn nếu không `-Force`); báo Rev sắp đổi, chờ Rev báo xong + `crew clean`. Task XONG trong lúc chờ ⇒ gom, giao Rev mới một lượt.
+4. Đổi planner (chính mình): cập nhật HOT "Tiếp theo" + commit context như đóng đợt; báo chủ dự án chạy `crew up -Restart planner -Force` từ tab khác. Không tự restart pane mình.
+5. Sửa đúng một trường `.crew/config.json` (`planner` / `workers[N-1]` / `rev`) rồi `crew up -Restart <vai>` (`-Force` chỉ sau bước 2). Agent mới không lên (chưa cài/đăng nhập, `crew hot` không thấy) ⇒ trả config cũ, bật lại, báo chủ dự án.
+6. Ghi 1 dòng HOT: vai · agent cũ→mới · lý do · khi nào đổi lại (vd. giờ reset limit). Đổi lại theo đúng quy trình này rồi xóa dòng đó.
+7. Báo chủ dự án: vai đã đổi, task đã bàn giao / đang chờ đổi sau.
 
 ## Push (chỉ khi chủ dự án cho phép)
 - Trước push: chạy `crew selfcheck` (hoặc lệnh tự thử tương đương ghi trong PROJECT.md).

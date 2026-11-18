@@ -5,7 +5,7 @@ $savedHelpEncoding = [Console]::OutputEncoding
 [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)
 $repo = Split-Path $PSScriptRoot -Parent
 $helpScript = Join-Path $repo 'scripts/help.ps1'
-$commandNames = @('setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
+$commandNames = @('version', 'setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
 
 # Chạy pwsh con, đọc stdout+stderr bằng UTF-8 qua ProcessStartInfo (không qua [Console]::OutputEncoding của tiến trình cha).
 function Invoke-PwshText([string[]]$Arguments) {
@@ -115,6 +115,7 @@ Describe 'crew help' {
       '  crew up -Restart <vai>   bật lại agent (sau khi đổi agent hoặc quyền)',
       '  crew setup               đổi đội mặc định cho project mới',
       '  crew doctor              máy có thiếu gì không',
+      '  crew version             xem phiên bản Crewline đang cài',
       '  crew upgrade             cập nhật khung context của project',
       '  crew init                tạo project với tùy chọn riêng (tên, đội)', '',
       'Chi tiết: crew help <lệnh>   ·   Lệnh agent dùng: crew help agent'

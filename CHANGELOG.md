@@ -2,6 +2,15 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v13 — 2026-11-18 — đổi agent không mất việc, có số phiên bản
+
+### Mới
+- **Crewline có số phiên bản:** README ghi `Version v13`, mỗi lần phát hành tăng 1. `crew version` cho biết máy đang cài bản nào (bản cài cũ hiện `v?` tới khi cài lại).
+- **Đổi agent theo yêu cầu (vd. Codex hết limit ⇒ sang Claude) không mất việc dở:** planner có quy trình cố định — vai rảnh thì đổi ngay; worker đang làm thì chờ XONG hoặc yêu cầu `BÀN GIAO` (commit phần dở + ghi đã làm/còn lại/test vào task note) rồi mới đổi và giao tiếp; Rev làm xong lượt đang chạy rồi mới đổi; ghi lần đổi vào HOT để đổi lại đúng. Nhận qua `crew upgrade` (context v13).
+
+### Khác
+- Bản mẫu context lên v13 (role planner/worker/rev). Role đã sửa tay ⇒ giữ bản của bạn, bản mới ở `.new`.
+
 ## 2026-11-18 (2) — Windows chắc hơn sau khi thử trên máy thật
 
 ### Mới

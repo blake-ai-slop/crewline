@@ -1,4 +1,5 @@
 # Crewline
+**Version v13** · [Changelog](CHANGELOG.md)
 
 Crewline runs a team of coding agents (Claude Code and Codex) in **herdr-app + hc**. A planner coordinates workers in separate Git worktrees, while shared project context stays in Git and a reviewer merges completed work.
 

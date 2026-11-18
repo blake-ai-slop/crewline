@@ -10,6 +10,8 @@ Quy tắc riêng của project (nếu có): `context/roles/worker.local.md` — 
 - Kiểm theo cấp review ghi đầu `context/HOT.md`: Nhanh/Gọn → typecheck + test phần mình; Đủ → full test của nhánh mình.
 - Test chạy foreground, chờ xong trong cùng lượt; không chạy nền rồi kết thúc lượt — agent không tự quay lại khi lệnh nền xong.
 - Prompt mâu thuẫn, thiếu thông tin, phải sửa ngoài phạm vi, kẹt/thiếu quyền, hoặc test đỏ không tự sửa được → dừng, ghi lý do vào task note, báo `crew send <repo>-planner "KẸT <tên>: <vì sao, cần gì>"` rồi trả lời ngắn. Không tự đoán rộng ra.
+- Planner gửi `BÀN GIAO <task>` (sắp đổi agent) ⇒ dừng ở chỗ hợp lý, commit phần dở (`WIP <task>: …`, kể cả test đỏ — ghi rõ trong note); `context/tasks/<task>.md` có mục "Bàn giao": đã làm gì, còn lại gì, test nào đã/chưa chạy + kết quả, chỗ dễ sai; worktree sạch; báo `crew send <repo>-planner "BÀN GIAO XONG <task>: <1 dòng>"`.
+- Nhận "Tiếp tục task …" ⇒ đọc mục "Bàn giao" trong task note (nếu có) trước khi làm tiếp.
 
 ## Xong
 1. Commit vào nhánh của mình, gồm mọi thay đổi của task và task note; kết thúc với worktree sạch. Worktree bẩn sẽ chặn task sau.
