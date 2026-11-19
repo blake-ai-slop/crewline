@@ -174,6 +174,57 @@ $line = [Console]::ReadLine()
   }
 }
 
+Describe 'bootstrap UTF-8 output on code page 437' {
+  foreach ($shell in @('pwsh', 'powershell')) {
+    It "decodes Vietnamese, keeps stdin and restores encoding after success/failure in $shell" -Skip:($shell -eq 'powershell' -and -not $OnWindows) {
+      $src = New-FakeCrewlineRepo
+      $message = 'Crewline setup — bỏ qua PATH người dùng'
+      @"
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new(`$false)
+Write-Host '$message'
+`$line = [Console]::ReadLine()
+Set-Content (Join-Path `$HOME 'answer.txt') `$line
+exit 23
+"@ | Set-Content (Join-Path $src 'install.ps1') -Encoding UTF8
+      Invoke-Git $src add -A
+      Invoke-Git $src commit -qm encoding
+      $h = New-CrewTestHome
+      $runner = Join-Path $TestDrive "encoding-$shell.ps1"
+      @"
+`$originalEncoding = [Console]::OutputEncoding
+Start-Transcript -Path (Join-Path `$HOME 'output.txt') -Force | Out-Null
+try {
+  [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)
+  Get-Content '$Bootstrap' -Raw | Invoke-Expression
+  @{ codepage = [Console]::OutputEncoding.CodePage } |
+    ConvertTo-Json | Set-Content (Join-Path `$HOME 'encoding.json') -Encoding UTF8
+} finally { [Console]::OutputEncoding = `$originalEncoding; Stop-Transcript | Out-Null }
+"@ | Set-Content $runner -Encoding UTF8
+      $path = ($env:Path -split [IO.Path]::PathSeparator | Where-Object { $_ -and ($PSHOME -notmatch '\\WindowsApps\\' -or $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\')) }) -join [IO.Path]::PathSeparator
+      $envVars = @{ CREWLINE_DIR = (Join-Path $h.Home 'Crewline'); CREWLINE_REPO = $src; Path = $path }
+      $r = Invoke-InTestHome $h $runner -Shell $shell -Env $envVars -InputText 'answer437'
+      $r.ExitCode | Should Be 0
+      $captured = Get-Content (Join-Path $h.Home 'encoding.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+      $text = Get-Content (Join-Path $h.Home 'output.txt') -Raw -Encoding UTF8
+      $text | Should Match ([regex]::Escape($message))
+      $text | Should Match 'install.ps1 loi \(ma 23\)'
+      $captured.codepage | Should Be 437
+      (Get-Content (Join-Path $h.Home 'answer.txt') -Raw).Trim() | Should Be 'answer437'
+      # Same console path on success, including restoration before returning through iex.
+      Set-Content (Join-Path $src 'install.ps1') "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Write-Host '$message'" -Encoding UTF8
+      Invoke-Git $src add -A
+      Invoke-Git $src commit -qm success
+      $r = Invoke-InTestHome $h $runner -Shell $shell -Env $envVars
+      $r.ExitCode | Should Be 0
+      $captured = Get-Content (Join-Path $h.Home 'encoding.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+      $text = Get-Content (Join-Path $h.Home 'output.txt') -Raw -Encoding UTF8
+      $text | Should Match ([regex]::Escape($message))
+      $text | Should Not Match 'LOI:'
+      $captured.codepage | Should Be 437
+    }
+  }
+}
+
 Describe 'bootstrap.sh POSIX entrypoint' {
   $sh = if (Get-Command sh -ErrorAction SilentlyContinue) { (Get-Command sh).Source } else { 'C:/Program Files/Git/bin/sh.exe' }
   It 'parses as POSIX sh and is ASCII' {

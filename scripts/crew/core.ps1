@@ -1,4 +1,10 @@
-﻿# Phiên bản sản phẩm độc lập với skeleton/VERSION.
+﻿function Get-CrewInstallCommand {
+  $bootstrap = 'https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap'
+  if ((Get-CrewOS) -eq 'windows') { return "irm $bootstrap.ps1 | iex" }
+  "curl -fsSL $bootstrap.sh | sh"
+}
+
+# Phiên bản sản phẩm độc lập với skeleton/VERSION.
 function Get-CrewVersion {
   $root = Split-Path $CrewScriptsDir -Parent
   $file = Join-Path $root 'VERSION'
@@ -58,7 +64,7 @@ function Get-Teams {
     }
     if (-not $teams.Count) { throw 'chưa có mẫu đội nào' }
     return $teams
-  } catch { Die "mẫu đội '$file' không hợp lệ: $($_.Exception.Message)" @("sửa JSON trong '$file'", 'Hoặc cài lại Crewline:', "irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex") }
+  } catch { Die "mẫu đội '$file' không hợp lệ: $($_.Exception.Message)" @("sửa JSON trong '$file'", 'Hoặc cài lại Crewline:', (Get-CrewInstallCommand)) }
 }
 
 function Get-UserDefaults($teams) {
@@ -94,13 +100,13 @@ function Select-Team($teams, $defaults) {
   }
   if ($defaults.team -ceq 'custom') { Die "config cá nhân có team 'custom' nhưng thiếu planner/workers/rev (cần đủ cả ba)." @('crew setup', 'Hoặc tạo project với đội standard:', 'crew init -Team standard') }
   if ($defaults.team) { return $teams[$defaults.team] }
-  if (-not $teams.Contains('standard')) { Die "scripts/teams.json thiếu mẫu 'standard'." 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' }
+  if (-not $teams.Contains('standard')) { Die "scripts/teams.json thiếu mẫu 'standard'." "cài lại Crewline: $(Get-CrewInstallCommand)" }
   return $teams['standard']
 }
 
 function Get-SkeletonVersion {
   $v = (Get-Content (Join-Path $Skeleton 'VERSION') -Raw -Encoding utf8).Trim()
-  if ($v -notmatch '^[1-9][0-9]*$') { Die 'skeleton/VERSION phải là số nguyên dương.' 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' }
+  if ($v -notmatch '^[1-9][0-9]*$') { Die 'skeleton/VERSION phải là số nguyên dương.' "cài lại Crewline: $(Get-CrewInstallCommand)" }
   return $v
 }
 

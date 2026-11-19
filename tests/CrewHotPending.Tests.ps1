@@ -207,6 +207,40 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
     $script:PendingSend | Should Be 0
     $script:PendingKeys | Should Be 0
   }
+  It 'reviewUnsure cảnh báo + hướng dẫn; chỉ xóa khi ô trống hoặc Rev working từ cùng lần đọc' {
+    function Get-Config { @{workers=@();planner='none';rev='codex';review='lean';access='wide'} }
+    function Get-LiveTerminals { [pscustomobject]@{name='demo-rev';state='live';status=@{app='codex';state=$script:RevState};agent='codex'} }
+    function Get-Tasks { ,@($script:UnsureTask) }
+    $script:HotUpdates = 0
+    function Update-Tasks($root, $change) { $script:HotUpdates++; & $change @($script:UnsureTask) }
+    foreach ($case in @(
+      @{State='idle';Screen=$CodexEmpty.Replace('Ask Codex to do anything','review');Clear=$false},
+      @{State='idle';Screen='không nhận ra ô';Clear=$false},
+      @{State='blocked';Screen='Allow command (y/n)';Clear=$false},
+      @{State='idle';Screen=$CodexEmpty;Clear=$true},
+      @{State='working';Screen=$CodexEmpty.Replace('Ask Codex to do anything','review');Clear=$true}
+    )) {
+      $script:UnsureTask = [pscustomobject]@{name='a';worker=1;branch='crew/a';doneTracking=$true;reviewSentAt='2026-11-19T00:00:00Z';reviewUnsure=$true}
+      $script:RevState = $case.State
+      $script:PendingScreens['demo-rev'] = $case.Screen
+      $script:PendingReads = @{}; $script:HotUpdates = 0
+      $out = Invoke-Hot 6>&1 | Out-String
+      if ($case.Clear) {
+        $out | Should Not Match 'chưa chắc Rev'
+        $script:UnsureTask.reviewUnsure | Should BeNullOrEmpty
+        $script:HotUpdates | Should Be 1
+      } else {
+        $out | Should Match 'chưa chắc Rev đã nhận review a'
+        $out | Should Match '→ Làm tiếp: hc read demo-rev --lines 20'
+        $out | Should Match 'crew review a -Sent'
+        $script:HotUpdates | Should Be 0
+      }
+      $script:UnsureTask.reviewSentAt | Should Be '2026-11-19T00:00:00Z'
+      $script:PendingReads['demo-rev'] | Should Be 1
+    }
+    $script:PendingSend | Should Be 0
+    $script:PendingKeys | Should Be 0
+  }
   It 'cảnh báo stuck nhận từ map có chỉ dẫn xem và gửi lại' {
     $out = @(Get-HotWarnings $TestDrive @{} @() @() @{'demo-w1'='stuck'}) -join "`n"
     $out | Should Match 'demo-w1: tin kẹt ở ô nhập — sang pane demo-w1: Enter để gửi hoặc xóa chữ'

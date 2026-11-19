@@ -2,6 +2,22 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v15 — 2026-11-19 — gửi tin tới Codex không kẹt khi sắp hết limit, chặn giao lại task đã xong
+
+### Mới
+- **Không giao lại task đã xong vì gõ trùng tên:** `crew task`/`crew queue <tên>` với tên đã merge ⇒ dừng, nói merge nào; muốn dùng lại thì thêm `-Force`. Nhận cả merge thường lẫn fast-forward (crew ghi sổ khi `crew clean`; task dọn trước v15 chỉ nhận được khi có commit merge).
+- **`crew review <task> -Sent`:** đánh dấu đã gửi review bằng tay. Khi crew không chắc Rev đã nhận, `crew hot` cảnh báo và chỉ cách kiểm.
+- **Cách cài khác** (`git clone` + `install.ps1`) trong README và troubleshooting, dùng khi antivirus chặn lệnh cài 1 dòng.
+
+### Sửa
+- **Codex sắp hết limit không còn làm kẹt việc:** dòng cảnh báo (`⚠ 5h limit: 38% left`, `⚠ 1 warning · f2 to view`) quanh ô nhập khiến crew không nhận ra ô nhập ⇒ tin nằm lại, không Enter. Nay `crew send`/`crew review`/`crew task` gửi bình thường.
+- **`crew task` tới Codex báo "/new chưa xong" dù phiên mới đã sạch** (dòng chân Codex bị cắt `…` khi tên model dài, hoặc có cảnh báo limit). Crew cũng tự chọn "Use current Git worktree" khi Codex hỏi sau `/new`.
+- Lệnh cài in tiếng Việt bị vỡ chữ trên console Windows mặc định (code page 437).
+- `crew task … -DryRun` (lệnh không có DryRun) trước đây bị bỏ qua và giao thật ⇒ nay báo lỗi, không làm gì.
+
+### Khác
+- Khung context không đổi (vẫn v13): cập nhật Crewline là đủ, không cần `crew upgrade`, không cần bật lại agent.
+
 ## v14 — 2026-11-19 — lỗi nào cũng chỉ bước tiếp theo, cập nhật rõ ràng
 
 ### Mới

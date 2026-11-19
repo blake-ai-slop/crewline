@@ -56,7 +56,7 @@ Describe 'Get-RevGuard' {
 
 Describe 'crew review kiểm Rev trước khi gửi' {
   BeforeEach {
-    $script:Said = @(); $script:Saved = 0; $script:Sent = 0; $script:Reads = 0; $script:DryRun = $false
+    $script:Said = @(); $script:Saved = 0; $script:SendCount = 0; $script:Reads = 0; $script:DryRun = $false; $script:Sent = $false; $script:ReviewResult = $null
     $script:NameList = @('a'); $script:Rev = 'claude'; $script:RevInfo = New-RevInfo
     function Get-MainRoot($p) { 'C:\demo' }
     function Get-Config($p) { @{ review = 'lean'; rev = $script:Rev } }
@@ -67,8 +67,8 @@ Describe 'crew review kiểm Rev trước khi gửi' {
     function Get-TermInfo($t) { $script:Reads++; $script:RevInfo }
     $script:Screen = 'PS C:\x>'
     function New-HcOps { @{ Read = { param($t) $script:Screen } } }
-    function Send-CrewMessage { $script:Sent++ }
-    function Save-Tasks { $script:Saved++ }
+    function Send-CrewMessage { $script:SendCount++; $script:ReviewResult }
+    function Save-Tasks($root, $items) { $script:Saved++; $script:SavedItems = @($items) }
   }
   $cases = @(
     @{ Name = 'Rev=none'; Rev = 'none'; Info = $null; Want = 'Rev=none'; Reads = 0 },
@@ -82,7 +82,7 @@ Describe 'crew review kiểm Rev trước khi gửi' {
       $script:Rev = $c.Rev; $script:RevInfo = $c.Info
       $err = try { Invoke-Review; '' } catch { "$_" }
       $err | Should Match ([regex]::Escape($c.Want))
-      $script:Sent | Should Be 0
+      $script:SendCount | Should Be 0
       $script:Saved | Should Be 0
       $script:Reads | Should Be $c.Reads
     }
@@ -91,20 +91,53 @@ Describe 'crew review kiểm Rev trước khi gửi' {
       $out = Invoke-Review 6>&1 | ForEach-Object { "$_" }
       ($out -join "`n") | Should Match 'Rev Gọn: merge crew/a'
       ($script:Said -join "`n") | Should Match ('^cảnh báo: .*' + [regex]::Escape($c.Want))
-      $script:Sent | Should Be 0
+      $script:SendCount | Should Be 0
       $script:Saved | Should Be 0
     }
   }
   It 'hc báo shell nhưng màn hình là agent: gửi và đánh dấu' {
     $script:RevInfo = New-RevInfo ''; $script:Screen = $ClaudeScreen
     Invoke-Review
-    $script:Sent | Should Be 1
+    $script:SendCount | Should Be 1
     $script:Saved | Should Be 1
   }
   It 'Rev sống, đúng agent: đọc 1 lần, gửi và đánh dấu như cũ' {
     Invoke-Review
     $script:Reads | Should Be 1
-    $script:Sent | Should Be 1
+    $script:SendCount | Should Be 1
     $script:Saved | Should Be 1
+  }
+  It 'kết quả không chắc (kể cả hàng đợi) vẫn ghi reviewSentAt và reviewUnsure' {
+    foreach ($ok in $false, $true) {
+      $script:ReviewResult = @{Ok=$ok; Unsure=$true; Message='chưa xác nhận'}
+      { Invoke-Review } | Should Throw 'chưa chắc Rev đã nhận review a'
+      $script:SavedItems[0].reviewSentAt | Should Not BeNullOrEmpty
+      $script:SavedItems[0].reviewUnsure | Should Be $true
+    }
+  }
+  It 'lỗi chắc chắn không ghi dấu review' {
+    $script:ReviewResult = @{Ok=$false; Unsure=$false; Message='không gõ được'}
+    { Invoke-Review } | Should Throw 'không gõ được'
+    $script:Saved | Should Be 0
+  }
+  It '-Sent bỏ reviewUnsure, không đọc terminal, không gửi, không cần nhánh có commit mới' {
+    $script:Sent = $true
+    function Get-Tasks { ,@([pscustomobject]@{name='a';reviewUnsure=$true}) }
+    function Get-ReviewLine { throw 'không cần soạn tin' }
+    function Invoke-GitOrDie { throw 'không cần kiểm nhánh' }
+    Invoke-Review
+    $script:SendCount | Should Be 0
+    $script:Reads | Should Be 0
+    $script:SavedItems[0].reviewSentAt | Should Not BeNullOrEmpty
+    $script:SavedItems[0].reviewUnsure | Should BeNullOrEmpty
+  }
+  It '-Sent nhiều task giữ thứ tự; tên không tồn tại không ghi' {
+    $script:Sent = $true; $script:NameList = @('b','a')
+    function Get-Tasks { ,@([pscustomobject]@{name='a'},[pscustomobject]@{name='b'}) }
+    Invoke-Review
+    ([datetime]$script:SavedItems[1].reviewSentAt -lt [datetime]$script:SavedItems[0].reviewSentAt) | Should Be $true
+    $script:Saved = 0; $script:NameList = @('a','missing')
+    { Invoke-Review } | Should Throw 'không có task tên missing'
+    $script:Saved | Should Be 0
   }
 }

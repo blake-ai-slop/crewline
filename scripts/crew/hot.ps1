@@ -1,9 +1,4 @@
-﻿function Get-CrewInstallCommand {
-  $bootstrap = 'https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap'
-  if ((Get-CrewOS) -eq 'windows') { return "irm $bootstrap.ps1 | iex" }
-  "curl -fsSL $bootstrap.sh | sh"
-}
-function Show-CrewUpgradeWarning([string]$root) {
+﻿function Show-CrewUpgradeWarning([string]$root) {
   $file = Join-Path $root 'context/.skeleton-version'
   if (-not (Test-Path -LiteralPath $file)) { return }
   $n = 0
@@ -97,7 +92,7 @@ function Invoke-Hot {
   $roleKinds = @{ "$slug-planner" = @{ Kind = $cfg.planner; Role = 'planner' }; "$slug-rev" = @{ Kind = $cfg.rev; Role = 'rev' } }
   $roleIndex = 0
   foreach ($kind in @($cfg.workers)) { $roleIndex++; $roleKinds["$slug-w$roleIndex"] = @{ Kind = $kind; Role = "w$roleIndex" } }
-  $foreign = @(); $pending = @{}; $wrongAgents = @()
+  $foreign = @(); $pending = @{}; $wrongAgents = @(); $revReceived = $false
   $terminals | Where-Object { $_.name -like "$slug-*" } |
     ForEach-Object {
       $why = Get-ForeignTermError $_.name $_ $root
@@ -115,6 +110,10 @@ function Invoke-Hot {
         $dialog = Get-ScreenDialog $screen
         if ($dialog -eq 'trust' -and $st.State -in 'idle', 'blocked') { $status = 'chờ trust' }
         elseif (-not $dialog) {
+          if ($_.name -eq "$slug-rev") {
+            $revBox = Get-InputBox $screen
+            $revReceived = $st.State -eq 'working' -or ($revBox -and -not $revBox.Text)
+          }
           # Chỉ marker UI đang chạy, không lấy lời kể về lệnh nền trong hội thoại.
           $background = if ($app -eq 'codex') {
             $screen -match '(?m)^\s*• (?:Waiting for background terminal(?:[^\r\n]*)|Working[^\r\n]*· [1-9]\d* background terminals? running(?:[^\r\n]*))\r?$' -or
@@ -136,6 +135,16 @@ function Invoke-Hot {
   foreach ($w in $wrongAgents) { Write-Host $w -ForegroundColor Yellow }
   foreach ($w in $foreign) { Write-Host "crew: CẢNH BÁO: $w" -ForegroundColor Yellow }
   $tasks = Get-Tasks $root
+  $unsureTasks = @($tasks | Where-Object { $_.reviewUnsure })
+  if ($revReceived -and $unsureTasks.Count) {
+    $tasks = Update-Tasks $root { param($current)
+      foreach ($t in $current) {
+        $observed = $unsureTasks | Where-Object { $_.name -eq $t.name -and $_.reviewSentAt -eq $t.reviewSentAt }
+        if ($observed) { $t.PSObject.Properties.Remove('reviewUnsure') }
+      }
+      $current
+    }
+  }
   Write-Host "== worker (worktree cố định)"
   $wi = 0
   foreach ($kind in @($cfg.workers)) {
@@ -155,6 +164,10 @@ function Invoke-Hot {
       $rv = if ($t.review) { " review=$($t.review)" } else { '' }
       $doneMark = if (-not $t.reviewSentAt -and (Test-TaskFinished $t (Get-TaskGitFacts $root $t $hotMain))) { ' — đã xong, chờ planner' } else { '' }
       ("{0,-20} w{1} {2,-6} {3} (+{4} commit) {5}" -f $t.name, $t.worker, $t.agent, $t.branch, $ahead, $t.worktree) + $rv + $doneMark | Write-Host
+      if ($t.reviewUnsure) {
+        Write-Host "crew: CẢNH BÁO: chưa chắc Rev đã nhận review $($t.name)" -ForegroundColor Yellow
+        Write-Host "  → Làm tiếp: hc read $slug-rev --lines 20; nếu tin còn nằm ô nhập thì bấm Enter tay rồi: crew review $($t.name) -Sent" -ForegroundColor Yellow
+      }
     }
   }
   # Mỗi cặp chỉ báo một lần, theo thứ tự trong tasks.json.

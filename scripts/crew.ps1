@@ -34,6 +34,7 @@ param(
   [switch]$DryRun,
   [switch]$Force,
   [switch]$Raw,
+  [switch]$Sent,
   [switch]$All,
   [ValidateRange(0, 2147483647)][int]$Timeout = 300,
   [switch]$NoTest,
@@ -94,9 +95,19 @@ Remove-Variable -Name Name
 $Name = if ($NameList.Count) { [string]$NameList[0] } else { '' }
 
 if ($All -and $Command -ne 'up') { Die "-All chỉ dùng với crew up (crew up -All [-DryRun]), không dùng với crew $Command." "bỏ -All rồi chạy lại crew $Command" }
+if ($Sent -and $Command -ne 'review') { Die '-Sent chỉ dùng với crew review.' 'chạy: crew review <task> -Sent' }
 if ($Command -eq 'up' -and $Restart -and $All) { Die '-All không đi với -Restart: -Restart bật lại terminal của một project.' "chạy trong project cần bật lại: crew up -Restart $Restart" }
 if ($Command -eq 'up' -and $Restart -and $DryRun) { Die '-DryRun không đi với -Restart: -Restart luôn tắt và bật lại terminal.' @("crew up -Restart $Restart", 'Hoặc xem trước việc khôi phục:', 'crew up -DryRun') }
 if ($Command -ne 'queue' -and ($After -or $Run -or $Remove -or $InitParameters.ContainsKey('Size'))) { Die "-After, -Size, -Run, -Remove chỉ dùng với crew queue, không dùng với crew $Command." @("bỏ các cờ đó rồi chạy lại crew $Command", 'Hoặc dùng hàng đợi:', 'crew queue <tên> <file-prompt> -After <task>') }
+
+# Cờ chung mà lệnh không dùng thì bị bỏ qua lặng lẽ ⇒ chặn -DryRun ở lệnh không có nó (vd. crew task -DryRun từng giao thật).
+# Lệnh có -DryRun (đọc từ code): up, upgrade, repair, review, queue (-Run). Lệnh lạ để default báo "không có lệnh".
+$CrewCommands = 'version','setup','doctor','init','upgrade','up','task','queue','status','hot','lint','limits','clean','send','review','check','selfcheck','repair','help'
+if ($DryRun -and $Command -in $CrewCommands) {
+  $dryHint = 'Lệnh có -DryRun: crew up, crew upgrade, crew repair, crew review <task>, crew queue -Run'
+  if ($Command -eq 'queue' -and -not $Run) { Die 'crew queue chỉ có -DryRun khi đi với -Run (xem trước việc giao hàng đợi); xếp/bỏ/liệt kê không có -DryRun.' @('xem trước: crew queue -Run -DryRun', 'Hoặc bỏ -DryRun rồi chạy lại crew queue') }
+  if ($Command -notin 'up', 'upgrade', 'repair', 'review', 'queue') { Die "crew $Command không có -DryRun (không làm gì cả)." @("bỏ -DryRun rồi chạy lại crew $Command", $dryHint) }
+}
 
 switch ($Command) {
   'version' { Invoke-Version }
@@ -157,8 +168,7 @@ switch ($Command) {
   }
   default {
     $next = @('xem danh sách: crew help')
-    $commands = 'version','setup','doctor','init','upgrade','up','task','queue','status','hot','lint','limits','clean','send','review','check','selfcheck','repair','help'
-    $near = Get-CrewCommandSuggestion $Command $commands
+    $near = Get-CrewCommandSuggestion $Command $CrewCommands
     if ($near) { $next += "ý bạn là: crew ${near}?" }
     Die "không có lệnh '$Command'" $next
   }

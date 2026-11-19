@@ -1,5 +1,5 @@
 # Crewline
-**Version v14** · [Changelog](CHANGELOG.md)
+**Version v15** · [Changelog](CHANGELOG.md)
 
 Crewline runs a team of coding agents (Claude Code and Codex) in **herdr-app + hc**. A planner coordinates workers in separate Git worktrees, while shared project context stays in Git and a reviewer merges completed work.
 
@@ -9,6 +9,13 @@ Open herdr-app and use a PowerShell pane. You need Git, PowerShell 7, and Claude
 
 ```powershell
 irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex
+```
+
+Alternative installation (also use this if antivirus blocks the one-line command):
+
+```powershell
+git clone https://github.com/blake-ai-slop/crewline.git "$HOME/Crewline"
+pwsh -NoProfile -File "$HOME/Crewline/install.ps1"
 ```
 
 Open a new terminal for the `crew` command, then run this in your project directory inside herdr-app:
@@ -51,6 +58,7 @@ crew:<repo>  (space trong herdr-app)
    ```powershell
    irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex
    ```
+   Nếu lệnh bị antivirus chặn, dùng [Cách cài khác](#cách-cài-khác).
    Linux/macOS (trong một pane shell của herdr-app): `curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh` — xem [Cài trên Linux/macOS](#cài-trên-linuxmacos).
    Lúc cài, bạn sẽ được hỏi chọn đội, agent, số worker, Rev, review và quyền: mỗi câu là danh sách đánh số, gõ số rồi Enter (Enter trống = mặc định trong `[ ]`). Đổi sau bằng `crew setup`. Cài không hỏi: đặt `$env:CREWLINE_DEFAULTS=1` trước lệnh cài (không tạo config cá nhân).
    Mở terminal mới để có lệnh `crew`, rồi chạy `crew doctor` để kiểm.
@@ -125,13 +133,16 @@ irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 
 
 Lệnh này kiểm `git` và `pwsh` (thiếu thì báo cách cài rồi dừng), clone Crewline vào `~/Crewline` (đã có thì `git pull --ff-only`; thư mục có sẵn mà không phải Crewline thì dừng, không ghi đè), rồi chạy `install.ps1`. Muốn cài chỗ khác, đặt biến trước khi chạy: `$env:CREWLINE_DIR = 'D:\Tools\Crewline'` (thêm `CREWLINE_REPO`, `CREWLINE_BRANCH` nếu dùng bản fork). Chạy file trực tiếp thì truyền tham số: `./bootstrap.ps1 -Dir <thư mục> -Repo <url> -Branch main`.
 
-**Cách clone tay**, trong một pane của herdr-app (PowerShell):
+### Cách cài khác
+
+Nếu muốn clone trực tiếp hoặc antivirus chặn lệnh cài một dòng, chạy trong PowerShell:
 
 ```powershell
-git clone https://github.com/blake-ai-slop/crewline.git ~/Crewline
-cd ~/Crewline
-./install.ps1
+git clone https://github.com/blake-ai-slop/crewline.git "$HOME/Crewline"
+pwsh -NoProfile -File "$HOME/Crewline/install.ps1"
 ```
+
+Cách này dùng cùng thư mục và installer như bootstrap. Nếu đã có bản clone ở `~/Crewline`, chạy `git -C "$HOME/Crewline" pull --ff-only` rồi chạy lại dòng `pwsh` ở trên.
 
 `install.ps1` cài shim `crew` vào `~/.local/bin` (dùng được từ PowerShell và Git Bash), chép template `hc` vào `%APPDATA%\herdr-core\templates`, tải `jq` nếu thiếu, tạo thư mục `~/.crewline/`, rồi chạy `crew doctor` (bỏ qua bằng `-NoDoctor`). Bạn có thể chạy lại bao nhiêu lần cũng được.
 

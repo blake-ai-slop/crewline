@@ -1,5 +1,6 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($name in 'Get-CrewStateSchema','Read-CrewState','Get-Config','Get-Tasks','Save-Tasks','Get-SessionsFile','New-SessionBook','Read-SessionBook','Save-SessionBook','Get-QueueFile','Get-QueueItems','Save-QueueItems','Write-CrewStateFile','Use-CrewStateLock') {
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/platform.ps1')
+foreach ($name in 'Get-CrewInstallCommand','Get-CrewStateSchema','Read-CrewState','Get-Config','Get-Tasks','Save-Tasks','Get-SessionsFile','New-SessionBook','Read-SessionBook','Save-SessionBook','Get-QueueFile','Get-QueueItems','Save-QueueItems','Write-CrewStateFile','Use-CrewStateLock') {
   . ([scriptblock]::Create((Get-CrewFunction $name).Extent.Text))
 }
 function Die($message) { throw $message }

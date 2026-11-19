@@ -95,4 +95,29 @@ Describe 'crew: tham số tên' {
     $r.Code | Should Be 1
     $r.Text | Should Match 'crew clean chỉ nhận một tên, nhận 2: alpha, beta'
   }
+
+  It '-DryRun ở lệnh không có nó ⇒ exit 1 trước khi làm gì, kèm Làm tiếp; lệnh có -DryRun không bị chặn' {
+    Set-Content (Join-Path $repo 'p.md') 'x'
+    $before = git -C $repo branch --list 'crew/*'
+    foreach ($cmd in @(@('task', 'gamma', 'p.md', '-DryRun'), @('clean', 'alpha', '-DryRun'), @('send', 't1', 'hi', '-DryRun'), @('init', '-DryRun'))) {
+      $r = Invoke-CrewFile $cmd
+      $r.Code | Should Be 1
+      $r.Text | Should Match ([regex]::Escape("crew: LỖI: crew $($cmd[0]) không có -DryRun"))
+      $r.Text | Should Match '→ Làm tiếp:\s*\r?\n\s+bỏ -DryRun rồi chạy lại crew '
+      $r.Text | Should Match 'Lệnh có -DryRun: crew up, crew upgrade, crew repair, crew review <task>, crew queue -Run'
+    }
+    (git -C $repo branch --list 'crew/*') | Should Be $before
+    Test-Path -LiteralPath (Join-Path $repo '.crew/queue.json') | Should Be $false
+    $q = Invoke-CrewFile @('queue', 'gamma', 'p.md', '-DryRun')
+    $q.Code | Should Be 1
+    $q.Text | Should Match 'crew queue chỉ có -DryRun khi đi với -Run'
+    $q.Text | Should Match 'crew queue -Run -DryRun'
+    Test-Path -LiteralPath (Join-Path $repo '.crew/queue.json') | Should Be $false
+    $ok = Invoke-CrewFile @('review', 'alpha', '-DryRun')
+    $ok.Code | Should Be 0
+    $ok.Text | Should Not Match 'không có -DryRun'
+    $bad = Invoke-CrewFile @('tsak', '-DryRun')
+    $bad.Code | Should Be 1
+    $bad.Text | Should Match "không có lệnh 'tsak'"
+  }
 }

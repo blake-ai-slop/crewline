@@ -2,6 +2,17 @@
 
 Hướng dẫn cho Windows. Chạy các lệnh `crew` trong thư mục project; tên terminal có dạng `<tên crew>-planner`, `<tên crew>-w1`, `<tên crew>-rev`. Dùng `crew hot` để xem tên và trạng thái thực tế.
 
+## Defender/antivirus chặn lệnh cài
+
+Nếu Defender hoặc antivirus chặn lệnh cài một dòng, dùng cách cài khác trong PowerShell:
+
+```powershell
+git clone https://github.com/blake-ai-slop/crewline.git "$HOME/Crewline"
+pwsh -NoProfile -File "$HOME/Crewline/install.ps1"
+```
+
+Đây là cùng repo, thư mục và installer mà bootstrap sử dụng. Nếu đã clone vào `~/Crewline`, chạy `git -C "$HOME/Crewline" pull --ff-only` rồi chạy lại dòng `pwsh`. Xem [Cách cài khác](../README.md#cách-cài-khác).
+
 ## Worker mới bật đang chờ trust thư mục (Folder trust)
 
 Khi hiện `Chờ bạn bấm "trust thư mục" (crew không tự bấm)`, sang pane được liệt kê, kiểm tra đúng thư mục project rồi xác nhận: Claude dùng ↓ rồi Enter, Codex dùng Enter. Crew in phím tương ứng cho từng pane; trust một lần cho mỗi thư mục. Không gửi lại task khi hộp trust còn mở. Xem [trạng thái và hộp thoại trên Windows](herdr-windows.md#trạng-thái-và-hộp-thoại).

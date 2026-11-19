@@ -60,14 +60,33 @@ function Get-WorkerMode($info, [string]$kind) {
 
 # Hàm thuần: phiên mới đã sẵn sàng sau /clear (claude) hoặc /new (codex)? $screen = chữ màn hình (hc read).
 # Mọi hộp thoại trên màn hình (kể cả hộp chọn của /new) ⇒ chưa sẵn sàng, dù marker sẵn sàng cũng có mặt.
-# Codex: thấy 'Context 100% left'.
+# Codex: chân còn 'Context N% left' thì N = 100. Không còn (status_line của user bỏ mục này hoặc chân bị cắt '…'): phải thấy
+# dòng đầu phiên '>_ OpenAI Codex (v…)', ô nhập trống (placeholder) và giữa hai thứ không có dòng hội thoại nào
+# (› tin người gửi, • trả lời/lệnh agent, └ kết quả, ■ lỗi, ⚠). Dòng đầu phiên còn trên màn hình nghĩa là cả hội thoại
+# hiện đủ ⇒ phiên cũ còn tin luôn lộ dấu hội thoại. Thấy thật Codex 0.166 sau /new: đầu phiên, logo, ô trống, chân cắt.
 # Claude: idle, có dòng lịch sử '❯ /clear' (lệnh đã chạy) và SAU nó là ô nhập trống '❯'. /clear còn kẹt ở ô nhập thì
 # '❯ /clear' là dòng prompt cuối (không có ô trống sau), thường kèm menu gợi ý '/clear  Clear …'.
 function Test-SessionReady([string]$kind, $info, [string]$screen) {
   $st = Get-TermStatus $info
   if ($st.State -in 'working', 'blocked') { return $false }
   if (Get-ScreenDialog $screen) { return $false }
-  if ($kind -eq 'codex') { return $screen -match 'Context 100% left' }
+  if ($kind -eq 'codex') {
+    if ("$screen" -match 'Context (\d+)% left') { return $Matches[1] -eq '100' }
+    $box = Get-InputBox $screen
+    if (-not $box -or $box.Kind -ne 'codex' -or $box.Text) { return $false }
+    $rows = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' })
+    $head = -1; $row = -1
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+      if ($rows[$i] -match '^[\s│]*>_ OpenAI Codex\b') { $head = $i }
+      elseif ($rows[$i] -match '^\s*›(\s|$)') { $row = $i }
+    }
+    if ($head -lt 0 -or $row -le $head) { return $false }
+    if ($row - $head -lt 2) { return $true }
+    # Codex vẽ cảnh báo limit ngay trên ô nhập của phiên mới ('⚠ 5h limit: 47% left' khi còn <50%): không phải hội thoại.
+    # Cùng mẫu cảnh báo đã biết của Get-InputBox (giữ hai chỗ khớp nhau, test so); ⚠ khác vẫn tính là hội thoại.
+    $mid = @($rows[($head + 1)..($row - 1)] | Where-Object { $_ -notmatch '^\s*⚠\s+(?:(?:5h|weekly) limit: \d+% left(?: · resets at \d{1,2}:\d{2} (?:AM|PM)(?: on \d{1,2} [A-Za-z]{3})?)?(?: · /status)?|\d+ warnings? · f2 to view)\s*$' })
+    return -not ($mid -match '^\s*(›|•|└|■|⚠|─ Worked for|Worked for )').Count
+  }
   $lines = @("$screen" -split '\r?\n')
   $cmd = -1; $empty = -1
   for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -107,17 +126,34 @@ function Show-StartupTrust($roles, $ops) {
 }
 
 # Hàm thuần: ô nhập thường ở cuối màn hình, nhận theo khung đã thấy thật. Không chắc ⇒ $null.
-# Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2, có thể thêm ≤3 dòng trống cuối ô), dòng trống, chân GPT-… hoặc Context N% left.
+# Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2, có thể thêm ≤3 dòng trống cuối ô), dòng trống, chân GPT-…, Context N% left hoặc 5h/weekly N% left.
+# Chân Codex do status_line của user quyết định, có thể bị cắt '…' hoặc bỏ hẳn: có dòng gợi ý '? for shortcuts' thì nhận mọi chân có ' · ', hoặc không có chân (gợi ý ngay sau dòng trống).
 # Ra @{ Kind = 'claude'|'codex'; Text = chữ trong ô ('' nếu trống/placeholder); Lines = các dòng của ô (chỉ Codex); After = các dòng dưới ô chưa rõ là gì }.
 function Get-InputBox([string]$screen) {
   $lines = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' } | ForEach-Object { $_.TrimEnd() })
+  # Codex v0.166: cảnh báo là dòng UI riêng quanh chân ô nhập. Chỉ bỏ các
+  # dạng đã biết SAU dòng trống đóng ô; chữ cảnh báo trong bản nháp vẫn là chữ.
+  $promptRow = -1; $separator = -1
+  for ($j = 0; $j -lt $lines.Count; $j++) {
+    if ($lines[$j] -match '^\s*›(\s|$)') { $promptRow = $j; $separator = -1 }
+    elseif ($promptRow -ge 0 -and $separator -lt 0 -and -not $lines[$j]) { $separator = $j }
+  }
+  if ($separator -ge 0) {
+    $lines = @(for ($j = 0; $j -lt $lines.Count; $j++) {
+      if ($j -gt $separator -and $lines[$j] -match '^\s*⚠\s+(?:(?:5h|weekly) limit: \d+% left(?: · resets at \d{1,2}:\d{2} (?:AM|PM)(?: on \d{1,2} [A-Za-z]{3})?)?(?: · /status)?|\d+ warnings? · f2 to view)\s*$') { continue }
+      $lines[$j]
+    })
+  }
   $n = $lines.Count - 1
   while ($n -ge 0 -and -not $lines[$n]) { $n-- }
   if ($n -lt 2) { return $null }
   # Codex: dòng phụ dưới chân chỉ nhận các dạng đã thấy
   $f = $n
-  if ($lines[$f] -match '^\s*(\? for shortcuts|tab to queue message)') { $f-- }
-  if ($f -ge 2 -and $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left' -and -not $lines[$f - 1]) {
+  $hint = $lines[$f] -match '^\s*(\? for shortcuts|tab to queue message)'
+  if ($hint) { $f-- }
+  $foot = $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left|(^\s*|·\s*)(5h|weekly) \d+% left' -or ($hint -and $lines[$f] -match '\S · \S')
+  if ($hint -and -not $lines[$f]) { $f++; $foot = $true }
+  if ($f -ge 2 -and $foot -and -not $lines[$f - 1]) {
     # Enter của hc send lúc Codex bận có thể thành xuống dòng trong ô: tối đa 3 dòng trống cuối ô, không tính vào Lines
     $i = $f - 2; $text = @(); $gap = 0
     while ($i -ge 0 -and $gap -lt 3 -and -not $lines[$i]) { $i--; $gap++ }
@@ -165,10 +201,21 @@ function Get-ScreenDialog([string]$screen) {
     if (& $hasMark $rest) { return 'other' }
     return 'trust'
   }
-  if ($s -match '(?m)^\s*Where should the new conversation run\?\s*$' -and $s -match '(?m)^\s*›\s*1\. Use current Git worktree') {
+  $title = [regex]::Match($s, '(?m)^[ \t]*Where should the new conversation run\?[ \t]*\r?$')
+  if ($title.Success -and $s.Substring($title.Index) -match '(?m)^\s*›\s*1\. Use current Git worktree') {
     $own = '^\s*Where should the new conversation run\?\s*$', '^\s*›\s*1\. Use current Git worktree\b', '^\s+2\. Create new Git worktree\b',
       '^\s*enter select · esc back\s*$'
-    $rest = @($s -split '\r?\n' | Where-Object { $l = $_; -not @($own | Where-Object { $l -match $_ }).Count }) -join "`n"
+    # Codex 0.166 vẽ hộp này dưới hội thoại cũ: phía trên tiêu đề bỏ các khối • / › cùng dòng thụt nối của chúng (đầu màn hình:
+    # dòng thụt là đuôi khối đã cuộn mất) — chữ 'Allow command'/'(y/n)' trong tin cũ không phải hộp. Dòng sát lề ngoài khối vẫn dò.
+    $inBlock = $true
+    $loose = @(foreach ($l in @($s.Substring(0, $title.Index) -split '\r?\n')) {
+      if ($l -match '^\s*[•›]') { $inBlock = $true; continue }
+      if (-not $l.Trim()) { continue }
+      if ($inBlock -and $l -match '^\s{2,}\S') { continue }
+      $inBlock = $false; $l
+    })
+    $tail = @($s.Substring($title.Index) -split '\r?\n' | Where-Object { $l = $_; -not @($own | Where-Object { $l -match $_ }).Count })
+    $rest = @($loose + $tail) -join "`n"
     if (& $hasMark $rest) { return 'other' }
     return 'codex-new'
   }
@@ -252,6 +299,38 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
   @{ Ok = $r.Ok; Message = $r.Message; Line = $line }
 }
 
+# Tên task đã merge vào nhánh chính? Tìm commit merge mới nhất có tiêu đề nhận ra nhánh crew/<tên> đúng tên (không khớp
+# tiền tố: neg không khớp neg-num, không khớp crew/<tên>-x). Nhận: "Merge crew/<tên>…" (Rev crewline tự đặt),
+# "Merge branch 'crew/<tên>'[ into <nhánh>]" và "Merge remote-tracking branch 'origin/crew/<tên>'[ into <nhánh>]" (mặc định git).
+# Một lệnh git log --merges --grep. Repo chưa có commit, git lỗi ⇒ $null.
+# $main = nhánh chính (nhánh hiện tại của repo chính). Trả @{ Hash; Date } hoặc $null.
+function Get-MergedTaskInfo([string]$root, [string]$main, [string]$name) {
+  $n = [regex]::Escape($name)
+  # Mẫu dùng chung cho ERE của git và regex .NET (không dùng cú pháp riêng của bên nào).
+  $pat = "^Merge (crew/$n([^a-z0-9-]|`$)|branch 'crew/$n'|remote-tracking branch 'origin/crew/$n')"
+  $r = Invoke-GitQuiet -C $root log $main --merges -E "--grep=$pat" '--format=%h%x09%ad%x09%s' --date=short --
+  if ($r.Code -ne 0 -or -not $r.Text) { return $null }
+  # --grep khớp mọi dòng của message ⇒ chỉ nhận khi khớp ở tiêu đề.
+  foreach ($l in ($r.Text -split '\r?\n')) {
+    $p = $l -split "`t", 3
+    if ($p.Count -eq 3 -and $p[2] -cmatch $pat) { return @{ Hash = $p[0]; Date = $p[1] } }
+  }
+  $null
+}
+
+# Chặn dùng lại tên task đã merge vào $main (gọi trước khi tạo nhánh/worktree/ghi state). $cmd = 'task' | 'queue'.
+# Người gọi lấy $main bằng git branch --show-current (không Die), detached/git lỗi ⇒ không gọi. -Force ⇒ chỉ cảnh báo.
+# CREWLINE_QUEUE_SPAWN=1 (crew task con do hàng đợi giao) ⇒ bỏ qua: đã kiểm lúc xếp.
+function Assert-TaskNameUnused([string]$root, [string]$main, [string]$cmd, [string]$name, [string]$promptFile, [bool]$force) {
+  if ($env:CREWLINE_QUEUE_SPAWN -eq '1') { return }
+  $done = (Get-DoneTasks $root) | Where-Object { $_.name -ceq $name } | Select-Object -Last 1
+  $m = if ($done) { @{ Hash = $done.head; Date = $done.cleanedAt.Substring(0, 10) } } else { Get-MergedTaskInfo $root $main $name }
+  if (-not $m) { return }
+  $msg = "tên $name đã dùng cho task đã xong (merge $($m.Hash), $($m.Date))."
+  if (-not $force) { Die $msg @('đặt tên khác', "hoặc vẫn dùng lại: crew $cmd $name $promptFile -Force") }
+  Say "CẢNH BÁO: $msg (-Force vẫn $(if ($cmd -eq 'queue') { 'xếp' } else { 'giao' }))"
+}
+
 function Invoke-Task {
   $root = Get-MainRoot (Get-Location).Path
   if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) { Die 'không ở trong project crew' @('cd <project>', 'crew init') }
@@ -262,6 +341,8 @@ function Invoke-Task {
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
   try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint @("crew repair", "crew task $Name $PromptFile") }
   if ($tasks | Where-Object { $_.name -eq $Name }) { Die "đã có task tên $Name." @("đặt tên khác hoặc dọn task cũ khi xong", "crew clean $Name") }
+  $cur = Invoke-GitQuiet -C $root branch --show-current
+  if ($cur.Code -eq 0 -and $cur.Text) { Assert-TaskNameUnused $root $cur.Text 'task' $Name $PromptFile ([bool]$Force) }
 
   $n = @($cfg.workers).Count
   $busy = @($tasks | ForEach-Object { [int]$_.worker })

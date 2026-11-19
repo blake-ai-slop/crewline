@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 
 # Test phần git của crew clean (Remove-TaskGit): trích hàm bằng AST từ crew.ps1, chạy trên repo git tạm trong $TestDrive, không gọi hc.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Say', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Invoke-GitQuiet', 'Test-WorktreeListed', 'Remove-TaskGit', 'Remove-TaskBranch'
+$want = 'Say', 'Get-Tasks', 'Save-Tasks', 'Get-DoneTasks', 'Save-DoneTask', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Invoke-GitQuiet', 'Test-WorktreeListed', 'Remove-TaskGit', 'Remove-TaskBranch'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -36,6 +36,19 @@ function Invoke-CleanGit($r, [bool]$force = $false) {
 function Test-Branch($r) { git -C $r.Root show-ref --verify --quiet "refs/heads/$($r.Task.branch)"; $LASTEXITCODE -eq 0 }
 
 Describe 'Remove-TaskGit' {
+  It 'clean nhánh đã merge với -Force vẫn ghi sổ, giữ tên khác và cập nhật đúng tên' {
+    $r = New-CleanRepo 'neg-num'
+    Save-DoneTask $r.Root 'neg' 'abc1234'
+    Save-DoneTask $r.Root 'neg-num' 'def5678'
+    $res = Invoke-CleanGit $r $true
+    $res.Ok | Should Be $true
+    $done = Get-DoneTasks $r.Root
+    $done.Count | Should Be 2
+    ($done | Where-Object { $_.name -ceq 'neg' }).head | Should Be 'abc1234'
+    @($done | Where-Object { $_.name -ceq 'neg-num' }).Count | Should Be 1
+    ($done | Where-Object { $_.name -ceq 'neg-num' }).head | Should Be (git -C $r.Root rev-parse --short HEAD)
+  }
+
   It 'dọn thành công -> worktree + nhánh mất, bản ghi xóa' {
     $r = New-CleanRepo
     $res = Invoke-CleanGit $r
@@ -45,6 +58,11 @@ Describe 'Remove-TaskGit' {
     Test-WorktreeListed $r.Root $r.Wt | Should Be $false
     Test-Branch $r | Should Be $false
     (Get-Tasks $r.Root).Count | Should Be 0
+    $done = Get-DoneTasks $r.Root
+    $done.Count | Should Be 1
+    $done[0].name | Should Be 'demo'
+    $done[0].head | Should Be (git -C $r.Root rev-parse --short HEAD)
+    $done[0].cleanedAt | Should Match '^\d{4}-\d{2}-\d{2}T'
   }
 
   It 'nhánh chưa merge, không -Force -> lỗi rõ, giữ bản ghi; chạy lại -Force dọn nốt' {
@@ -58,6 +76,7 @@ Describe 'Remove-TaskGit' {
     (Get-Tasks $r.Root).Count | Should Be 1
     $res = Invoke-CleanGit $r $true
     $res.Ok | Should Be $true
+    (Get-DoneTasks $r.Root).Count | Should Be 0
     Test-Branch $r | Should Be $false
     (Get-Tasks $r.Root).Count | Should Be 0
   }

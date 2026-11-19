@@ -27,11 +27,16 @@ Describe 'Start-Term tắt gợi ý câu kế tiếp của Claude Code' {
     $script:HcArgs -contains '-EncodedCommand' | Should Be $false
   }
   It 'biến chạy được trong pwsh: chỉ đặt trong tiến trình pane' {
-    Start-Term 'x-w1' 'C:\x' 'sp' 'tb' 'Write-Output $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' | Out-Null
-    $i = [array]::IndexOf($script:HcArgs, '-EncodedCommand')
-    $out = & pwsh -NoProfile -NonInteractive -EncodedCommand $script:HcArgs[$i + 1]
-    "$out".Trim() | Should Be 'false'
-    $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION | Should BeNullOrEmpty
+    # pane crew đã có biến = 'false' ⇒ dùng giá trị canh riêng để biết Start-Term không đổi biến của tiến trình cha
+    $old = $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION
+    try {
+      $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'sentinel-cha'
+      Start-Term 'x-w1' 'C:\x' 'sp' 'tb' 'Write-Output $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' | Out-Null
+      $i = [array]::IndexOf($script:HcArgs, '-EncodedCommand')
+      $out = & pwsh -NoProfile -NonInteractive -EncodedCommand $script:HcArgs[$i + 1]
+      "$out".Trim() | Should Be 'false'
+      $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION | Should Be 'sentinel-cha'
+    } finally { $env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = $old }
   }
 }
 

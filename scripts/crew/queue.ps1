@@ -83,8 +83,10 @@ function New-QueueOps {
       param($root, [string[]]$argv)
       $exe = (Get-Process -Id $PID).Path
       Push-Location -LiteralPath $root
+      # Tên đã kiểm lúc xếp (hoặc -Force) ⇒ crew task con không chặn tên đã merge lần nữa.
+      $savedSpawn = $env:CREWLINE_QUEUE_SPAWN; $env:CREWLINE_QUEUE_SPAWN = '1'
       try { $out = & { $ErrorActionPreference = 'Continue'; & $exe -NoProfile -File $CrewScriptPath @argv 2>&1 | ForEach-Object { "$_" } }; $code = $LASTEXITCODE }
-      finally { Pop-Location }
+      finally { Pop-Location; $env:CREWLINE_QUEUE_SPAWN = $savedSpawn }
       @{ Code = $code; Text = (@($out) -join "`n").Trim() }
     }
   }
@@ -265,6 +267,11 @@ function Invoke-Queue {
   if (-not (Test-Path -LiteralPath $PromptFile)) { Die "không thấy file prompt $PromptFile" "kiểm đường dẫn (tính từ $((Get-Location).Path)) rồi chạy lại crew queue $Name <file-prompt>" }
   $cfg = Get-Config $root; $tasks = Get-Tasks $root
   if ($tasks | Where-Object { $_.name -eq $Name }) { Die "đã có task tên $Name." @("đặt tên khác hoặc đợi task $Name xong", "crew clean $Name", "crew queue $Name $PromptFile") }
+  # Tên đã trong hàng đợi đã qua kiểm lúc xếp lần đầu ⇒ cập nhật không chặn lại.
+  if (-not @($items | Where-Object { $_.name -eq $Name }).Count) {
+    $cur = Invoke-GitQuiet -C $root branch --show-current
+    if ($cur.Code -eq 0 -and $cur.Text) { Assert-TaskNameUnused $root $cur.Text 'queue' $Name $PromptFile ([bool]$Force) }
+  }
   $n = @($cfg.workers).Count
   if ($Worker -and ($Worker -lt 1 -or $Worker -gt $n)) { Die "-Worker phải từ 1 tới $n." "bỏ -Worker (giao worker rảnh) hoặc dùng -Worker 1..$n" }
   if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/crew/$Name").Code -eq 0) { Die "nhánh crew/$Name đã có — đặt tên khác hoặc xóa nhánh cũ." @("git -C '$root' log --oneline -3 crew/$Name", "Chỉ xóa nếu chắc chắn bỏ nhánh:", "git -C '$root' branch -D crew/$Name") }

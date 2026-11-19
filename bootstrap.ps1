@@ -93,9 +93,13 @@ function Invoke-CrewlineBootstrap {
 
   $install = Join-Path $Dir 'install.ps1'
   Say "chay $install"
-  # Native child inherits console stdin (also through iex) and CREWLINE_DEFAULTS.
+  # Decode pwsh's UTF-8 output even when the parent console uses code page 437.
+  # Keep native console stdin (also through iex) for interactive setup.
+  $savedOutputEncoding = [Console]::OutputEncoding
+  [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
   try { & pwsh -NoProfile -File $install | Out-Host }
   catch { return (Fail "khong chay duoc pwsh: $($_.Exception.Message)" "kiem pwsh: pwsh -NoProfile -Command '`$PSVersionTable.PSVersion' ; loi thi cai lai: winget install Microsoft.PowerShell") }
+  finally { [Console]::OutputEncoding = $savedOutputEncoding }
   if ($LASTEXITCODE -ne 0) { return (Fail "install.ps1 loi (ma $LASTEXITCODE)." "doc loi o tren, sua roi chay lai: pwsh -NoProfile -File `"$install`"") }
   return 0
 }

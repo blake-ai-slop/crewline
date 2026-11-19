@@ -74,8 +74,8 @@ $commands = @(
     Examples = @('crew check help', 'crew check help -NoTest', 'crew check help -Path D:/Projects/demo')
   }
   @{
-    Name = 'review'; Group = 'Giao việc'; Syntax = 'crew review <task>[,<task2>…] [-DryRun]'; Short = 'gửi yêu cầu gộp task cho Rev'
-    Details = @('Chạy trong repo crew; lấy các nhánh có commit mới và giữ đúng thứ tự task bạn đưa.', 'Cấp review: task > dòng đầu HOT > config > Gọn; nhiều task lấy cấp cao nhất.', '-DryRun chỉ in tin; bình thường gửi một dòng giao merge/test/dọn tới <repo>-rev.', 'Rev có tin kẹt ở ô nhập ⇒ không gửi, exit 1: sang pane Rev, Enter để gửi hoặc xóa chữ, rồi chạy lại.')
+    Name = 'review'; Group = 'Giao việc'; Syntax = 'crew review <task>[,<task2>…] [-DryRun|-Sent]'; Short = 'gửi yêu cầu gộp task cho Rev'
+    Details = @('Chạy trong repo crew; lấy các nhánh có commit mới và giữ đúng thứ tự task bạn đưa.', 'Cấp review: task > dòng đầu HOT > config > Gọn; nhiều task lấy cấp cao nhất.', '-DryRun chỉ in tin; bình thường gửi một dòng giao merge/test/dọn tới <repo>-rev.', '-Sent chỉ ghi reviewSentAt và bỏ reviewUnsure, không gửi tin; dùng sau khi kiểm hc read <repo>-rev --lines 20 và bấm Enter tay nếu tin còn ở ô nhập. Gửi không chắc vẫn đánh dấu đang review để chặn restart; crew hot cảnh báo và tự bỏ reviewUnsure khi tin rời ô nhập hoặc Rev đang working.', 'Rev có tin kẹt ở ô nhập ⇒ không gửi, exit 1: sang pane Rev, Enter để gửi hoặc xóa chữ, rồi chạy lại.')
     Examples = @('crew review help -DryRun', 'crew review repair,help')
   }
   @{
@@ -128,7 +128,9 @@ if ($Topic -eq 'agent') {
   }
   exit 0
 }
-$installCommand = if ($PSVersionTable.PSEdition -ne 'Core' -or $IsWindows) { 'irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { 'curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh' }
+. (Join-Path $PSScriptRoot 'platform.ps1')
+. (Join-Path $PSScriptRoot 'crew/core.ps1')
+$installCommand = Get-CrewInstallCommand
 Write-Output (@'
 Crewline — đội agent làm việc song song trong herdr
 

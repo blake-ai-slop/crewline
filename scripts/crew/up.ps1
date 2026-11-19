@@ -167,8 +167,8 @@ function Invoke-Up {
       $n = $item.Term
       switch ($states[$n]) {
         'ready' {
-          # Codex không báo lỗi khi thư mục chưa có phiên: mở phiên trống, thấy 'Context 100% left'.
-          if ($item.Kind -eq 'codex' -and (& $resumeOps.Read $n) -match 'Context 100% left') { Say "cảnh báo: ${n}: hội thoại mới (Codex không có phiên cũ để mở lại)" }
+          # Codex không báo lỗi khi thư mục chưa có phiên: mở phiên trống (nhận như sau /new, Test-SessionReady).
+          if ($item.Kind -eq 'codex' -and (Test-SessionReady 'codex' (& $resumeOps.Get $n) (& $resumeOps.Read $n))) { Say "cảnh báo: ${n}: hội thoại mới (Codex không có phiên cũ để mở lại)" }
           else { Say "${n}: $(Format-SessionPlan $item.Plan)" }
         }
         'exited' {

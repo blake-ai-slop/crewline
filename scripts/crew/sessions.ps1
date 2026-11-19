@@ -94,7 +94,8 @@ function Format-SessionPlan($plan) { "$(if ($plan.Resume) { 'mở lại hội th
 function Test-AgentScreen([string]$kind, [string]$screen) {
   $last = @("$screen" -split '\r?\n' | Where-Object { $_.Trim() -and $_ -notmatch '^\[hc\]' }) | Select-Object -Last 1
   if ("$last" -match '(^\s*PS .*>|[$#])\s*$') { return $false }
-  if ($kind -eq 'codex') { return "$screen" -match 'Context \d+% left' }
+  # Codex: chân có thể không có 'Context N% left' (status_line của user, bị cắt '…') ⇒ nhận thêm đầu phiên, chân GPT-…/limit, gợi ý.
+  if ($kind -eq 'codex') { return "$screen" -match 'Context \d+% left|>_ OpenAI Codex|(?m)^\s*GPT-\S+\s.*·|(?m)^\s*(5h|weekly) \d+% left|(?m)^\s*\? for shortcuts' }
   "$screen" -match '(accept edits|bypass permissions|auto mode|plan mode) on|shift\+tab to cycle'
 }
 

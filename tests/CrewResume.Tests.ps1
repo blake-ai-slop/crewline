@@ -5,7 +5,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
 $want = 'Get-Flags', 'Quote', 'Get-AgentCommand', 'ConvertTo-RootKey', 'Test-SamePath', 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode',
-  'Get-TermShellState', 'Get-InputBox', 'Get-ScreenDialog', 'Wait-WorkerReady', 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Write-CrewStateFile',
+  'Get-TermShellState', 'Get-InputBox', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Write-CrewStateFile',
   'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))

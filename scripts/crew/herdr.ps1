@@ -127,7 +127,7 @@ function Read-CrewState([string]$file, [switch]$ThrowOnError) {
     $message = $_.Exception.Message
     if (-not $message.StartsWith($file, [StringComparison]::Ordinal)) { $message = "$file hỏng — sửa JSON hoặc khôi phục bản sao, không ghi đè file: $message" }
     if ($ThrowOnError) { throw $message }
-    Die $message $(if ($message -match 'bản crew mới hơn') { 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { "mở $file sửa JSON (hoặc khôi phục bản sao) rồi chạy lại lệnh crew" })
+    Die $message $(if ($message -match 'bản crew mới hơn') { "cài lại Crewline: $(Get-CrewInstallCommand)" } else { "mở $file sửa JSON (hoặc khôi phục bản sao) rồi chạy lại lệnh crew" })
   }
 }
 
@@ -153,6 +153,32 @@ function Save-Tasks([string]$root, $tasks) {
     if (Test-Path -LiteralPath $file) { $null = Read-CrewState $file }
     $list = @($tasks | Where-Object { $null -ne $_ })
     Write-CrewStateFile $file ((ConvertTo-Json -InputObject $list -Depth 100) + [Environment]::NewLine)
+  }
+}
+
+function Get-DoneTasks([string]$root) {
+  $file = Join-Path $root '.crew/done-tasks.json'
+  if (-not (Test-Path -LiteralPath $file)) { return , @() }
+  # Sổ bổ sung: hỏng/trống không được chặn task/clean như state đang hoạt động.
+  try {
+    $items = Read-CrewState $file -ThrowOnError
+    return , @($items | ForEach-Object {
+      # ConvertFrom-Json ở pwsh mới tự chuyển ISO timestamp thành DateTime.
+      if ($_.cleanedAt -is [DateTime]) { $_.cleanedAt = $_.cleanedAt.ToString('o') }
+      $_
+    } | Where-Object {
+      $_.name -is [string] -and $_.name -cmatch '^[a-z0-9][a-z0-9-]{0,30}$' -and
+      $_.head -is [string] -and $_.head -cmatch '^[0-9a-f]+$' -and
+      $_.cleanedAt -is [string] -and $_.cleanedAt -match '^\d{4}-\d{2}-\d{2}T'
+    })
+  } catch { return , @() }
+}
+
+function Save-DoneTask([string]$root, [string]$name, [string]$head) {
+  Use-CrewStateLock $root {
+    $items = @((Get-DoneTasks $root) | Where-Object { $_.name -cne $name })
+    $items += [pscustomobject]@{ name = $name; head = $head; cleanedAt = [DateTime]::UtcNow.ToString('o') }
+    Write-CrewStateFile (Join-Path $root '.crew/done-tasks.json') ((ConvertTo-Json -InputObject $items -Depth 100) + [Environment]::NewLine)
   }
 }
 

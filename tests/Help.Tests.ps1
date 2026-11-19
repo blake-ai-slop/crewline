@@ -38,6 +38,13 @@ function Get-HelpParameters([string]$File) {
 }
 
 Describe 'crew help' {
+  It 'review giải thích -Sent và dấu review không chắc' {
+    $text = (Invoke-HelpPage 'review').Text
+    $text | Should Match '-Sent'
+    $text | Should Match 'reviewUnsure'
+    $text | Should Match 'không gửi tin'
+    $text | Should Match 'hc read <repo>-rev --lines 20'
+  }
   It 'chạy dưới console IBM437 mà vẫn đọc đúng tiếng Việt' {
     [Console]::OutputEncoding.CodePage | Should Be 437
     (Invoke-HelpPage 'up').Text | Should Match 'mặc định 300 giây'

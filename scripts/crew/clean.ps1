@@ -43,6 +43,11 @@ function Remove-TaskBranch([string]$root, $task, [bool]$force) {
   $b = $task.branch
   $r = Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$b"
   if ($r.Code -ne 0) { Say "nhánh $b không còn — bỏ qua."; return }
+  if ((Invoke-GitQuiet -C $root merge-base --is-ancestor $b HEAD).Code -eq 0) {
+    $head = Invoke-GitQuiet -C $root rev-parse --short $b
+    if ($head.Code -ne 0) { throw "không đọc được HEAD của nhánh $b`: $($head.Text)" }
+    Save-DoneTask $root $task.name $head.Text
+  }
   Say "git branch $(if ($force) { '-D' } else { '-d' }) $b"
   $r = if ($force) { Invoke-GitQuiet -C $root branch -D $b } else { Invoke-GitQuiet -C $root branch -d $b }
   if ($r.Code -ne 0) { throw "bước 'git branch' lỗi: $($r.Text)`n  Cách xử lý: merge nhánh $b rồi chạy lại crew clean $($task.name), hoặc thêm -Force nếu chắc chắn bỏ." }

@@ -72,7 +72,7 @@ function Test-SentInput([string[]]$lines, [string]$text, [bool]$bare = $false) {
 # Đọc lại màn hình + trạng thái ngay trước phím; không live, không phải Codex, hết working, blocked, hộp thoại ⇒ không bấm.
 # Tin dài gói nhiều dòng và có dòng trống cuối ô (Enter bị đổi thành xuống dòng) vẫn nhận qua Get-InputBox; khối queued phía trên không ảnh hưởng.
 function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $false) {
-  $unsure = @{ Ok = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin có thể nằm lại ô nhập, xem crew hot" }
+  $unsure = @{ Ok = $true; Unsure = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin có thể nằm lại ô nhập, xem crew hot" }
   if (-not $ops.Read -or -not $ops.Tab) { return $unsure }
   # tin dài: TUI có thể chưa vẽ xong ô nhập ở lần đọc đầu ⇒ đọc lại tối đa 3 lần; MỖI lần kiểm lại trạng thái + hộp thoại, Tab ngay sau lần đọc khớp
   $match = $false
@@ -105,7 +105,8 @@ function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $fals
 # hiện tại), hộp khác ⇒ dừng, không Enter. $tries = số vòng chờ ~2s.
 # Gửi trần (không bọc <hc from>) khi: terminal là shell, tin là lệnh slash ('/…'), hoặc $raw.
 function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = '', [int]$tries = 6, [bool]$raw = $false) {
-  $fail = { param($m, $n = '') @{ Ok = $false; Message = $m; Next = $n } }
+  $sent = $false
+  $fail = { param($m, $n = '') @{ Ok = $false; Unsure = $sent; Message = $m; Next = $n } }
   $info = & $ops.Get $term
   switch (Get-SendPlan $info $null) {
     'dead' { return & $fail "terminal $term không live (hc get không thấy hoặc đã tắt)." @('crew up', 'gửi lại tin bằng crew send') }
@@ -118,6 +119,7 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   $turn = if ($null -ne $info.turn) { [int]$info.turn } else { -1 }
   $r = & $ops.Send $term $text $bare
   if ($r.Code -ne 0) { return & $fail "hc send tới $term thất bại: $($r.Text)" "kiểm terminal: hc ls (thiếu thì crew up), rồi gửi lại" }
+  $sent = $true
   $result = try { $r.Text | ConvertFrom-Json } catch { [pscustomobject]@{ started = $null } }
   $verdict = {
     param($plan, $info)
@@ -200,7 +202,7 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
     $result = [pscustomobject]@{ started = $false }
   }
   if ($session) {
-    $what = if ($session -eq 'codex') { "phiên mới ('Context 100% left')" } else { "màn hình đã xóa ('❯ /clear' rồi ô nhập trống)" }
+    $what = if ($session -eq 'codex') { "phiên Codex mới trống (đầu phiên '>_ OpenAI Codex', ô nhập trống, không còn tin cũ)" } else { "màn hình đã xóa ('❯ /clear' rồi ô nhập trống)" }
     return & $fail "chưa xác nhận được $what sau '$text' tới $term (~$(2 * $tries)s); xem: hc read $term --lines 20"
   }
   & $fail "đã gửi tới $term nhưng agent chưa chạy (vẫn $((Get-TermStatus $info).State)); xem: hc read $term --lines 20"
@@ -225,7 +227,7 @@ function Get-WorkerInputError([string]$term, [string]$screen) {
 
 # Gửi tin tới terminal, dùng chung cho crew send/review. Lỗi ⇒ Die (exit 1). Agent bận ⇒ báo tin nằm chờ (exit 0).
 # $root khác rỗng ⇒ kiểm chủ project; $ops = $null ⇒ New-HcOps.
-function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '', $ops = $null) {
+function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [string]$root = '', $ops = $null, [switch]$PassResult) {
   if (-not $ops) { $ops = New-HcOps }
   if ($root) {
     $why = Get-ForeignTermError $term (& $ops.Get $term) $root
@@ -257,6 +259,7 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
   $session = if ($st.App -eq 'codex' -and $text.Trim() -ceq '/new') { 'codex' }
     elseif ($st.App -in 'claude', 'claude-code' -and $text.Trim() -ceq '/clear') { 'claude' } else { '' }
   $r = Invoke-SendFlow $term $text $ops $session $(if ($session) { 10 } else { 6 }) $raw
+  if ($PassResult) { return $r }
   if (-not $r.Ok) { Die $r.Message $r.Next }
   Say $r.Message
 }
@@ -358,32 +361,51 @@ function Get-RevGuard($cfg, [string]$term, $info, [scriptblock]$readScreen = $nu
 
 function Invoke-Review {
   $names = @($NameList)
-  if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun]' @('crew hot', 'crew review fix-login') }
+  if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun|-Sent]' @('crew hot', 'crew review fix-login') }
   $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die 'chạy trong repo của crew.' @('cd <project>', 'crew init') }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
-  $main = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
-  if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." @("git -C '$root' switch <nhánh chính>", "crew review <task>") }
   $sel = @(foreach ($n in $names) {
     $t = $tasks | Where-Object { $_.name -eq $n } | Select-Object -First 1
     if (-not $t) { Die "không có task tên $n." 'xem tên task đang có: crew hot' }
     $t
   })
-  $rl = Get-ReviewLine $root $main $sel $cfg.review
-  if ($rl.Error) { Die $rl.Error $rl.Next }
-  $revTerm = "$slug-rev"
-  $revInfo = if ($cfg.rev -and $cfg.rev -ne 'none') { Get-TermInfo $revTerm } else { $null }
-  $why = Get-RevGuard $cfg $revTerm $revInfo { & (New-HcOps).Read $revTerm }
-  if ($DryRun) {
-    Write-Host $rl.Msg
-    if ($why) { Say "cảnh báo: $why" }
-    return
+  if ($Sent -and $DryRun) { Die '-Sent không đi với -DryRun.' 'chạy: crew review <task> -Sent' }
+  $r = $null
+  if (-not $Sent) {
+    $main = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
+    if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." @("git -C '$root' switch <nhánh chính>", "crew review <task>") }
+    $rl = Get-ReviewLine $root $main $sel $cfg.review
+    if ($rl.Error) { Die $rl.Error $rl.Next }
+    $revTerm = "$slug-rev"
+    $revInfo = if ($cfg.rev -and $cfg.rev -ne 'none') { Get-TermInfo $revTerm } else { $null }
+    $why = Get-RevGuard $cfg $revTerm $revInfo { & (New-HcOps).Read $revTerm }
+    if ($DryRun) {
+      Write-Host $rl.Msg
+      if ($why) { Say "cảnh báo: $why" }
+      return
+    }
+    if ($why) { Die "$why Không gửi." "xử lý theo lỗi ở trên rồi chạy lại: crew review $($names -join ',')" }
+    $r = Send-CrewMessage $revTerm $rl.Msg $false $root -PassResult
+    if ($r -and -not $r.Ok -and -not $r.Unsure) { Die $r.Message $r.Next }
   }
-  if ($why) { Die "$why Không gửi." "xử lý theo lỗi ở trên rồi chạy lại: crew review $($names -join ',')" }
-  Send-CrewMessage $revTerm $rl.Msg $false $root
   # gửi được ⇒ đánh dấu chờ review (crew repair giao lại khi Rev bị đóng giữa chừng); +i ms giữ thứ tự gửi
   $now = [DateTime]::UtcNow
   for ($i = 0; $i -lt $sel.Count; $i++) {
     $sel[$i] | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $now.AddMilliseconds($i).ToString('o') -Force
   }
-  Update-Tasks $root { param($current) foreach ($item in $sel) { $found = $current | Where-Object { $_.name -eq $item.name }; if ($found) { $found | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $item.reviewSentAt -Force } }; $current } | Out-Null
+  Update-Tasks $root { param($current)
+    foreach ($item in $sel) {
+      $found = $current | Where-Object { $_.name -eq $item.name }
+      if ($found) {
+        $found | Add-Member -NotePropertyName reviewSentAt -NotePropertyValue $item.reviewSentAt -Force
+        if ($r -and $r.Unsure) { $found | Add-Member -NotePropertyName reviewUnsure -NotePropertyValue $true -Force }
+        else { $found.PSObject.Properties.Remove('reviewUnsure') }
+      }
+    }
+    $current
+  } | Out-Null
+  if ($r -and $r.Unsure) {
+    Die "$($r.Message) — chưa chắc Rev đã nhận review $($names -join ',')." @("hc read $revTerm --lines 20", "nếu tin còn nằm ô nhập thì bấm Enter tay rồi: crew review $($names -join ',') -Sent")
+  }
+  if ($r) { Say $r.Message }
 }
