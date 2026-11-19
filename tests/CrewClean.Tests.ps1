@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test phần git của crew clean (Remove-TaskGit): trích hàm bằng AST từ crew.ps1, chạy trên repo git tạm trong $TestDrive, không gọi hc.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 

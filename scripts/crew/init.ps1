@@ -107,7 +107,7 @@ function Clear-CopiedCrewState([string]$root, $cfg) {
   $parent = Join-Path (ConvertTo-RootKey $root) '.crew/worktrees'
   foreach ($path in @((Join-Path $root '.crew'), $parent, (Join-Path $root '.crew/config.json'))) {
     if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      Die "không dọn tự động đường dẫn liên kết: $path"
+      Die "không dọn tự động đường dẫn liên kết: $path" "kiểm $path, tự gỡ liên kết đó (không xóa thư mục đích) rồi chạy lại: crew init -Name $Name"
     }
   }
   $remove = @()
@@ -119,7 +119,7 @@ function Clear-CopiedCrewState([string]$root, $cfg) {
       if (-not (Test-SamePath (Split-Path $dir.FullName -Parent) $parent) -or
           ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
           @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
-        Die "không dọn tự động đường dẫn liên kết/ngoài phạm vi: $($dir.FullName)"
+        Die "không dọn tự động đường dẫn liên kết/ngoài phạm vi: $($dir.FullName)" "kiểm $($dir.FullName), tự dọn tay (không theo liên kết) rồi chạy lại: crew init -Name $Name"
       }
       $remove += $dir.FullName
     }
@@ -153,32 +153,32 @@ function Invoke-Init {
   if (Test-Path -LiteralPath $copyConfig) {
     $previous = Get-Content -LiteralPath $copyConfig -Raw | ConvertFrom-Json
     if (Get-CopySource $copyRoot $previous) {
-      if (-not $Name) { Die 'project là bản chép (bản sao) của crew còn tồn tại; chạy crew init -Name <tên mới> để dọn trạng thái chép theo và tạo crew riêng.' }
+      if (-not $Name) { Die 'project là bản chép (bản sao) của crew còn tồn tại.' 'chạy crew init -Name <tên mới> để dọn trạng thái chép theo và tạo crew riêng' }
       $copied = $previous
     }
   }
   # -Name kiểm ngay, trước khi đụng git
   if ($Name) {
-    if (-not (Test-CrewName $Name)) { Die "-Name '$Name' không hợp lệ: chỉ a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'." }
+    if (-not (Test-CrewName $Name)) { Die "-Name '$Name' không hợp lệ: chỉ a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'." 'chạy lại với tên hợp lệ, vd. crew init -Name my-app' }
     $reg = Read-ProjectRegistry
     $here = if ($root) { $root } else { $p }
     $other = if ($reg.Ok) { Get-NameOwner $reg.Map $Name $here } else { '' }
-    if ($other) { Die "tên crew '$Name' đã thuộc project $other — chọn tên khác." }
+    if ($other) { Die "tên crew '$Name' đã thuộc project $other — chọn tên khác." "crew init -Name <tên khác>; xem mục `"Tên crew trùng`" trong docs/troubleshooting.md (thư mục cài Crewline)" }
     $other = if ($reg.Ok) { Get-IdKeyOwner $reg.Map (ConvertTo-IdKey $Name) $here } else { '' }
-    if ($other) { Die "khóa id herdr của tên '$Name' ($(ConvertTo-IdKey $Name)) đã thuộc project $other — chọn tên khác." }
+    if ($other) { Die "khóa id herdr của tên '$Name' ($(ConvertTo-IdKey $Name)) đã thuộc project $other — chọn tên khác." "crew init -Name <tên khác>; xem mục `"Tên crew trùng`" trong docs/troubleshooting.md (thư mục cài Crewline)" }
     $hs = Get-HerdrSpaces
-    if ($hs.Ok -and (Get-TakenIdKeys $hs.Spaces $here) -ccontains (ConvertTo-IdKey $Name)) { Die "space herdr spcrew$(ConvertTo-IdKey $Name) đang thuộc project khác — chọn tên khác cho -Name." }
+    if ($hs.Ok -and (Get-TakenIdKeys $hs.Spaces $here) -ccontains (ConvertTo-IdKey $Name)) { Die "space herdr spcrew$(ConvertTo-IdKey $Name) đang thuộc project khác — chọn tên khác cho -Name." "crew init -Name <tên khác>; xem mục `"Tên crew trùng`" trong docs/troubleshooting.md (thư mục cài Crewline)" }
   }
   $hasHead = [bool]$root -and (Invoke-GitQuiet -C $root rev-parse --verify -q HEAD).Code -eq 0
   if (-not $hasHead -and -not $GitInit) {
     if ($root) {
-      $fail = 'repo chưa có commit nào. Chạy lại với -GitInit để tạo commit đầu.'
+      $fail = 'repo chưa có commit nào.'
       $answer = Read-GitInitChoice "Repo $root chưa có commit nào." 'Tạo commit đầu với các file đang có'
     } else {
-      $fail = "$p không phải repo git. Chạy lại với -GitInit để git init + commit đầu."
+      $fail = "$p không phải repo git."
       $answer = Read-GitInitChoice "Thư mục $p chưa là repo git." 'Tạo repo git mới ở đây (git init + commit đầu)'
     }
-    if ($null -eq $answer) { Die $fail }
+    if ($null -eq $answer) { Die $fail "chạy lại: crew init -Path '$p' -GitInit để tạo repo/commit đầu" }
     if ($answer -ne 'yes') { Say 'thôi, không tạo gì.'; exit 1 }
   }
   if (-not $hasHead -or -not $NoCommit) { Confirm-GitIdentity $(if ($root) { $root } else { $p }) $true $false }
@@ -190,8 +190,8 @@ function Invoke-Init {
   if (-not $hasHead) {
     if ($copied) { Clear-CopiedCrewState $root $copied; $copied = $null }
     Say "tạo commit đầu với các file đang có."
-    Invoke-GitOrDie 'git add' -C $root add -A | Out-Null
-    Invoke-GitOrDie 'commit đầu' -C $root commit -q --allow-empty -m 'chore: initial commit' | Out-Null
+    Invoke-GitOrDie 'git add' -Next "sửa file git báo lỗi ở trên (đang bị khóa/tên không hợp lệ ⇒ đóng chương trình đang mở nó hoặc thêm vào .gitignore) rồi chạy lại: crew init" -C $root add -A | Out-Null
+    Invoke-GitOrDie 'commit đầu' -Next "sửa theo lỗi git ở trên (kiểm: git -C '$root' status) rồi chạy lại: crew init" -C $root commit -q --allow-empty -m 'chore: initial commit' | Out-Null
     $hasHead = $true
   }
 
@@ -245,6 +245,6 @@ function Invoke-Init {
   if ($NoCommit) { Say "bỏ qua commit (-NoCommit)."; return }
   Invoke-GitQuiet -C $root add context CLAUDE.md AGENTS.md .gitignore | Out-Null
   if ((Invoke-GitQuiet -C $root diff --cached --quiet).Code -eq 0) { Say "không có gì mới để commit."; return }
-  Invoke-GitOrDie 'commit khung context' -C $root commit -q -m 'chore: crew context skeleton' | Out-Null
+  Invoke-GitOrDie 'commit khung context' -Next "sửa theo lỗi git ở trên (kiểm: git -C '$root' status) rồi chạy lại: crew init" -C $root commit -q -m 'chore: crew context skeleton' | Out-Null
   Say "commit: $(git -C $root log -1 --format='%h %s')"
 }

@@ -104,6 +104,7 @@ Describe 'crew help' {
   It 'trang chính đúng nội dung và thứ tự đã duyệt, không có lệnh agent hay Mẹo' {
     $result = Invoke-HelpPage
     $result.ExitCode | Should Be 0
+    $installCommand = if ($PSVersionTable.PSEdition -ne 'Core' -or $IsWindows) { 'irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { 'curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh' }
     $expected = @(
       'Crewline — đội agent làm việc song song trong herdr', '',
       'Dùng hằng ngày',
@@ -116,8 +117,10 @@ Describe 'crew help' {
       '  crew setup               đổi đội mặc định cho project mới',
       '  crew doctor              máy có thiếu gì không',
       '  crew version             xem phiên bản Crewline đang cài',
-      '  crew upgrade             cập nhật khung context của project',
-      '  crew init                tạo project với tùy chọn riêng (tên, đội)', '',
+      '  crew upgrade             cập nhật khung context của project (sau khi cập nhật Crewline)',
+      '  crew init                tạo project với tùy chọn riêng (tên, đội)',
+      '  Cập nhật Crewline: chạy lại lệnh cài một dòng',
+      "    $installCommand", '',
       'Chi tiết: crew help <lệnh>   ·   Lệnh agent dùng: crew help agent'
     ) -join "`n"
     $result.Text | Should Be $expected

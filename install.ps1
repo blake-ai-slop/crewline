@@ -92,7 +92,7 @@ Say "shim $(Join-Path $Bin 'crew') (Git Bash)"
     [IO.File]::SetUnixFileMode($dst, [Enum]::ToObject($unixMode, [int][IO.File]::GetUnixFileMode($dst) -bor 0x49)) # +x cho user/group/other (0o111)
   } else {
     & chmod +x $dst
-    if ($LASTEXITCODE -ne 0) { throw "chmod failed: $dst" }
+    if ($LASTEXITCODE -ne 0) { throw "chmod failed: $dst`n  → Làm tiếp: chmod +x '$dst' rồi chạy lại install.ps1" }
   }
   Say "shim $dst -> $crewPs1"
 }
@@ -107,7 +107,7 @@ if (Test-Path -LiteralPath $hashFile) {
     $saved = Get-Content -LiteralPath $hashFile -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($null -eq $saved -or $saved.GetType() -ne [System.Management.Automation.PSCustomObject]) { throw 'cần object' }
     foreach ($p in $saved.PSObject.Properties) { $hashes[$p.Name] = $p.Value }
-  } catch { throw "Không đọc được $hashFile — sửa JSON hoặc khôi phục bản sao trước khi cài lại: $($_.Exception.Message)" }
+  } catch { throw "Không đọc được $hashFile — sửa JSON hoặc khôi phục bản sao trước khi cài lại: $($_.Exception.Message)`n  → Làm tiếp: mở $hashFile sửa JSON (hoặc xóa file: template đã sửa tay sẽ được giữ thành .new) rồi chạy lại install.ps1" }
 }
 foreach ($t in Get-ChildItem (Join-Path $Repo 'templates') -Filter 'crew-*.md') {
   $d = Join-Path $tdir $t.Name
@@ -131,7 +131,8 @@ if ($env:CREWLINE_NO_JQ -eq '1') {
   Say "bỏ qua jq (CREWLINE_NO_JQ=1)"
 } elseif ($OS -eq 'windows' -and -not (Get-Command jq -ErrorAction SilentlyContinue)) {
   Say "tải jq 1.8.1"
-  Invoke-WebRequest 'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe' -OutFile (Join-Path $Bin 'jq.exe')
+  try { Invoke-WebRequest 'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe' -OutFile (Join-Path $Bin 'jq.exe') }
+  catch { throw "tải jq thất bại: $($_.Exception.Message)`n  → Làm tiếp: kiểm mạng rồi chạy lại install.ps1, hoặc bỏ qua jq: `$env:CREWLINE_NO_JQ = '1'" }
 }
 
 # PATH
@@ -149,7 +150,35 @@ if (Test-Path -LiteralPath $configFile) {
 }
 
 if ($isUpdate) {
-  Write-Host '== Cập nhật Crewline'
+  # VERSION = số phiên bản Crewline (khác skeleton/VERSION = khung context của project).
+  $crewVersion = ''
+  $crewVersionFile = Join-Path $Repo 'VERSION'
+  if (Test-Path -LiteralPath $crewVersionFile) {
+    $text = [IO.File]::ReadAllText($crewVersionFile).Trim()
+    if ($text -match '^[1-9][0-9]*$') { $crewVersion = $text }
+  }
+  Write-Host $(if ($crewVersion) { "== Cập nhật Crewline v$crewVersion" } else { '== Cập nhật Crewline' })
+  # Có gì mới: tối đa 3 gạch đầu dòng in đậm đầu tiên của mục "## v<N>" trong CHANGELOG.md.
+  $changelog = Join-Path $Repo 'CHANGELOG.md'
+  if ($crewVersion -and (Test-Path -LiteralPath $changelog)) {
+    $news = @(); $inSection = $false
+    foreach ($line in [IO.File]::ReadAllLines($changelog)) {
+      if ($line -match '^## ') {
+        if ($inSection) { break }
+        $inSection = $line -match "^## v$crewVersion(\s|$)"
+        continue
+      }
+      if ($inSection -and $line -match '^\s*- \*\*') {
+        $news += ($line.Trim() -replace '\*\*', '')
+        if ($news.Count -ge 3) { break }
+      }
+    }
+    if ($news.Count) {
+      Write-Host 'Có gì mới:'
+      foreach ($item in $news) { Write-Host "  $item" }
+      Write-Host "Chi tiết: $changelog"
+    }
+  }
   Write-Host "Đã cập nhật: lệnh crew, template hc $($updatedTemplates -join ', ')"
   if ($keptTemplates.Count) {
     Write-Host 'Giữ bản của bạn, bản mới ở .new:' -ForegroundColor Yellow
@@ -159,6 +188,7 @@ if ($isUpdate) {
   $pathStatus = if ($env:CREWLINE_NO_PATH -eq '1') { 'bỏ qua theo CREWLINE_NO_PATH' } elseif ($pathAdded) { 'đã thêm' } else { 'đã có' }
   Write-Host "Giữ nguyên: config cá nhân $configFile; PATH ($pathStatus)"
   $registryFile = Join-Path $HOME '.crewline/projects.json'
+  $hasProject = $false
   if (-not (Test-Path -LiteralPath $registryFile)) { Write-Host 'Project cần upgrade: bỏ qua (chưa có sổ projects.json).' }
   else {
     try {
@@ -172,6 +202,7 @@ if ($isUpdate) {
         foreach ($entry in $registry.PSObject.Properties) {
           $projectRoot = if ($entry.Value -is [string]) { $entry.Value } else { $entry.Value.root }
           if (-not $projectRoot -or -not (Test-Path -LiteralPath $projectRoot -PathType Container)) { continue }
+          $hasProject = $true
           $stamp = Join-Path $projectRoot 'context/.skeleton-version'
           $oldVersion = 0
           if ((Test-Path -LiteralPath $stamp) -and [int]::TryParse(([IO.File]::ReadAllText($stamp)).Trim(), [ref]$oldVersion) -and $oldVersion -lt $version) {
@@ -182,6 +213,9 @@ if ($isUpdate) {
         if (-not $needUpgrade) { Write-Host '  Không có project cũ cần upgrade.' }
       }
     } catch { Write-Host "Project cần upgrade: bỏ qua (không đọc được sổ projects.json: $($_.Exception.Message))." -ForegroundColor Yellow }
+  }
+  if ($hasProject) {
+    Write-Host 'Agent đang mở vẫn chạy phiên cũ; bản sửa liên quan agent có hiệu lực sau khi bật lại: crew up -Restart <vai> (lúc vai đó rảnh)'
   }
 }
 
@@ -248,9 +282,13 @@ $missTeam = @($items | Where-Object { $_.Group -eq 'team' -and -not $ok[$_.Name]
 if ($missTeam.Count) {
   Write-Host "Nhắc: đội của bạn cần agent chưa cài: $(($missTeam | ForEach-Object { "$($_.Label) $arrow $(Get-PrereqFix $_)" }) -join '; ')" -ForegroundColor Yellow
 }
-Write-Host "Nhắc đăng nhập: $(($need | ForEach-Object { "$_ ($(Get-AgentLogin $_))" }) -join ', ')."
 
-if ($NoDoctor) { Say "xong (bỏ qua crew doctor)."; return }
+# Nhắc đăng nhập chỉ một lần, ở cuối: crew doctor đã in dòng nhắc; -NoDoctor thì install tự in.
+if ($NoDoctor) {
+  Write-Host "Nhắc đăng nhập: $(($need | ForEach-Object { "$_ ($(Get-AgentLogin $_))" }) -join ', ')."
+  Say "xong (bỏ qua crew doctor)."
+  return
+}
 Say "xong. Kiểm môi trường:"
 & $crewPs1 doctor
 

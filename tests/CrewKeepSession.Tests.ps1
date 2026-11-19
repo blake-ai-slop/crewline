@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test worker giữ phiên (worktree cố định w<N>): trích hàm bằng AST từ crew.ps1, repo git tạm trong $TestDrive, hc giả tiêm qua $ops — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 

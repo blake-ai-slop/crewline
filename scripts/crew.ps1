@@ -88,15 +88,15 @@ function Get-NameArg($value) {
 $NameList = @(Get-NameArg $Name)
 # review không dùng PromptFile: Git Bash `crew review a, b` tách thành "a," + "b" ⇒ gộp lại.
 if ($Command -eq 'review' -and $PromptFile) { $NameList = @($NameList) + @(Get-NameArg $PromptFile) }
-if ($Command -ne 'review' -and $NameList.Count -gt 1) { Die "crew $Command chỉ nhận một tên, nhận $($NameList.Count): $($NameList -join ', ')." }
+if ($Command -ne 'review' -and $NameList.Count -gt 1) { Die "crew $Command chỉ nhận một tên, nhận $($NameList.Count): $($NameList -join ', ')." "chạy từng tên một, vd. crew $Command $($NameList[0])" }
 # Các lệnh 1 tên dùng $Name là chuỗi (kể cả -Name sang check.ps1): bỏ ràng buộc [string[]] của param.
 Remove-Variable -Name Name
 $Name = if ($NameList.Count) { [string]$NameList[0] } else { '' }
 
-if ($All -and $Command -ne 'up') { Die "-All chỉ dùng với crew up (crew up -All [-DryRun]), không dùng với crew $Command." }
-if ($Command -eq 'up' -and $Restart -and $All) { Die '-All không đi với -Restart: -Restart bật lại terminal của một project.' }
-if ($Command -eq 'up' -and $Restart -and $DryRun) { Die '-DryRun không đi với -Restart: -Restart luôn tắt và bật lại terminal.' }
-if ($Command -ne 'queue' -and ($After -or $Run -or $Remove -or $InitParameters.ContainsKey('Size'))) { Die "-After, -Size, -Run, -Remove chỉ dùng với crew queue, không dùng với crew $Command." }
+if ($All -and $Command -ne 'up') { Die "-All chỉ dùng với crew up (crew up -All [-DryRun]), không dùng với crew $Command." "bỏ -All rồi chạy lại crew $Command" }
+if ($Command -eq 'up' -and $Restart -and $All) { Die '-All không đi với -Restart: -Restart bật lại terminal của một project.' "chạy trong project cần bật lại: crew up -Restart $Restart" }
+if ($Command -eq 'up' -and $Restart -and $DryRun) { Die '-DryRun không đi với -Restart: -Restart luôn tắt và bật lại terminal.' @("crew up -Restart $Restart", 'Hoặc xem trước việc khôi phục:', 'crew up -DryRun') }
+if ($Command -ne 'queue' -and ($After -or $Run -or $Remove -or $InitParameters.ContainsKey('Size'))) { Die "-After, -Size, -Run, -Remove chỉ dùng với crew queue, không dùng với crew $Command." @("bỏ các cờ đó rồi chạy lại crew $Command", 'Hoặc dùng hàng đợi:', 'crew queue <tên> <file-prompt> -After <task>') }
 
 switch ($Command) {
   'version' { Invoke-Version }
@@ -130,7 +130,7 @@ switch ($Command) {
   'lint' {
     . (Join-Path $PSScriptRoot 'lint.ps1')
     $root = Get-Root (Resolve-Path -LiteralPath $Path).Path
-    if (-not $root) { Die 'không phải repo git.' }
+    if (-not $root) { Die 'không phải repo git.' @('cd <project>', 'crew lint', 'Hoặc chỉ định project:', 'crew lint -Path <project>') }
     $lint = @(Get-ContextLint $root)
     foreach ($warning in $lint) { Write-Host "$($warning.File):$($warning.Line) $($warning.Rule): $($warning.Message)" }
     if ($lint.Count) { Write-Host "context: $($lint.Count) cảnh báo" } else { Write-Host 'context sạch' }
@@ -145,8 +145,7 @@ switch ($Command) {
   'repair' { Invoke-Recover $false }
   'self-pane-run' { Invoke-SelfPaneRun }
   'self-pane-work' { Invoke-SelfPaneWork }
-  default {
-    # 'help' và lệnh lạ ⇒ scripts/help.ps1 (-Topic = tên đầu tiên hoặc rỗng)
+  'help' {
     $helpScript = Join-Path $PSScriptRoot 'help.ps1'
     if (-not (Test-Path -LiteralPath $helpScript)) {
       # chưa có help.ps1 ⇒ in tham chiếu ngắn ở khối đầu file
@@ -156,4 +155,14 @@ switch ($Command) {
     }
     & $helpScript -Topic $Name; exit $LASTEXITCODE
   }
+  default {
+    $next = @('xem danh sách: crew help')
+    $commands = 'version','setup','doctor','init','upgrade','up','task','queue','status','hot','lint','limits','clean','send','review','check','selfcheck','repair','help'
+    $near = Get-CrewCommandSuggestion $Command $commands
+    if ($near) { $next += "ý bạn là: crew ${near}?" }
+    Die "không có lệnh '$Command'" $next
+  }
 }
+
+# Dispatch hoàn tất bình thường: không để mã thoát native rò ra CLI.
+exit 0

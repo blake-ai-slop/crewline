@@ -16,6 +16,7 @@ function Get-GitIdentityFix { @('git config --global user.name "Tên của bạn
 function Stop-GitIdentity([string]$why) {
   Write-Host "crew: LỖI: $why Đặt bằng 2 lệnh này rồi chạy lại:" -ForegroundColor Red
   Get-GitIdentityFix | ForEach-Object { Write-Host "  $_" }
+  Write-Host '  → Làm tiếp: chạy 2 lệnh trên (thay tên/email của bạn) rồi chạy lại lệnh crew; xem mục "Git chưa có tên hoặc email" trong docs/troubleshooting.md (thư mục cài Crewline)'
   exit 1
 }
 

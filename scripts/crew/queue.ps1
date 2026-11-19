@@ -235,41 +235,42 @@ function Show-Queue([string]$root) {
 }
 
 function Invoke-Queue {
-  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." }
+  $root = Get-MainRoot (Get-Location).Path
+  if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) { Die 'không ở trong project crew' @('cd <project>', 'crew init') }
   if ($Run) {
-    if ($Name -or $PromptFile -or $Remove) { Die "dùng: crew queue -Run [-DryRun] (không kèm tên)." }
-    try { Invoke-QueueRun $root ([bool]$DryRun) $true | Out-Null } catch { Die $_.Exception.Message }
+    if ($Name -or $PromptFile -or $Remove) { Die "dùng: crew queue -Run [-DryRun] (không kèm tên)." 'crew queue -Run' }
+    try { Invoke-QueueRun $root ([bool]$DryRun) $true | Out-Null } catch { Die $_.Exception.Message 'xem lỗi ở trên; kiểm .crew/queue.json và quyền đọc/ghi .crew/, sửa xong chạy lại: crew queue' }
     return
   }
   if (-not $Name) {
-    if ($Remove) { Die "dùng: crew queue <tên> -Remove" }
-    try { Show-Queue $root } catch { Die $_.Exception.Message }
+    if ($Remove) { Die "thiếu tên mục cần bỏ." @('crew queue', 'crew queue <tên> -Remove') }
+    try { Show-Queue $root } catch { Die $_.Exception.Message 'xem lỗi ở trên; kiểm .crew/queue.json và quyền đọc/ghi .crew/, sửa xong chạy lại: crew queue' }
     return
   }
-  try { $items = Get-QueueItems $root } catch { Die $_.Exception.Message }
+  try { $items = Get-QueueItems $root } catch { Die $_.Exception.Message 'xem lỗi ở trên; kiểm .crew/queue.json và quyền đọc/ghi .crew/, sửa xong chạy lại: crew queue' }
   if ($Remove) {
     try {
       $null = Update-QueueItems $root {
         param($current)
-        if (-not @($current | Where-Object { $_.name -eq $Name }).Count) { throw "không có $Name trong hàng đợi." }
+        if (-not @($current | Where-Object { $_.name -eq $Name }).Count) { throw "không có task tên $Name trong hàng đợi." }
         $current | Where-Object { $_.name -ne $Name }
       }
-    } catch { Die $_.Exception.Message }
+    } catch { Die $_.Exception.Message 'xem tên trong hàng đợi: crew queue' }
     Remove-Item -LiteralPath (Get-QueuePromptPath $root $Name) -Force -ErrorAction SilentlyContinue
     Say "đã bỏ $Name khỏi hàng đợi."
     return
   }
-  if (-not $PromptFile) { Die "dùng: crew queue <tên> <file-prompt> [-Worker N] [-Review x] [-After <task>] [-Size S|M|L]" }
-  if ($Name -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { Die "tên task chỉ gồm a-z 0-9 -, tối đa 31 ký tự." }
-  if (-not (Test-Path -LiteralPath $PromptFile)) { Die "không thấy file prompt $PromptFile" }
+  if (-not $PromptFile) { Die "thiếu file prompt." "crew queue <tên> <file-prompt> [-Worker N] [-Review x] [-After <task>] [-Size S|M|L]" }
+  if ($Name -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { Die "tên task chỉ gồm a-z 0-9 -, tối đa 31 ký tự." "đặt lại tên, vd. crew queue fix-login $PromptFile" }
+  if (-not (Test-Path -LiteralPath $PromptFile)) { Die "không thấy file prompt $PromptFile" "kiểm đường dẫn (tính từ $((Get-Location).Path)) rồi chạy lại crew queue $Name <file-prompt>" }
   $cfg = Get-Config $root; $tasks = Get-Tasks $root
-  if ($tasks | Where-Object { $_.name -eq $Name }) { Die "task $Name đã có trong .crew/tasks.json." }
+  if ($tasks | Where-Object { $_.name -eq $Name }) { Die "đã có task tên $Name." @("đặt tên khác hoặc đợi task $Name xong", "crew clean $Name", "crew queue $Name $PromptFile") }
   $n = @($cfg.workers).Count
-  if ($Worker -and ($Worker -lt 1 -or $Worker -gt $n)) { Die "-Worker phải từ 1 tới $n." }
-  if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/crew/$Name").Code -eq 0) { Die "nhánh crew/$Name đã có — đặt tên khác hoặc xóa nhánh cũ." }
-  if ($After -and $After -eq $Name) { Die "-After không được là chính nó." }
+  if ($Worker -and ($Worker -lt 1 -or $Worker -gt $n)) { Die "-Worker phải từ 1 tới $n." "bỏ -Worker (giao worker rảnh) hoặc dùng -Worker 1..$n" }
+  if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/crew/$Name").Code -eq 0) { Die "nhánh crew/$Name đã có — đặt tên khác hoặc xóa nhánh cũ." @("git -C '$root' log --oneline -3 crew/$Name", "Chỉ xóa nếu chắc chắn bỏ nhánh:", "git -C '$root' branch -D crew/$Name") }
+  if ($After -and $After -eq $Name) { Die "-After không được là chính nó." @('bỏ -After hoặc chọn task khác', 'crew hot', 'crew queue') }
   if ($After -and -not @($tasks | Where-Object { $_.name -eq $After }).Count -and -not @($items | Where-Object { $_.name -eq $After }).Count) {
-    Die "-After $After không phải task đang chạy (.crew/tasks.json) hay mục trong hàng đợi — kiểm lại tên."
+    Die "không có task tên $After đang chạy hay trong hàng đợi — kiểm lại tên." @('crew hot', 'crew queue')
   }
   $dest = Get-QueuePromptPath $root $Name
   $source = (Resolve-Path -LiteralPath $PromptFile).Path
@@ -295,7 +296,7 @@ function Invoke-Queue {
       Copy-Item -LiteralPath $source $dest -Force
       @($current) + $item
     }
-  } catch { Die $_.Exception.Message }
+  } catch { Die $_.Exception.Message 'xem lỗi ở trên; kiểm .crew/queue.json và quyền đọc/ghi .crew/, sửa xong chạy lại: crew queue' }
   if ($upd.At) {
     Say "đã cập nhật $Name trong hàng đợi (vị trí $($upd.At), prompt chép lại từ $source)."
     return

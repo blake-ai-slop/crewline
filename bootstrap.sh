@@ -9,6 +9,23 @@ crew_pwsh_asset() {
         *) echo "bootstrap: unsupported platform: $(uname -s) $(uname -m)" >&2; return 1 ;;
     esac
 }
+# VERSION = Crewline release; skeleton/VERSION = project context frame.
+crew_read_version() {
+    crew_v=''
+    if [ -f "$1" ]; then crew_v=$(tr -d ' \r\n' <"$1") || crew_v=''; fi
+    case "$crew_v" in
+        ''|*[!0-9]*) echo '' ;;
+        *) echo "$crew_v" ;;
+    esac
+}
+crew_product_version() {
+    crew_v=$(crew_read_version "$1/VERSION")
+    if [ -n "$crew_v" ]; then echo "v$crew_v"; else echo 'ban cu'; fi
+}
+crew_context_version() {
+    crew_v=$(crew_read_version "$1/skeleton/VERSION")
+    if [ -n "$crew_v" ]; then echo "$crew_v"; else echo '?'; fi
+}
 crew_bootstrap() {
     for tool in curl git tar; do
         if ! command -v "$tool" >/dev/null 2>&1; then
@@ -50,17 +67,24 @@ crew_bootstrap() {
     if [ -f "$crew_dir/scripts/crew.ps1" ] && [ -f "$crew_dir/install.ps1" ]; then
         crew_dirty=$(git -C "$crew_dir" status --porcelain) || return 1
         crew_before=$(git -C "$crew_dir" rev-parse --short HEAD) || return 1
-        crew_before_version=$(cat "$crew_dir/skeleton/VERSION" 2>/dev/null) || crew_before_version='?'
+        crew_before_crew=$(crew_product_version "$crew_dir")
+        crew_before_version=$(crew_context_version "$crew_dir")
         if [ -n "$crew_dirty" ]; then
-            echo "bootstrap: uncommitted changes; skip git pull, still on old version $crew_before (context v$crew_before_version), run install. Inspect: git -C \"$crew_dir\" status; save changes: git -C \"$crew_dir\" stash."
+            echo "bootstrap: uncommitted changes; skip git pull, still on old version Crewline $crew_before_crew (commit $crew_before, khung context v$crew_before_version), run install. Inspect: git -C \"$crew_dir\" status; save changes: git -C \"$crew_dir\" stash."
         else
             git -C "$crew_dir" pull --ff-only -q || return 1
             crew_after=$(git -C "$crew_dir" rev-parse --short HEAD) || return 1
-            crew_after_version=$(cat "$crew_dir/skeleton/VERSION" 2>/dev/null) || crew_after_version='?'
+            crew_after_crew=$(crew_product_version "$crew_dir")
+            crew_after_version=$(crew_context_version "$crew_dir")
             if [ "$crew_before" = "$crew_after" ]; then
-                echo "bootstrap: da o ban moi nhat $crew_after (context v$crew_after_version)"
+                echo "bootstrap: da o ban moi nhat: Crewline $crew_after_crew (commit $crew_after, khung context v$crew_after_version)"
             else
-                echo "bootstrap: cap nhat Crewline $crew_before -> $crew_after (context v$crew_before_version -> v$crew_after_version)"
+                if [ "$crew_before_version" = "$crew_after_version" ]; then
+                    crew_context_line="khung context v$crew_after_version"
+                else
+                    crew_context_line="khung context v$crew_before_version -> v$crew_after_version"
+                fi
+                echo "bootstrap: cap nhat Crewline $crew_before_crew -> $crew_after_crew (commit $crew_before -> $crew_after, $crew_context_line)"
             fi
         fi
     elif [ ! -d "$crew_dir" ] || [ -z "$(ls -A "$crew_dir")" ]; then

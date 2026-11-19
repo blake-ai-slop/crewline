@@ -17,6 +17,7 @@ function Get-LfHash([string]$text) {
 function New-CrewCopy([string]$dir, [string]$skeleton) {
   New-Item -ItemType Directory -Force $dir | Out-Null
   Copy-Item (Join-Path $repoRoot 'scripts') $dir -Recurse
+  Copy-Item (Join-Path $repoRoot 'VERSION') $dir
   Copy-Item $skeleton (Join-Path $dir 'skeleton') -Recurse
   Join-Path $dir 'scripts/crew.ps1'
 }
@@ -101,13 +102,13 @@ Describe 'crew upgrade an toàn' {
     @(git -C $repo status --porcelain --untracked-files=all).Count | Should Be 0
     (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$newVersion"
     # khối tóm tắt
-    $r.Text | Should Match ([regex]::Escape("== crew upgrade: context v10 -> v$newVersion"))
+    $r.Text | Should Match ([regex]::Escape("== crew upgrade: khung context v10 -> v$newVersion"))
     $r.Text | Should Match 'Đã cập nhật \(\d+\): .*context/roles/rev\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới ở .new (2): context/roles/planner.md -> context/roles/planner.md.new, CLAUDE.md -> CLAUDE.md.new'))
     $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))
     $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'CLAUDE.md' 'CLAUDE.md.new'"))
     $r.Text | Should Match ([regex]::Escape('AGENTS.md (thiếu <!-- /crew -->)'))
-    $r.Text | Should Match 'Việc cần làm: mở từng cặp .*context/roles/<vai>\.local\.md'
+    $r.Text | Should Match 'Việc cần làm:\r?\n  mở từng cặp .*context/roles/<vai>\.local\.md'
     $r.Text | Should Match ([regex]::Escape('thêm dòng <!-- /crew --> ngay sau khối crew trong AGENTS.md rồi chạy lại crew upgrade'))
     $r.Text | Should Match ([regex]::Escape('CẢNH BÁO: AGENTS.md có <!-- crew --> nhưng thiếu <!-- /crew -->'))
 
@@ -119,6 +120,51 @@ Describe 'crew upgrade an toàn' {
     $r.Text | Should Match 'không có gì mới để commit'
     (git -C $repo rev-parse HEAD) | Should Be $head
     Get-TreeSnapshot $repo | Should BeExactly $snap
+  }
+
+  It 'context mới hơn bản cài: chặn cả lệnh thường, DryRun và Force trước context bẩn; giữ mọi byte và HEAD' {
+    $r = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('init', '-Path', $repo)
+    if ($r.ExitCode -ne 0) { throw "$($r.Output)" }
+    $future = [int]$newVersion + 1
+    [IO.File]::WriteAllText("$repo/context/.skeleton-version", "$future`n")
+    Add-Content "$repo/context/roles/worker.md" '- luật mới của project'
+    git -C $repo add context
+    git -C $repo commit -qm 'context bản mới'
+    $head = git -C $repo rev-parse HEAD
+    foreach ($dirtyContext in @($false, $true)) {
+      if ($dirtyContext) { Add-Content "$repo/context/HOT.md" '- việc chưa commit' }
+      $snap = Get-TreeSnapshot $repo
+      foreach ($mode in 'normal', 'dry', 'force') {
+        $extra = @()
+        if ($mode -eq 'dry') { $extra = @('-DryRun') }
+        if ($mode -eq 'force') { $extra = @('-Force') }
+        $r = & $run $crewScript $extra
+        $r.ExitCode | Should Be 1
+        $r.Text | Should Match ([regex]::Escape("project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$((Get-Content (Join-Path $repoRoot 'VERSION') -Raw).Trim()), khung v$newVersion < khung v$future của project)"))
+        $command = if ($PSVersionTable.PSEdition -ne 'Core' -or $IsWindows) { 'irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { 'curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh' }
+        $r.Text | Should Match ([regex]::Escape("→ Làm tiếp:`n    $command`n    crew upgrade"))
+        $r.Text | Should Not Match 'context/ có thay đổi chưa commit'
+        (git -C $repo rev-parse HEAD) | Should Be $head
+        Get-TreeSnapshot $repo | Should BeExactly $snap
+      }
+    }
+  }
+
+  It 'version hỏng: dừng trước ghi hay commit và hướng dẫn khôi phục từ git' {
+    $r = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('init', '-Path', $repo)
+    if ($r.ExitCode -ne 0) { throw "$($r.Output)" }
+    $head = git -C $repo rev-parse HEAD
+    foreach ($bad in 'rác', '', '0', '-1', '1.5', '2147483648', '+13') {
+      [IO.File]::WriteAllText("$repo/context/.skeleton-version", $bad)
+      $snap = Get-TreeSnapshot $repo
+      $r = & $run $crewScript
+      $r.ExitCode | Should Be 1
+      $r.Text | Should Match ([regex]::Escape('context/.skeleton-version hỏng'))
+      $r.Text | Should Match 'git log|git restore'
+      $r.Text | Should Not Match 'context/ có thay đổi chưa commit'
+      (git -C $repo rev-parse HEAD) | Should Be $head
+      Get-TreeSnapshot $repo | Should BeExactly $snap
+    }
   }
 
   It 'DryRun in 3 nhóm và không ghi gì' {
@@ -133,7 +179,7 @@ Describe 'crew upgrade an toàn' {
     $snap = Get-TreeSnapshot $repo
     $r = & $run $crewScript @('-DryRun')
     $r.ExitCode | Should Be 0
-    $r.Text | Should Match ([regex]::Escape("== crew upgrade -DryRun: context v10 -> v$newVersion"))
+    $r.Text | Should Match ([regex]::Escape("== crew upgrade -DryRun: khung context v10 -> v$newVersion"))
     $r.Text | Should Match 'Sẽ cập nhật \(\d+\): .*context/roles/worker\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới sẽ ở .new (1): context/roles/planner.md -> context/roles/planner.md.new'))
     $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))
@@ -147,11 +193,13 @@ Describe 'crew upgrade an toàn' {
     $r = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('init', '-Path', $repo)
     if ($r.ExitCode -ne 0) { throw "$($r.Output)" }
     $head = git -C $repo rev-parse HEAD
+    $snap = Get-TreeSnapshot $repo
     $r = & $run $crewScript
     $r.ExitCode | Should Be 0
-    $r.Text | Should Match ([regex]::Escape("context đã ở v$newVersion, không có gì để cập nhật."))
+    $r.Text | Should Match ([regex]::Escape("khung context đã ở v$newVersion, không có gì để cập nhật."))
     $r.Text | Should Not Match 'Đã cập nhật|Giữ bản của bạn'
     (git -C $repo rev-parse HEAD) | Should Be $head
+    Get-TreeSnapshot $repo | Should BeExactly $snap
   }
 
   It 'project init bằng bản mới (có dấu), không sửa ⇒ bản sau thay bình thường; sửa tay ⇒ .new' {

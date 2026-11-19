@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tin kẹt ở ô nhập + nhận nhầm hộp thoại: hàm thật qua AST, hc giả. Fixture Codex lấy từ màn hình thật 2026-11-02 (hc 0.1.16, codex-cli 0.166.0).
 
 $want = 'Get-WorkerInputError', 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Test-SessionReady', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review', 'Update-Tasks'
@@ -159,6 +159,23 @@ Describe 'Nhận diện tin kẹt' {
   }
   It 'marker hàng đợi cũ vẫn nhận khi working' {
     Get-PendingInput codex working $CodexQueued | Should Be 'queued'
+  }
+}
+
+Describe 'Tin kẹt ở pane Claude: chỉ cách gỡ gợi ý mờ' {
+  It 'Claude: thêm hướng dẫn bật lại đúng vai, không đổi câu cũ' {
+    $why = Get-WorkerInputError 'demo-w2' $ClaudeBoxHc
+    $why | Should Match '^demo-w2 có tin kẹt ở ô nhập'
+    $why | Should Match 'sang pane demo-w2, Enter để gửi hoặc xóa chữ'
+    $why | Should Match 'gợi ý mờ của Claude Code \(pane bật trước bản sửa\)'
+    $why | Should Match 'crew up -Restart w2 \(worker có task cần -Force; xem docs/troubleshooting\.md mục Gợi ý của Claude\)'
+    Get-WorkerInputError 'demo-planner' $ClaudeBoxHc | Should Match 'crew up -Restart planner '
+    Get-WorkerInputError 'demo-rev' $ClaudeBoxHc | Should Match 'crew up -Restart rev '
+    Get-WorkerInputError 'lạ' $ClaudeBoxHc | Should Match 'crew up -Restart <vai> '
+  }
+  It 'Codex hoặc ô trống: không có hướng dẫn gợi ý Claude' {
+    Get-WorkerInputError 'demo-w2' $Stuck | Should Not Match 'gợi ý mờ'
+    Get-WorkerInputError 'demo-w2' $ClaudeHistory | Should Be ''
   }
 }
 

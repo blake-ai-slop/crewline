@@ -19,7 +19,11 @@ function Invoke-CrewlineBootstrap {
   param([string]$Dir, [string]$Repo, [string]$Branch)
 
   function Say($m) { Write-Host "bootstrap: $m" }
-  function Fail($m) { Write-Host "bootstrap: LOI: $m" -ForegroundColor Red; return 1 }
+  function Fail($m, [string]$next = '') {
+    Write-Host "bootstrap: LOI: $m" -ForegroundColor Red
+    if ($next) { Write-Host "  -> Lam tiep: $next" }
+    return 1
+  }
 
   if (-not $Dir) { $Dir = $env:CREWLINE_DIR }
   if (-not $Dir) { $Dir = '~/Crewline' }
@@ -29,12 +33,30 @@ function Invoke-CrewlineBootstrap {
   if (-not $Branch) { $Branch = 'main' }
   $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir)
 
+  # VERSION = so phien ban Crewline; skeleton/VERSION = so khung context cua project.
+  function Read-VersionFile([string]$file) {
+    if (-not (Test-Path -LiteralPath $file)) { return '' }
+    $v = ([IO.File]::ReadAllText($file)).Trim()
+    if ($v -match '^[0-9]+$') { return $v }
+    return ''
+  }
+  function Get-CrewlineVersion([string]$root) {
+    $v = Read-VersionFile (Join-Path $root 'VERSION')
+    if ($v) { return "v$v" }
+    return 'ban cu'
+  }
+  function Get-ContextVersion([string]$root) {
+    $v = Read-VersionFile (Join-Path $root 'skeleton/VERSION')
+    if ($v) { return $v }
+    return '?'
+  }
+
   # Bat buoc: git + pwsh
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    return (Fail "thieu git. Cai Git for Windows: https://git-scm.com/download/win (hoac 'winget install Git.Git'), mo terminal moi roi chay lai.")
+    return (Fail "thieu git." "cai Git: winget install Git.Git (hoac https://git-scm.com/download/win), mo terminal moi roi chay lai lenh cai Crewline")
   }
   if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
-    return (Fail "thieu pwsh (PowerShell 7). Cai: https://aka.ms/powershell-release?tag=stable (hoac 'winget install Microsoft.PowerShell'), mo terminal moi roi chay lai.")
+    return (Fail "thieu pwsh (PowerShell 7)." "cai PowerShell 7: winget install Microsoft.PowerShell (hoac https://aka.ms/powershell-release?tag=stable), mo terminal moi roi chay lai lenh cai Crewline")
   }
   # herdr/hc/claude/codex: install.ps1 in bang kiem phan mem va hoi cai giup.
 
@@ -42,35 +64,39 @@ function Invoke-CrewlineBootstrap {
   $isEmpty = -not (Test-Path $Dir) -or -not (Get-ChildItem -Force $Dir -ErrorAction SilentlyContinue | Select-Object -First 1)
   if ($isCrewline) {
     $dirty = git -C $Dir status --porcelain
-    if ($LASTEXITCODE -ne 0) { return (Fail "$Dir co file Crewline nhung khong phai repo git.") }
+    if ($LASTEXITCODE -ne 0) { return (Fail "$Dir co file Crewline nhung khong phai repo git." "doi ten thu muc do (kiem truoc khi xoa), hoac dat CREWLINE_DIR sang thu muc khac, roi chay lai lenh cai") }
     $before = (git -C $Dir rev-parse --short HEAD | Out-String).Trim()
-    $versionFile = Join-Path $Dir 'skeleton/VERSION'
-    $beforeVersion = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { '?' }
+    $beforeCrew = Get-CrewlineVersion $Dir
+    $beforeContext = Get-ContextVersion $Dir
     if ($dirty) {
-      Say "canh bao: $Dir co thay doi chua commit => bo qua git pull, may van o ban cu $before (context v$beforeVersion), van chay install. Xem: git -C `"$Dir`" status; cat thay doi: git -C `"$Dir`" stash."
+      Say "canh bao: $Dir co thay doi chua commit => bo qua git pull, may van o ban cu Crewline $beforeCrew (commit $before, khung context v$beforeContext), van chay install. Xem: git -C `"$Dir`" status; cat thay doi: git -C `"$Dir`" stash."
     } else {
       Say "cap nhat $Dir (git pull --ff-only)"
       git -C $Dir pull --ff-only -q | Out-Host
-      if ($LASTEXITCODE -ne 0) { return (Fail "git pull --ff-only that bai trong $Dir. Xu ly tay roi chay lai.") }
+      if ($LASTEXITCODE -ne 0) { return (Fail "git pull --ff-only that bai trong $Dir. Xu ly tay roi chay lai." "xem loi: git -C `"$Dir`" status ; git -C `"$Dir`" pull --ff-only, sua xong chay lai lenh cai") }
       $after = (git -C $Dir rev-parse --short HEAD | Out-String).Trim()
-      $afterVersion = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { '?' }
-      if ($before -eq $after) { Say "da o ban moi nhat $after (context v$afterVersion)" }
-      else { Say "cap nhat Crewline $before -> $after (context v$beforeVersion -> v$afterVersion)" }
+      $afterCrew = Get-CrewlineVersion $Dir
+      $afterContext = Get-ContextVersion $Dir
+      if ($before -eq $after) { Say "da o ban moi nhat: Crewline $afterCrew (commit $after, khung context v$afterContext)" }
+      else {
+        $contextLine = if ($beforeContext -eq $afterContext) { "khung context v$afterContext" } else { "khung context v$beforeContext -> v$afterContext" }
+        Say "cap nhat Crewline $beforeCrew -> $afterCrew (commit $before -> $after, $contextLine)"
+      }
     }
   } elseif ($isEmpty) {
     Say "clone $Repo ($Branch) -> $Dir"
     git clone -q --branch $Branch $Repo $Dir | Out-Host
-    if ($LASTEXITCODE -ne 0) { return (Fail "git clone that bai.") }
+    if ($LASTEXITCODE -ne 0) { return (Fail "git clone that bai." "doc loi git o tren; kiem mang/URL: git ls-remote $Repo ; roi chay lai lenh cai") }
   } else {
-    return (Fail "$Dir da co va khong phai Crewline (thieu scripts/crew.ps1 hoac install.ps1). Khong ghi de. Dat CREWLINE_DIR hoac -Dir sang thu muc khac.")
+    return (Fail "$Dir da co va khong phai Crewline (thieu scripts/crew.ps1 hoac install.ps1). Khong ghi de." "dat CREWLINE_DIR hoac -Dir sang thu muc trong khac, roi chay lai lenh cai Crewline; giu nguyen thu muc hien co")
   }
 
   $install = Join-Path $Dir 'install.ps1'
   Say "chay $install"
   # Native child inherits console stdin (also through iex) and CREWLINE_DEFAULTS.
   try { & pwsh -NoProfile -File $install | Out-Host }
-  catch { return (Fail "khong chay duoc pwsh: $($_.Exception.Message)") }
-  if ($LASTEXITCODE -ne 0) { return (Fail "install.ps1 loi (ma $LASTEXITCODE).") }
+  catch { return (Fail "khong chay duoc pwsh: $($_.Exception.Message)" "kiem pwsh: pwsh -NoProfile -Command '`$PSVersionTable.PSVersion' ; loi thi cai lai: winget install Microsoft.PowerShell") }
+  if ($LASTEXITCODE -ne 0) { return (Fail "install.ps1 loi (ma $LASTEXITCODE)." "doc loi o tren, sua roi chay lai: pwsh -NoProfile -File `"$install`"") }
   return 0
 }
 

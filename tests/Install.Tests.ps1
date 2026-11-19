@@ -221,3 +221,85 @@ Describe 'install cập nhật an toàn' {
     $r.Output | Should Match 'không đọc được sổ projects.json'
   }
 }
+
+Describe 'install cập nhật: phiên bản, có gì mới, bật lại agent, nhắc đăng nhập' {
+  function New-UpdateFixture([string]$changelog) {
+    $fixture = Join-Path $TestDrive "update-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    New-Item -ItemType Directory -Force $fixture | Out-Null
+    Copy-Item $Install $fixture
+    Copy-Item (Join-Path $RepoRoot 'scripts'), (Join-Path $RepoRoot 'templates'), (Join-Path $RepoRoot 'skeleton') $fixture -Recurse
+    [IO.File]::WriteAllText((Join-Path $fixture 'VERSION'), "14`n")
+    if ($changelog) { [IO.File]::WriteAllText((Join-Path $fixture 'CHANGELOG.md'), $changelog, [Text.UTF8Encoding]::new($true)) }
+    $fixture
+  }
+  function New-UpdatedHome([string]$fixture, [switch]$WithProject) {
+    $h = New-CrewTestHome
+    $first = Invoke-InTestHome $h (Join-Path $fixture 'install.ps1') -Arguments '-NoDoctor' -Env $NoJq
+    if ($first.ExitCode -ne 0) { throw $first.Output }
+    if ($WithProject) {
+      $project = Join-Path $h.Home 'project'
+      New-Item -ItemType Directory -Force (Join-Path $project 'context') | Out-Null
+      @{ demo = @{ root = $project } } | ConvertTo-Json | Set-Content (Join-Path $h.Home '.crewline/projects.json')
+    }
+    $h
+  }
+  $changelog = @"
+# Changelog
+
+## v14 — 2026-11-19 — cập nhật dễ hiểu
+
+### Mới
+- **Cập nhật nói rõ phiên bản:** in ``Crewline v13 -> v14``.
+- dòng thường không in đậm
+- **Có gì mới khi cài**
+- **Nhắc bật lại agent**
+- **Mục thứ tư không in**
+
+## v13 — 2026-11-18
+
+- **Bản cũ không in**
+"@
+
+  It 'in Crewline v14, tối đa 3 mục có gì mới (bỏ **), đường dẫn CHANGELOG, bật lại agent, nhắc đăng nhập 1 lần' {
+    $fixture = New-UpdateFixture $changelog
+    $h = New-UpdatedHome $fixture -WithProject
+    $r = Invoke-InTestHome $h (Join-Path $fixture 'install.ps1') -Arguments '-NoDoctor' -Env $NoJq
+    $r.ExitCode | Should Be 0
+    $r.Output | Should Match '== Cập nhật Crewline v14'
+    $r.Output | Should Match '(?m)^Có gì mới:'
+    $r.Output | Should Match '(?m)^  - Cập nhật nói rõ phiên bản: in `Crewline v13 -> v14`\.'
+    $r.Output | Should Match '(?m)^  - Có gì mới khi cài'
+    $r.Output | Should Match '(?m)^  - Nhắc bật lại agent'
+    $r.Output | Should Not Match 'Mục thứ tư|Bản cũ không in|dòng thường|\*\*'
+    $r.Output.Contains("Chi tiết: $(Join-Path $fixture 'CHANGELOG.md')") | Should Be $true
+    $r.Output | Should Match 'Agent đang mở vẫn chạy phiên cũ; .*crew up -Restart <vai> \(lúc vai đó rảnh\)'
+    @($r.Output -split "`n" | Where-Object { $_ -match 'đăng nhập' }).Count | Should Be 1
+    # Thứ tự: phiên bản/có gì mới -> project cần upgrade -> bật lại agent -> kiểm phần mềm -> nhắc đăng nhập.
+    $order = @('== Cập nhật Crewline v14', 'Có gì mới:', 'Project cần upgrade:', 'Agent đang mở vẫn chạy phiên cũ', 'Kiểm phần mềm', 'Nhắc đăng nhập')
+    $previous = -1
+    foreach ($item in $order) {
+      $index = $r.Output.IndexOf($item)
+      ($index -gt $previous) | Should Be $true
+      $previous = $index
+    }
+  }
+
+  It 'CHANGELOG không có mục ## v14 hoặc không có file: bỏ qua có gì mới, không lỗi; chưa có project thì không nhắc bật lại agent' {
+    foreach ($text in @("# Changelog`n`n## v13 — cũ`n`n- **Bản cũ không in**`n", '')) {
+      $fixture = New-UpdateFixture $text
+      $h = New-UpdatedHome $fixture
+      $r = Invoke-InTestHome $h (Join-Path $fixture 'install.ps1') -Arguments '-NoDoctor' -Env $NoJq
+      $r.ExitCode | Should Be 0
+      $r.Output | Should Match '== Cập nhật Crewline v14'
+      $r.Output | Should Not Match 'Có gì mới|Chi tiết: |Bản cũ không in|Agent đang mở'
+    }
+  }
+
+  It 'chạy crew doctor thì nhắc đăng nhập chỉ một lần (ở cuối doctor)' {
+    $fixture = New-UpdateFixture $changelog
+    $h = New-UpdatedHome $fixture
+    $r = Invoke-InTestHome $h (Join-Path $fixture 'install.ps1') -Env $NoJq
+    $r.Output | Should Match 'Kiểm môi trường'
+    @($r.Output -split "`n" | Where-Object { $_ -match 'đăng nhập' }).Count | Should Be 1
+  }
+}

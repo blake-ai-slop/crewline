@@ -132,5 +132,8 @@ finally {
     } catch { Write-Host "Không xóa được thư mục tạm: $tempRoot ($($_.Exception.Message))" }
   }
 }
-if ($failed) { exit 1 }
+if ($failed) {
+  if (-not $Keep) { Write-Host "  → Làm tiếp: chạy lại giữ thư mục tạm để xem: pwsh -NoProfile -File '$PSCommandPath' -Keep" }
+  exit 1
+}
 exit 0

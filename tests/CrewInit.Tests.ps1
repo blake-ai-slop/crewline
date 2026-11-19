@@ -29,7 +29,7 @@ Describe 'crew init trong thư mục chưa có git' {
       $r = Invoke-InTestHome -TestHome $h -File $CrewScript -Shell powershell -Arguments @('init', '-Path', $dir, '-NoCommit') -Env (New-InitEnv)
       $r.ExitCode | Should Be 1
       $r.Output | Should Not Match 'NativeCommandError'
-      $r.Output | Should Match 'crew: LỖI: .*không phải repo git.*-GitInit'
+      $r.Output | Should Match 'crew: LỖI: [^\r\n]*không phải repo git[^\r\n]*\r?\n  → Làm tiếp:\r?\n    [^\r\n]*-GitInit'
       Test-Path (Join-Path $dir '.git') | Should Be $false
     }
 

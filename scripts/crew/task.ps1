@@ -198,7 +198,8 @@ function Initialize-TaskBranch([string]$root, [int]$n, [string]$main, [string]$n
 # agent ⇒ /clear | /new, chờ phiên mới, rồi dòng giao việc. shell ⇒ bật agent trong worktree với dòng giao việc.
 function Send-WorkerTask([string]$term, [string]$kind, [string]$mode, [string]$wt, [string]$line, [string]$access, $ops) {
   if ($mode -eq 'shell') {
-    $cmd = "Set-Location -LiteralPath $(Quote $wt); if ((Get-Location).Path -eq $(Quote $wt)) { $(Get-AgentCommand $kind $access $line) } else { Write-Host 'crew: sai thư mục, không bật agent' }"
+    # bật agent thẳng trong shell, không qua Start-Term ⇒ tự tắt gợi ý mờ của Claude Code (xem Start-Term)
+    $cmd = "`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; Set-Location -LiteralPath $(Quote $wt); if ((Get-Location).Path -eq $(Quote $wt)) { $(Get-AgentCommand $kind $access $line) } else { Write-Host 'crew: sai thư mục, không bật agent' }"
     return Invoke-SendFlow $term $cmd $ops
   }
   $why = Get-WorkerInputError $term (& $ops.Read $term)
@@ -242,7 +243,7 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
   $null = Update-Tasks $root {
     param($current)
     $taken = @($current | Where-Object { $_.name -eq $name -or [int]$_.worker -eq [int]$rec.worker })
-    if ($taken.Count) { throw "tasks.json vừa có task $($taken[0].name) (w$($taken[0].worker)) do lệnh khác ghi — chưa giao $name; nhánh crew/$name đã tạo trong $wt." }
+    if ($taken.Count) { throw "vừa có task $($taken[0].name) (w$($taken[0].worker)) do lệnh khác giao — chưa giao $name; nhánh crew/$name đã tạo trong $wt." }
     @($current) + $rec
   }
   $line = Get-TaskLine $wt "crew/$name"
@@ -252,24 +253,25 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
 }
 
 function Invoke-Task {
-  if (-not $Name -or -not $PromptFile) { Die "dùng: crew task <tên> <file-prompt> [-Worker N]" }
-  if ($Name -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { Die "tên task chỉ gồm a-z 0-9 -, tối đa 31 ký tự." }
-  if (-not (Test-Path $PromptFile)) { Die "không thấy file prompt $PromptFile" }
+  $root = Get-MainRoot (Get-Location).Path
+  if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) { Die 'không ở trong project crew' @('cd <project>', 'crew init') }
+  if (-not $Name -or -not $PromptFile) { Die "dùng: crew task <tên> <file-prompt> [-Worker N]" 'ghi prompt vào một file rồi chạy, vd. crew task fix-login prompt.md' }
+  if ($Name -cnotmatch '^[a-z0-9][a-z0-9-]{0,30}$') { Die "tên task chỉ gồm a-z 0-9 -, tối đa 31 ký tự." "đặt lại tên, vd. crew task fix-login $PromptFile" }
+  if (-not (Test-Path $PromptFile)) { Die "không thấy file prompt $PromptFile" "kiểm đường dẫn (tính từ $((Get-Location).Path)) rồi chạy lại crew task $Name <file-prompt>" }
   $promptPath = (Resolve-Path $PromptFile).Path
-  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
-  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint }
-  if ($tasks | Where-Object { $_.name -eq $Name }) { Die "task $Name đã có trong .crew/tasks.json." }
+  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint @("crew repair", "crew task $Name $PromptFile") }
+  if ($tasks | Where-Object { $_.name -eq $Name }) { Die "đã có task tên $Name." @("đặt tên khác hoặc dọn task cũ khi xong", "crew clean $Name") }
 
   $n = @($cfg.workers).Count
   $busy = @($tasks | ForEach-Object { [int]$_.worker })
   if ($Worker -eq 0) { $Worker = (1..$n | Where-Object { $busy -notcontains $_ } | Select-Object -First 1) }
-  if (-not $Worker) { Die "mọi worker đang bận (số task song song ≤ $n). Dọn task xong bằng 'crew clean <tên>'." }
-  if ($Worker -lt 1 -or $Worker -gt $n) { Die "-Worker phải từ 1 tới $n." }
-  if ($busy -contains $Worker) { Die "worker $Worker đang có task." }
+  if (-not $Worker) { Die "mọi worker đang bận (số task song song ≤ $n)." @("Dọn task đã xong:", "crew clean <tên>", "Hoặc xếp hàng chờ:", "crew queue $Name $PromptFile") }
+  if ($Worker -lt 1 -or $Worker -gt $n) { Die "-Worker phải từ 1 tới $n." "bỏ -Worker (giao worker rảnh) hoặc dùng -Worker 1..$n" }
+  if ($busy -contains $Worker) { Die "worker $Worker đang có task." @("Bỏ -Worker để giao worker rảnh hoặc xếp hàng chờ:", "crew queue $Name $PromptFile -Worker $Worker") }
   $kind = @($cfg.workers)[$Worker - 1]; $term = "$slug-w$Worker"
   $wt = Get-WorkerTree $root $Worker; $branch = "crew/$Name"
-  if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$branch").Code -eq 0) { Die "nhánh $branch đã có — đặt tên khác hoặc xóa nhánh cũ." }
+  if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$branch").Code -eq 0) { Die "nhánh $branch đã có — đặt tên khác hoặc xóa nhánh cũ." @("git -C '$root' log --oneline -3 $branch", "Chỉ xóa nếu chắc chắn bỏ nhánh:", "git -C '$root' branch -D $branch") }
   $main = Get-MainBranch $root
   $rv = if ($InitParameters.ContainsKey('Review')) { $Review } else { '' }
   $scope = Get-PromptScope (Get-Content -LiteralPath $promptPath -Raw -Encoding UTF8)
@@ -277,15 +279,15 @@ function Invoke-Task {
   $conflicts = Get-ScopeConflicts $root $tasks $scope
   if ($conflicts.Count) {
     $details = @($conflicts | ForEach-Object { "task $($_.Task): $($_.Pairs -join ', ')" }) -join '; '
-    if (-not $Force) { Die "trùng file với $details. Đợi task đó xong hoặc dùng -Force để vẫn giao." }
+    if (-not $Force) { Die "trùng file với $details." "đợi task đó xong, hoặc vẫn giao: crew task $Name $PromptFile -Force" }
     Say "CẢNH BÁO: trùng file với $details (-Force vẫn giao)."
   }
   $tasks = @($tasks) + (New-TaskRecord $Name $branch $wt $Worker $term $kind $rv)
 
   try { $r = Start-WorkerTask $root $main $Worker $kind $cfg.access $term $Name $promptPath $tasks (New-HcOps) }
-  catch { Die $_.Exception.Message }
+  catch { Die $_.Exception.Message @('crew hot', 'sửa theo lỗi ở trên', "crew task $Name $PromptFile") }
   if (-not $r.Ok) {
-    Die "$($r.Message)`n  Task $Name đã ghi (nhánh $branch, prompt đã chép). Xử lý terminal rồi gửi lại: crew send $term `"$($r.Line)`" — hoặc bỏ: crew clean $Name -Force"
+    Die "$($r.Message)`n  Task $Name đã ghi (nhánh $branch, prompt đã chép)." @("Xử lý terminal rồi gửi lại:", "crew send $term `"$($r.Line)`"", "Hoặc bỏ task nếu chắc chắn:", "crew clean $Name -Force")
   }
   Say $r.Message
   Say "task $Name -> $term ($kind), nhánh $branch từ $main trong $wt. Theo dõi: hc wait $term / hc read $term --lines 60"

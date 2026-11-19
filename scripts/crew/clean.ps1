@@ -77,27 +77,27 @@ function Reset-WorkerTree([string]$root, $task, [string]$main, [bool]$force) {
 }
 
 function Invoke-Clean {
-  if (-not $Name) { Die "dùng: crew clean <tên> [-Force]" }
-  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." }
+  if (-not $Name) { Die "thiếu tên task cần dọn." "crew clean <tên> [-Force]" }
+  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die "chạy trong repo của crew." @('cd <project>', 'crew init') }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $ids = Get-Ids (Get-CrewIdKey $root $cfg)
   $tasks = Get-Tasks $root; $t = $tasks | Where-Object { $_.name -eq $Name } | Select-Object -First 1
-  if (-not $t) { Die "task $Name không có trong .crew/tasks.json — không dọn." }
+  if (-not $t) { Die "không có task tên $Name — không dọn." 'xem tên task đang có: crew hot' }
 
   # kiểm git trước (nhánh đã xóa ở lần chạy trước thì bỏ qua)
   if ((Invoke-GitQuiet -C $root show-ref --verify --quiet "refs/heads/$($t.branch)").Code -eq 0) {
-    if ((Invoke-GitQuiet -C $root merge-base --is-ancestor $t.branch HEAD).Code -ne 0 -and -not $Force) { Die "nhánh $($t.branch) chưa merge vào HEAD. Dùng -Force nếu chắc chắn bỏ." }
+    if ((Invoke-GitQuiet -C $root merge-base --is-ancestor $t.branch HEAD).Code -ne 0 -and -not $Force) { Die "nhánh $($t.branch) chưa merge vào HEAD." @("Merge nhánh trước hoặc chỉ bỏ task nếu chắc chắn:", "crew clean $Name -Force") }
   }
 
   if (Test-KeepTask $root $t) {
     # bản mới: agent giữ phiên, thư mục giữ nguyên; chỉ đưa worktree về nhánh chính và xóa nhánh task
     $main = Get-MainBranch $root
     try { $warn = Reset-WorkerTree $root $t $main ([bool]$Force) }
-    catch { Die "$($_.Exception.Message)`n  Bản ghi task $Name vẫn giữ trong .crew/tasks.json — sửa xong chạy lại: crew clean $Name" }
+    catch { Die "$($_.Exception.Message)" @("Task $Name vẫn được giữ; sửa lỗi ở trên.", "crew clean $Name") }
   } else {
     # bản cũ (worktree riêng theo task): gỡ worktree như trước
     if (-not $Force -and (Test-Path $t.worktree) -and (Test-WorktreeListed $root $t.worktree)) {
       $st = Invoke-GitQuiet -C $t.worktree status --porcelain
-      if ($st.Code -eq 0 -and $st.Text) { Die "worktree $($t.worktree) còn thay đổi chưa commit. Commit/bỏ thay đổi, hoặc dùng -Force nếu chắc chắn bỏ." }
+      if ($st.Code -eq 0 -and $st.Text) { Die "worktree $($t.worktree) còn thay đổi chưa commit." @("Commit thay đổi hoặc chỉ bỏ task nếu chắc chắn:", "crew clean $Name -Force") }
     }
     # agent cũ còn đứng trong worktree của task (giữ khóa thư mục) ⇒ kill rồi bật lại worker theo kiểu mới
     $info = Get-TermInfo $t.terminal
@@ -110,7 +110,7 @@ function Invoke-Clean {
       Start-WorkerTerm $root $cfg $ids $slug ([int]$t.worker) (Get-MainBranch $root) | Out-Null
     }
     try { $warn = Remove-TaskGit $root $t ([bool]$Force) }
-    catch { Die "$($_.Exception.Message)`n  Bản ghi task $Name vẫn giữ trong .crew/tasks.json — sửa xong chạy lại: crew clean $Name" }
+    catch { Die "$($_.Exception.Message)" @("Task $Name vẫn được giữ; sửa lỗi ở trên.", "crew clean $Name") }
   }
   $null = Update-Tasks $root { param($current) $current | Where-Object { $_.name -ne $Name } }
   foreach ($w in $warn) { Write-Host "crew: CẢNH BÁO: $w" -ForegroundColor Yellow }

@@ -42,7 +42,7 @@ switch ($args[0]) {
     $encIndex = [array]::IndexOf($args, '-EncodedCommand')
     $commandLine = if ($encIndex -ge 0) { [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($args[$encIndex + 1])) } else { '' }
     $addr = "t$($terms.Count + 100)"
-    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; space = $space; tab = $tab; turn = 1; status = [pscustomobject]@{ app = $(if ($commandLine -match '(^|\}; )codex ') { 'codex' } else { 'claude-code' }); state = 'idle' } }
+    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; space = $space; tab = $tab; turn = 1; status = [pscustomobject]@{ app = $(if ($commandLine -match '(^|; )codex ') { 'codex' } else { 'claude-code' }); state = 'idle' } }
     ConvertTo-Json -InputObject @($terms) -Depth 6 | Set-Content -LiteralPath $file -Encoding utf8
     [pscustomobject]@{ address = $addr; name = $name } | ConvertTo-Json; exit 0
   }

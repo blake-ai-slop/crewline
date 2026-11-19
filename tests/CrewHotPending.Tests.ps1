@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
 # 2026-11-01: crewline-planner/w1/rev (chỉ đọc), hp-test-claude/codex (đã kill).
 

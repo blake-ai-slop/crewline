@@ -80,7 +80,7 @@ exit `$LASTEXITCODE
     $before = @(Get-ChildItem -LiteralPath $copy -Recurse -File -Force | ForEach-Object { "$($_.FullName):$((Get-FileHash -LiteralPath $_.FullName).Hash)" }) -join "`n"
     $r = Invoke-InTestHome $h $wrapper -Arguments @('init','-Path',$copy,'-NoCommit')
     $r.ExitCode | Should Be 1
-    $r.Output | Should Match 'bản chép.*crew init -Name'
+    $r.Output | Should Match '(?s)bản chép.*crew init -Name'
     $after = @(Get-ChildItem -LiteralPath $copy -Recurse -File -Force | ForEach-Object { "$($_.FullName):$((Get-FileHash -LiteralPath $_.FullName).Hash)" }) -join "`n"
     $after | Should BeExactly $before
     Get-Content $registry -Raw | Should BeExactly $beforeRegistry

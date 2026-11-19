@@ -1,10 +1,22 @@
-﻿function Show-CrewUpgradeWarning([string]$root) {
+﻿function Get-CrewInstallCommand {
+  $bootstrap = 'https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap'
+  if ((Get-CrewOS) -eq 'windows') { return "irm $bootstrap.ps1 | iex" }
+  "curl -fsSL $bootstrap.sh | sh"
+}
+function Show-CrewUpgradeWarning([string]$root) {
   $file = Join-Path $root 'context/.skeleton-version'
   if (-not (Test-Path -LiteralPath $file)) { return }
   $n = 0
   if ([int]::TryParse(([IO.File]::ReadAllText($file)).Trim(), [ref]$n)) {
     $m = Get-SkeletonVersion
-    if ($n -lt $m) { Write-Host "crew: context v$n cũ hơn crew v$m — chạy crew upgrade -DryRun rồi crew upgrade" -ForegroundColor Yellow }
+    if ($n -lt $m) {
+      Write-Host "crew: khung context của project (v$n) cũ hơn bản Crewline đang cài (v$((Get-CrewVersion).Version), khung v$m)" -ForegroundColor Yellow
+      Write-Host "  → Làm tiếp:`n    crew upgrade -DryRun`n    crew upgrade" -ForegroundColor Yellow
+    }
+    elseif ($n -gt $m) {
+      Write-Host "crew: project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$((Get-CrewVersion).Version), khung v$m < khung v$n của project)" -ForegroundColor Yellow
+      Write-Host "  → Làm tiếp:`n    $(Get-CrewInstallCommand)`n    crew upgrade" -ForegroundColor Yellow
+    }
   }
 }
 
@@ -69,7 +81,7 @@ function Get-HotWarnings([string]$root, $cfg, $tasks, $terminals, $pending = @{}
 }
 
 function Invoke-Hot {
-  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
+  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die 'không phải repo git.' 'cd vào thư mục project rồi chạy lại: crew hot' }
   Show-CrewUpgradeWarning $root
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
   try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Write-Host "crew: CẢNH BÁO: $($mv.Hint)" -ForegroundColor Yellow }

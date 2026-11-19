@@ -13,27 +13,27 @@ function Get-RestartGuard([string[]]$targets, $tasks, [string]$plannerMode) {
 }
 
 function Invoke-Up {
-  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
+  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." "project mới: chạy crew init trong thư mục này trước" }
   # Invoke-Recover đã gọi trước khi gọi tới đây; project cũ được ghi tên vào config + sổ, tên terminal và space/tab giữ nguyên
   if (-not $script:FromRepair) { Update-ConfigName $root $false }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $ids = Get-Ids (Get-CrewIdKey $root $cfg)
   $clash = Get-NameConflict $root $cfg
-  if ($clash) { Die $clash }
-  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint }
+  if ($clash) { Die $clash 'xem mục "Tên crew trùng" trong docs/troubleshooting.md (thư mục cài Crewline)' }
+  try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint 'xem hướng dẫn chuyển thư mục ở trên; kiểm metadata: crew repair' }
   # Agent sẽ commit về sau. Đường qua Invoke-Recover và tiến trình nền (FromRepair) không hỏi ở đây.
   if (-not $script:FromRepair) { Confirm-GitIdentity $root $false $false }
   $main = Get-MainBranch $root
-  try { $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Die "$($_.Exception.Message) — không kiểm được terminal đang chạy nên không bật/kill gì. Kiểm hc (hc ls) rồi chạy lại." }
+  try { $liveTerms = @(Get-LiveTerminals | Where-Object { $_.state -eq 'live' }) } catch { Die "$($_.Exception.Message) — không kiểm được terminal đang chạy nên không bật/kill gì." 'kiểm hc: hc ls; sửa lỗi rồi chạy lại crew up' }
   # terminal cùng tên mà thuộc project khác ⇒ dừng trước mọi kill/bật/gửi
   $mine = @(if ($cfg.planner -ne 'none') { "$slug-planner" }) + @(for ($i = 1; $i -le @($cfg.workers).Count; $i++) { "$slug-w$i" }) + @(if ($cfg.rev -ne 'none') { "$slug-rev" })
   $foreign = @($liveTerms | Where-Object { $mine -contains $_.name } | ForEach-Object { Get-ForeignTermError $_.name $_ $root } | Where-Object { $_ })
-  if ($foreign.Count) { Die ($foreign -join "`n  ") }
+  if ($foreign.Count) { Die ($foreign -join "`n  ") 'xem mục "Tên crew trùng" trong docs/troubleshooting.md (thư mục cài Crewline)' }
   # space/tab id của crew này đã thuộc project khác (kể cả project chưa vào sổ) ⇒ dừng trước mọi kill/bật/rename/move
   $hs = Get-HerdrSpaces
   if (-not $hs.Ok) { Say "cảnh báo: $($hs.Error) — không kiểm được space herdr trùng khóa id; chỉ kiểm terminal cùng tên." }
   else {
     $why = Get-ForeignSpaceError $ids $root $hs.Spaces $liveTerms
-    if ($why) { Die $why }
+    if ($why) { Die $why 'xem mục "Tên crew trùng" trong docs/troubleshooting.md (thư mục cài Crewline)' }
   }
   $live = @($liveTerms | ForEach-Object { $_.name })
   # Pane đang chạy lệnh này không bao giờ bị tắt ở đây: tắt là crew chết giữa chừng. Thay nếu có là việc cuối, do tiến trình nền làm.
@@ -47,15 +47,15 @@ function Invoke-Up {
 
   # -Restart: kill đúng terminal đó (đã chạy thì) rồi để vòng dưới bật lại theo config hiện tại
   if ($Restart) {
-    try { $targets = Get-RestartTargets $Restart @($cfg.workers).Count ($cfg.planner -ne 'none') ($cfg.rev -ne 'none') } catch { Die $_.Exception.Message }
+    try { $targets = Get-RestartTargets $Restart @($cfg.workers).Count ($cfg.planner -ne 'none') ($cfg.rev -ne 'none') } catch { Die $_.Exception.Message 'vd. crew up -Restart w1, hoặc crew up -Restart all' }
     $tasks = Get-Tasks $root
     foreach ($tg in $targets) {
       if ($tg -notlike 'w*' -or $Force) { continue }
       $busy = @($tasks | Where-Object { "w$([int]$_.worker)" -eq $tg } | ForEach-Object { $_.name })
-      if ($busy.Count) { Die "$tg đang có task $($busy -join ', ') — bật lại sẽ mất phiên đang làm. Đợi xong + crew clean, hoặc thêm -Force nếu chắc chắn." }
+      if ($busy.Count) { Die "$tg đang có task $($busy -join ', ') — bật lại sẽ mất phiên đang làm." "đợi xong + crew clean, hoặc crew up -Restart $Restart -Force nếu chắc chắn" }
     }
     $selfRestart = $self -and $targets -contains $self.name.Substring($slug.Length + 1)
-    if ($selfRestart -and -not $selfState) { Die "$($self.name) là pane đang chạy lệnh này và agent trong đó có thể còn sống, crew không tự tắt. Không tắt vai nào. Mở tab khác rồi chạy lại: crew up -Restart $Restart" }
+    if ($selfRestart -and -not $selfState) { Die "$($self.name) là pane đang chạy lệnh này và agent trong đó có thể còn sống, crew không tự tắt. Không tắt vai nào." "mở tab khác rồi chạy lại: crew up -Restart $Restart" }
     # planner/Rev đang làm: chặn trước mọi Stop-Term và job thay pane. Pane của chính lệnh này do chặn self-pane ở trên xử lý.
     if (-not $Force) {
       $pn = "$slug-planner"; $plannerMode = ''
@@ -63,7 +63,7 @@ function Invoke-Up {
         $plannerMode = (Get-WorkerMode (Get-TermInfo $pn) $cfg.planner).Mode
       }
       $why = Get-RestartGuard $targets $tasks $plannerMode
-      if ($why) { Die $why }
+      if ($why) { Die $why "đợi planner/Rev xong; hoặc crew up -Restart $Restart -Force nếu chắc chắn" }
     }
     if ($selfRestart) {
       $selfRole = $self.name.Substring($slug.Length + 1)

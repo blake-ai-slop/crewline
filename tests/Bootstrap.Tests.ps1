@@ -44,7 +44,9 @@ Describe 'bootstrap.ps1' {
 
     It 'chay lai thi git pull commit moi' {
       $before = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
+      # Ban cai cu chua co VERSION => "ban cu -> v14".
       Set-Content (Join-Path $src 'skeleton/VERSION') '11'
+      Set-Content (Join-Path $src 'VERSION') '14'
       Set-Content (Join-Path $src 'new.txt') 'moi'
       Invoke-Git $src add -A
       Invoke-Git $src commit -q -m second
@@ -52,10 +54,16 @@ Describe 'bootstrap.ps1' {
       $r2.ExitCode | Should Be 0
       Test-Path (Join-Path $dir 'new.txt') | Should Be $true
       $after = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
-      $r2.Output | Should Match "cap nhat Crewline $before -> $after \(context v10 -> v11\)"
+      $r2.Output | Should Match "cap nhat Crewline ban cu -> v14 \(commit $before -> $after, khung context v10 -> v11\)"
+      Set-Content (Join-Path $src 'VERSION') '15'
+      Invoke-Git $src add -A
+      Invoke-Git $src commit -q -m v15
+      $r3 = Invoke-InTestHome -TestHome $h -File $Bootstrap -Arguments '-Dir', $dir, '-Repo', $src
+      $r3.ExitCode | Should Be 0
+      $r3.Output | Should Match 'cap nhat Crewline v14 -> v15 \(commit \w+ -> \w+, khung context v11\)'
       $again = Invoke-InTestHome -TestHome $h -File $Bootstrap -Arguments '-Dir', $dir, '-Repo', $src
-      $again.Output | Should Match 'da o ban moi nhat .*context v11'
-      Get-InstallRuns $h | Should Be 3
+      $again.Output | Should Match 'da o ban moi nhat: Crewline v15 \(commit \w+, khung context v11\)'
+      Get-InstallRuns $h | Should Be 4
     }
 
     It 'worktree ban thi khong pull, canh bao, van chay install' {
@@ -68,9 +76,9 @@ Describe 'bootstrap.ps1' {
       $r3.Output | Should Match 'bo qua git pull'
       Test-Path (Join-Path $dir 'third.txt') | Should Be $false
       (Get-Content (Join-Path $dir 'scripts/crew.ps1') -Raw).Trim() | Should Be '# sua tay'
-      $r3.Output | Should Match 'may van o ban cu .*context v11'
+      $r3.Output | Should Match 'may van o ban cu Crewline v15 \(commit \w+, khung context v11\)'
       $r3.Output | Should Match 'git -C .* status;.*git -C .* stash'
-      Get-InstallRuns $h | Should Be 4
+      Get-InstallRuns $h | Should Be 5
     }
   }
 
@@ -194,19 +202,26 @@ exit $LASTEXITCODE
     $first.ExitCode | Should Be 0
     $before = (git -C $dir rev-parse --short HEAD | Out-String).Trim()
     Set-Content (Join-Path $src 'skeleton/VERSION') '11'
+    Set-Content (Join-Path $src 'VERSION') '14'
     Invoke-Git $src add -A
     Invoke-Git $src commit -qm update
     $after = (git -C $src rev-parse --short HEAD | Out-String).Trim()
     $second = Invoke-InTestHome $h $runner -Arguments $shellArgs
     $second.ExitCode | Should Be 0
-    $second.Output | Should Match "cap nhat Crewline $before -> $after \(context v10 -> v11\)"
+    $second.Output | Should Match "cap nhat Crewline ban cu -> v14 \(commit $before -> $after, khung context v10 -> v11\)"
+    Set-Content (Join-Path $src 'VERSION') '15'
+    Invoke-Git $src add -A
+    Invoke-Git $src commit -qm v15
+    $v15 = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $v15.ExitCode | Should Be 0
+    $v15.Output | Should Match 'cap nhat Crewline v14 -> v15 \(commit \w+ -> \w+, khung context v11\)'
     $third = Invoke-InTestHome $h $runner -Arguments $shellArgs
     $third.ExitCode | Should Be 0
-    $third.Output | Should Match 'da o ban moi nhat .*context v11'
+    $third.Output | Should Match 'da o ban moi nhat: Crewline v15 \(commit \w+, khung context v11\)'
     Set-Content (Join-Path $dir 'scripts/crew.ps1') 'user edits'
     $dirty = Invoke-InTestHome $h $runner -Arguments $shellArgs
     $dirty.ExitCode | Should Be 0
-    $dirty.Output | Should Match 'skip git pull, still on old version .*context v11'
+    $dirty.Output | Should Match 'skip git pull, still on old version Crewline v15 \(commit \w+, khung context v11\)'
     $dirty.Output | Should Match 'git -C .* status;.*git -C .* stash'
     (Get-Content (Join-Path $dir 'scripts/crew.ps1') -Raw).Trim() | Should Be 'user edits'
   }

@@ -219,12 +219,12 @@ function Invoke-Recover([bool]$stopOnClash) {
   if ($stopOnClash -and $env:CREWLINE_UP_ALL_CHILD -ne '1' -and
     (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.crew/config.json')))) {
     if ($root -and -not (Test-SamePath (Get-Root $p) $root)) {
-      Die "repo chính $root chưa init; đang ở worktree phụ nên không tạo gì. Chạy crew up tại repo chính."
+      Die "repo chính $root chưa init; đang ở worktree phụ nên không tạo gì." "chạy crew up tại repo chính: $root"
     }
     $initRoot = if ($root) { $root } else { $p }
     $needsGit = -not $root -or (Invoke-GitQuiet -C $root rev-parse --verify -q HEAD).Code -ne 0
     if ($needsGit -and ((Test-SamePath $initRoot $HOME) -or (Test-SamePath $initRoot ([IO.Path]::GetPathRoot($initRoot))))) {
-      Die "không init tại HOME hoặc gốc hệ thống tệp ($initRoot) khi chưa có commit; hãy chọn thư mục project con."
+      Die "không init tại HOME hoặc gốc hệ thống tệp ($initRoot) khi chưa có commit." 'chọn thư mục project con rồi chạy crew up tại đó'
     }
     if ($DryRun) { Say 'project chưa init, crew up sẽ hỏi tạo'; exit 0 }
     $answer = $null
@@ -235,19 +235,19 @@ function Invoke-Recover([bool]$stopOnClash) {
       $options = @((New-Option 'yes' 'Có' -Alias 'y', 'yes'), (New-Option 'no' 'Thôi' -Alias 'n', 'no'))
       $answer = Read-Choice $title $options $(if ($needsGit) { 'no' } else { 'yes' }) -NoStep -NullOnEof
     }
-    if ($null -eq $answer) { Die "project chưa init; không hỏi được nên không tạo gì. Chạy crew init tại $initRoot." }
+    if ($null -eq $answer) { Die "project chưa init; không hỏi được nên không tạo gì." "chạy crew init -Path '$initRoot'" }
     if ($answer -ne 'yes') { Say 'thôi, không tạo gì.'; exit 1 }
     # Phạm vi cục bộ: bỏ câu hỏi git của init, giữ nguyên ưu tiên đội/cờ dòng lệnh.
     $GitInit = [bool]$needsGit
     Invoke-Init
     $root = Get-MainRoot $p
   }
-  if (-not $root) { Die "không phải repo git. Project mới: chạy 'crew init' trong thư mục này trước." }
+  if (-not $root) { Die "không phải repo git." "project mới: chạy crew init trong thư mục này trước" }
   # Kiểm schema/JSON trước bước nâng metadata tên (bước đó có thể ghi config).
   $null = Get-Config $root
   Update-ConfigName $root ([bool]$DryRun)
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
-  if ($stopOnClash) { $clash = Get-NameConflict $root $cfg; if ($clash) { Die $clash } }
+  if ($stopOnClash) { $clash = Get-NameConflict $root $cfg; if ($clash) { Die $clash 'xem mục "Tên crew trùng" trong docs/troubleshooting.md (thư mục cài Crewline)' } }
   Confirm-GitIdentity $root $false ([bool]$DryRun)
   $main = Get-MainBranch $root
   $script:Path = $root  # crew up dựng theo repo chính, kể cả khi gọi từ worktree
@@ -381,7 +381,7 @@ function Invoke-UpAllTimedChild([string]$root, [bool]$dry, [int]$seconds) {
 
 function Invoke-UpAll {
   $reg = Read-ProjectRegistry
-  if (-not $reg.Ok) { Die "$($reg.Error) — không khôi phục, không ghi đè sổ. Sửa hoặc xóa file đó rồi chạy lại." }
+  if (-not $reg.Ok) { Die "$($reg.Error) — không khôi phục, không ghi đè sổ." 'sửa hoặc xóa file sổ bị lỗi nêu trên rồi chạy lại: crew up -All' }
   $current = try { Get-MainRoot (Resolve-Path $Path).Path } catch { $null }
   if ($current -and -not (Test-Path -LiteralPath (Join-Path $current '.crew/config.json') -PathType Leaf)) { $current = $null }
   $plan = Get-UpAllPlan $reg.Map $current

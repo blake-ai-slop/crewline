@@ -10,6 +10,12 @@ Khi hiện `Chờ bạn bấm "trust thư mục" (crew không tự bấm)`, sang
 
 Nếu `crew hot` hiện `tin kẹt`, hoặc `crew send` báo `có tin kẹt ở ô nhập, chưa gửi tin mới` và exit 1, sang đúng pane đó. Đọc nội dung rồi Enter để gửi hoặc xóa chữ đang có, sau đó gửi lại tin mới. `crew review` cũng chặn trường hợp này. Crew không tự gửi chồng hoặc xóa bản nháp; Codex đang working còn có cơ chế queue riêng, xem [tin kẹt ở ô nhập Codex](herdr-windows.md#tin-kẹt-ở-ô-nhập-codex).
 
+## Gợi ý của Claude bị coi là tin kẹt (Claude prompt suggestion)
+
+Dấu hiệu: `crew task`, `crew queue -Run` hoặc `crew repair` báo `có tin kẹt ở ô nhập` với pane Claude, nhưng không ai gõ dòng đó (vd. `❯ chạy tests rồi báo kết quả`). Đó là gợi ý câu kế tiếp, chữ mờ, của Claude Code; `hc read` không có màu nên crew không phân biệt được với chữ thật. Gõ rồi xóa thì gợi ý hiện lại, nên xóa tay không gỡ được lâu.
+
+Cách gỡ: bật lại pane đó bằng `crew up -Restart <vai>` (vd. `crew up -Restart w1`; worker đang có task cần thêm `-Force`). Pane do bản crew mới bật đã tự tắt gợi ý bằng biến môi trường `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, chỉ trong pwsh của pane đó; crew không sửa `~/.claude/settings.json`. Crew không tự xóa hoặc ghi đè ô nhập.
+
 ## Git chưa có tên hoặc email (Missing Git identity)
 
 Crew hỏi các trường còn thiếu trước khi cần commit và lưu vào cấu hình Git toàn máy. Nếu thấy `git chưa có tên/email để commit và không có người để hỏi`, hoặc `chưa có tên/email (bỏ trống hai lần)`, đặt thông tin rồi chạy lại lệnh vừa dừng:
@@ -30,6 +36,16 @@ git diff --no-index -- 'context/roles/worker.md' 'context/roles/worker.md.new'
 ```
 
 Git trả mã 1 khi hai file khác nhau. Đọc diff, gộp phần cần dùng vào file gốc rồi xóa `.new`; chuyển quy tắc riêng sang `context/roles/<vai>.local.md` để upgrade giữ nguyên chúng. Với `crew upgrade -DryRun`, file `.new` sẽ có sau khi chạy thật. Nếu báo `context/ có thay đổi chưa commit`, commit việc đang làm trước rồi chạy lại upgrade. Xem [hướng dẫn nâng cấp](upgrade.md).
+
+## Tên crew trùng (Crew name conflict)
+
+Crew dừng trước mọi kill/bật/gửi khi tên crew, khóa id herdr (`spcrew<khóa>`) hoặc terminal `<tên>-…` đã thuộc một project khác còn tồn tại; thường do chép nguyên thư mục project hoặc hai project cùng tên thư mục. Đặt tên riêng cho project đang bị chặn, chạy trong thư mục của nó:
+
+```powershell
+crew init -Name <tên-khác>
+```
+
+Tên chỉ gồm a-z 0-9 `-`, 1–12 ký tự; lệnh sinh idKey mới và ghi sổ `~/.crewline/projects.json`. Cũng có thể sửa `"name"`/`"idKey"` trong `.crew/config.json`. Project cũ đã xóa thư mục thì không còn tính là trùng. Sau đó chạy lại `crew up`.
 
 ## Queue giữ task vì limit (Queue limit hold)
 

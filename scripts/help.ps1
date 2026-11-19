@@ -24,7 +24,7 @@ $commands = @(
     Examples = @('crew init', 'crew init -Name shop-web', 'crew init -Path D:/Projects/demo -Team solo -GitInit -NoCommit')
   }
   @{
-    Name = 'upgrade'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew upgrade [-Path .] [-DryRun] [-NoCommit] [-Force]'; Short = 'cập nhật skeleton context'
+    Name = 'upgrade'; Group = 'Cài đặt & cấu hình'; Syntax = 'crew upgrade [-Path .] [-DryRun] [-NoCommit] [-Force]'; Short = 'cập nhật khung context của project (sau khi cập nhật Crewline)'
     Details = @('Cập nhật khung context ở project -Path; không bao giờ ghi đè thứ bạn đã sửa.', 'README.md, roles/*.md và khối crew trong CLAUDE.md/AGENTS.md: còn đúng bản crew đã cài thì thay; bạn đã sửa thì giữ nguyên bản của bạn, bản mới ghi ra <file>.new (không commit) để gộp tay rồi xóa .new.', 'Quy tắc riêng đặt ở context/roles/<vai>.local.md: init/upgrade không tạo, không sửa, không xóa.', 'Khối crew thiếu <!-- /crew --> thì không sửa file đó: thêm marker bằng tay rồi chạy lại.', '-DryRun in 3 nhóm (sẽ cập nhật / giữ bản của bạn, bản mới ở .new / giữ nguyên), không ghi gì; -NoCommit ghi file nhưng bỏ commit.', 'Context còn thay đổi chưa commit sẽ bị chặn; -Force cho phép tiếp tục khi bạn đã kiểm thay đổi đó.')
     Examples = @('crew upgrade -DryRun', 'crew upgrade -Path D:/Projects/demo -NoCommit')
   }
@@ -128,7 +128,8 @@ if ($Topic -eq 'agent') {
   }
   exit 0
 }
-Write-Output @'
+$installCommand = if ($PSVersionTable.PSEdition -ne 'Core' -or $IsWindows) { 'irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { 'curl -fsSL https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.sh | sh' }
+Write-Output (@'
 Crewline — đội agent làm việc song song trong herdr
 
 Dùng hằng ngày
@@ -143,10 +144,12 @@ Khi cần
   crew setup               đổi đội mặc định cho project mới
   crew doctor              máy có thiếu gì không
   crew version             xem phiên bản Crewline đang cài
-  crew upgrade             cập nhật khung context của project
+  crew upgrade             cập nhật khung context của project (sau khi cập nhật Crewline)
   crew init                tạo project với tùy chọn riêng (tên, đội)
+  Cập nhật Crewline: chạy lại lệnh cài một dòng
+    __INSTALL__
 
 Chi tiết: crew help <lệnh>   ·   Lệnh agent dùng: crew help agent
-'@
+'@).Replace('__INSTALL__', $installCommand)
 if ($Topic) { Write-Output "không có lệnh '$Topic'"; exit 1 }
 exit 0

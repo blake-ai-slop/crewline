@@ -259,7 +259,7 @@ function ConvertTo-LimitInfo($liveLimit) {
 }
 
 function Invoke-Limits($Ops = (New-LimitOps)) {
-  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." }
+  $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die "không phải repo git." 'cd vào thư mục project rồi chạy lại: crew limits (hoặc crew limits -Path <thư mục project>)' }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
   $rows = @()
   if ($cfg.planner -ne 'none') { $rows += @{ Name = "$slug-planner"; Agent = $cfg.planner } }

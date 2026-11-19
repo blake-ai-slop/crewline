@@ -108,10 +108,10 @@ function Get-ReviewLine([string]$root, [string]$main, $tasks, [string]$cfgReview
   $items = @(); $levels = @()
   foreach ($t in @($tasks)) {
     $r = Invoke-GitQuiet -C $root log --format=%h "$main..$($t.branch)"
-    if ($r.Code -ne 0) { return @{ Msg = ''; Error = "không đọc được commit của $($t.branch): $($r.Text)" } }
+    if ($r.Code -ne 0) { return @{ Msg = ''; Error = "không đọc được commit của $($t.branch): $($r.Text)"; Next = "kiểm nhánh: git -C '$root' branch --list $($t.branch)" } }
     $commits = @($r.Text -split '\r?\n' | Where-Object { $_ })
     if (-not $commits.Count) {
-      if ($strict) { return @{ Msg = ''; Error = "nhánh $($t.branch) không có commit mới so với $main." } }
+      if ($strict) { return @{ Msg = ''; Error = "nhánh $($t.branch) không có commit mới so với $main."; Next = "kiểm worker đã commit chưa: git -C '$root' log --oneline -3 $($t.branch) (task đã merge thì: crew clean $($t.name))" } }
       $commits = @('đã merge')
     }
     $items += @{ Name = $t.name; Branch = $t.branch; Commits = $commits }

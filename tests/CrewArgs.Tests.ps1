@@ -71,12 +71,12 @@ Describe 'crew: tham số tên' {
     (Invoke-CrewCmd 'review -DryRun').Text | Should Match 'dùng: crew review'
     $r = Invoke-CrewCmd 'review alpha,ghost -DryRun'
     $r.Code | Should Be 1
-    $r.Text | Should Match 'task ghost không có trong \.crew/tasks\.json'
+    $r.Text | Should Match 'không có task tên ghost'
   }
   It 'clean / check 1 tên lạ: lỗi ra đúng tên' {
     $r = Invoke-CrewCmd 'clean ghost'
     $r.Code | Should Be 1
-    $r.Text | Should Match 'task ghost không có trong \.crew/tasks\.json'
+    $r.Text | Should Match 'không có task tên ghost'
     $r = Invoke-CrewFile @('check', 'ghost')
     $r.Code | Should Be 1
     $r.Text | Should Match 'task ghost không có trong \.crew/tasks\.json'

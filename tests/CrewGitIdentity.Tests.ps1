@@ -38,7 +38,7 @@ switch ($args[0]) {
     $encIndex = [array]::IndexOf($args, '-EncodedCommand')
     $commandLine = if ($encIndex -ge 0) { [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($args[$encIndex + 1])) } else { '' }
     $addr = "t$($terms.Count + 100)"
-    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; space = $space; tab = $tab; turn = 1; status = [pscustomobject]@{ app = $(if ($commandLine -match '(^|\}; )codex ') { 'codex' } else { 'claude-code' }); state = 'idle' } }
+    $terms += [pscustomobject]@{ name = $name; address = $addr; state = 'live'; cwd = $cwd; space = $space; tab = $tab; turn = 1; status = [pscustomobject]@{ app = $(if ($commandLine -match '(^|; )codex ') { 'codex' } else { 'claude-code' }); state = 'idle' } }
     ConvertTo-Json -InputObject @($terms) -Depth 6 | Set-Content -LiteralPath $file -Encoding utf8
     [pscustomobject]@{ address = $addr; name = $name } | ConvertTo-Json; exit 0
   }
@@ -468,7 +468,7 @@ try {
     }
     function Make-Old($c) {
       # Version cũ tạo thay đổi tracked cần commit; role sửa tay giờ chỉ sinh .new.
-      [IO.File]::WriteAllText((Join-Path $c.Dir 'context/.skeleton-version'), '0')
+      [IO.File]::WriteAllText((Join-Path $c.Dir 'context/.skeleton-version'), '1')
       git -C $c.Dir add context
       git -C $c.Dir -c user.name=seed -c user.email=seed@example.invalid commit -qm old
     }
@@ -491,7 +491,7 @@ try {
       $r.ExitCode | Should Not Be 0
       $r.Output | Should Match 'git config --global user\.name "'
       [IO.File]::ReadAllText($role) | Should BeExactly $beforeRole
-      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '0'
+      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '1'
       @(Get-ChildItem "$role.bak-*" -ErrorAction Ignore).Count | Should Be 0
       git -C $c.Dir status --porcelain | Should BeNullOrEmpty
     }
@@ -526,7 +526,7 @@ try {
       Assert-Explained $r.Output $false
       [IO.File]::ReadAllText($c.Global) | Should Be $before
       [IO.File]::ReadAllText($role) | Should BeExactly $beforeRole
-      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '0'
+      [IO.File]::ReadAllText((Join-Path $c.Dir 'context/.skeleton-version')) | Should BeExactly '1'
     }
   }
 

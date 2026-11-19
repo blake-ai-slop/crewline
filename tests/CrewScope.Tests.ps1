@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 foreach ($name in 'Get-PromptScope', 'Get-ScopeConflicts', 'Invoke-Task', 'New-TaskRecord') {
   . ([scriptblock]::Create((Get-CrewFunction $name).Extent.Text))
 }
@@ -68,6 +68,8 @@ Describe 'Phạm vi prompt và các cặp trùng' {
 Describe 'Invoke-Task kiểm trùng trước khi giao' {
   BeforeEach {
     $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force (Join-Path $root '.crew') | Out-Null
+    '{}' | Set-Content (Join-Path $root '.crew/config.json')
     New-Item -ItemType Directory -Force (Join-Path $root 'old/.crew') | Out-Null
     'Được sửa: `src/a.ps1`' | Set-Content (Join-Path $root 'old/.crew/prompt.md') -Encoding UTF8
     $PromptFile = Join-Path $root 'new.md'

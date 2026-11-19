@@ -9,7 +9,7 @@ function Get-ContextLint([string]$root) {
   $context = Join-Path $root 'context'
   if (-not (Test-Path -LiteralPath $context -PathType Container)) { return }
   $allTracked = @(git -C $root -c core.quotepath=false ls-files 2>$null)
-  if ($LASTEXITCODE -ne 0) { throw 'Không đọc được danh sách file git track.' }
+  if ($LASTEXITCODE -ne 0) { throw "Không đọc được danh sách file git track.`n  → Làm tiếp: kiểm git -C '$root' ls-files rồi chạy lại crew lint" }
   $trackedNames = @($allTracked | ForEach-Object { Split-Path $_ -Leaf })
   $pathWarnings = @()
   $code = foreach ($path in @($allTracked | Where-Object { $_ -notlike 'context/*' })) {
@@ -57,7 +57,7 @@ function Get-ContextLint([string]$root) {
     $paths = @($pathWarnings | ForEach-Object { $_.Token; "context/$($_.Token)" } | Select-Object -Unique)
     $ignoredText = (($paths -join "`0") + "`0") | git -C $root check-ignore -z --stdin 2>$null
     $ignored = @(("$ignoredText" -split "`0") | Where-Object { $_ })
-    if ($LASTEXITCODE -gt 1) { throw 'Không kiểm tra được đường dẫn git ignore.' }
+    if ($LASTEXITCODE -gt 1) { throw "Không kiểm tra được đường dẫn git ignore.`n  → Làm tiếp: kiểm git -C '$root' check-ignore -v context rồi chạy lại crew lint" }
     foreach ($candidate in $pathWarnings) {
       if ($ignored -notcontains $candidate.Token -and $ignored -notcontains "context/$($candidate.Token)") { $candidate.Warning }
     }

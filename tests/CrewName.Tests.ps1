@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tên crew duy nhất theo project: slug, sổ ~/.crewline/projects.json (HOME giả / file trong $TestDrive), kiểm chủ terminal theo cwd.
 # Hàm trích bằng AST từ crew.ps1, hc giả — không gọi hc thật. Init chạy e2e qua Invoke-InTestHome (HOME giả).
 . "$PSScriptRoot/TestHome.ps1"
@@ -25,7 +25,7 @@ foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.L
 }
 $script:Said = [Collections.Generic.List[string]]::new()
 function Say($msg) { $script:Said.Add([string]$msg) }
-function Die($msg) { throw $msg }
+function Die($msg, [string]$next = '') { throw "$msg$(if ($next) { "`n  → Làm tiếp: $next" })" }
 $script:HcCalls = 0
 function hc { $script:HcCalls++; throw 'gọi hc thật trong test' }
 # sổ tên crew trỏ vào $TestDrive, không bao giờ ~/.crewline thật
@@ -432,7 +432,10 @@ Describe 'crew task chặn worker của project khác (Start-WorkerTask)' {
 }
 
 Describe 'crew send chặn terminal mang tên crew này nhưng của project khác' {
-  BeforeEach { $script:Said.Clear() }
+  BeforeEach {
+    $script:Said.Clear()
+    function Get-TermInfo($term) { & $script:Ops.Get $term }
+  }
 
   It 'app-w1 ở project khác -> dừng, 0 Send/Keys; terminal tên khác (không mang tên crew) vẫn gửi' {
     $root = New-Repo 'sd1/app' 'app'

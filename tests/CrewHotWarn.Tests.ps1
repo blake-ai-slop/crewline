@@ -1,5 +1,6 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/platform.ps1')
+foreach ($shared in 'Get-CrewInstallCommand', 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
 $hotCrew = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
@@ -29,8 +30,10 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $cfg | ConvertTo-Json | Set-Content (Join-Path $root '.crew/config.json')
     $Path = $root
   }
-  It 'context cũ chỉ cảnh báo, không ghi; bằng hoặc mới hơn không cảnh báo' {
+  It 'context cũ hoặc mới hơn đều cảnh báo đúng chiều, bằng nhau không cảnh báo; không ghi' {
     $Skeleton = Join-Path (Split-Path (Split-Path $hotCrew)) 'skeleton'
+    $CrewScriptsDir = Split-Path $hotCrew
+    function Get-CrewVersion { [pscustomobject]@{Version='14'} }
     $current = [int](Get-SkeletonVersion)
     New-Item -ItemType Directory -Force (Join-Path $root 'context') | Out-Null
     $stamp = Join-Path $root 'context/.skeleton-version'
@@ -38,8 +41,15 @@ Describe 'crew hot cảnh báo chỉ đọc' {
       [IO.File]::WriteAllText($stamp, "$version")
       $before = (Get-FileHash $stamp).Hash
       $output = Invoke-Hot 6>&1 | Out-String
-      if ($version -lt $current) { $output | Should Match "crew: context v$version cũ hơn crew v$current — chạy crew upgrade -DryRun rồi crew upgrade" }
-      else { $output | Should Not Match 'cũ hơn crew' }
+      if ($version -lt $current) {
+        $output | Should Match ([regex]::Escape("khung context của project (v$version) cũ hơn bản Crewline đang cài (v$((Get-CrewVersion).Version), khung v$current)"))
+        $output | Should Match '→ Làm tiếp:\r?\n    crew upgrade -DryRun\r?\n    crew upgrade'
+      }
+      elseif ($version -gt $current) {
+        $output | Should Match ([regex]::Escape("project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$((Get-CrewVersion).Version), khung v$current < khung v$version của project)"))
+        $output | Should Match ([regex]::Escape("    $(Get-CrewInstallCommand)"))
+      }
+      else { $output | Should Not Match 'cũ hơn bản Crewline|mới hơn bản đang cài' }
       (Get-FileHash $stamp).Hash | Should Be $before
     }
   }

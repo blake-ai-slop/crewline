@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Mở lại hội thoại: trích hàm bằng AST + e2e qua crew.ps1 thật trong HOME giả với hc/herdr-app giả. hc giả không chạy agent nào; không gọi hc thật.
 . "$PSScriptRoot/TestHome.ps1"
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
@@ -228,7 +228,7 @@ switch ($args[0]) {
     }
     $cmd = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($enc))
     Add-Content -LiteralPath (Join-Path $dir 'cmds.log') -Value "$name|$cmd" -Encoding utf8
-    $bare = ($cmd -split '\}; ', 2)[-1]
+    $bare = ($cmd -split '\}; (?:\$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = ''false''; )?', 2)[-1]
     $kind = if ($bare -like 'codex*') { 'codex' } else { 'claude' }
     $resume = $bare -match '--resume |--continue|resume --last'
     $mode = if ($resume) { $env:FAKE_RESUME } else { 'new' }
@@ -304,7 +304,7 @@ function Clear-Terms($ctx) { Remove-Item -LiteralPath (Get-TermsFile $ctx) -Forc
 function Clear-Log($ctx) { foreach ($f in 'hc.log', 'cmds.log') { Remove-Item -LiteralPath (Join-Path $ctx.State $f) -Force -ErrorAction SilentlyContinue } }
 function Get-Log($ctx, [string]$f) { $p = Join-Path $ctx.State $f; if (Test-Path -LiteralPath $p) { @(Get-Content -LiteralPath $p -Encoding utf8) } else { @() } }
 # name -> lệnh agent (bỏ đoạn xóa biến phiên); nhiều lần bật ⇒ mảng theo thứ tự.
-function Get-Cmds($ctx, [string]$name) { @(Get-Log $ctx 'cmds.log' | Where-Object { $_.StartsWith("$name|") } | ForEach-Object { ($_.Substring($name.Length + 1) -split '\}; ', 2)[-1] }) }
+function Get-Cmds($ctx, [string]$name) { @(Get-Log $ctx 'cmds.log' | Where-Object { $_.StartsWith("$name|") } | ForEach-Object { ($_.Substring($name.Length + 1) -split '\}; (?:\$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = ''false''; )?', 2)[-1] }) }
 function Get-Sends($ctx) { @(Get-Log $ctx 'hc.log' | Where-Object { $_ -match '^send ' }) }
 function Get-KeysLog($ctx) { @(Get-Log $ctx 'hc.log' | Where-Object { $_ -match '^keys ' }) }
 function Get-Book([string]$root) { Get-Content -LiteralPath (Join-Path $root '.crew/sessions.json') -Raw -Encoding utf8 | ConvertFrom-Json }
@@ -338,6 +338,10 @@ Describe 'crew up: lần đầu rồi khôi phục (hc giả)' {
     @(Get-Cmds $ctx 'mix-w2')[0] | Should Match "^codex $px 'Bạn là worker w2"
     @(Get-Cmds $ctx 'mix-rev')[0] | Should Match "^codex $px 'Bạn là rev"
     (Get-Log $ctx 'cmds.log')[0] | Should Match 'CLAUDE_CODE_CHILD_SESSION'
+    # gợi ý mờ của Claude Code tắt trong pwsh của pane, đặt sau đoạn xóa biến và trước lệnh agent
+    foreach ($n in 'mix-planner', 'mix-w1', 'mix-w2') {
+      @(Get-Log $ctx 'cmds.log' | Where-Object { $_.StartsWith("$n|") })[0] | Should Match "\}; \`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; (claude|codex) "
+    }
     $book = Get-Book $root
     $id = $book.roles.planner.sessionId
     $id | Should Match "^$uuid$"

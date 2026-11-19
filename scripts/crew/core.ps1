@@ -58,7 +58,7 @@ function Get-Teams {
     }
     if (-not $teams.Count) { throw 'chưa có mẫu đội nào' }
     return $teams
-  } catch { Die "mẫu đội '$file' không hợp lệ: $($_.Exception.Message)" }
+  } catch { Die "mẫu đội '$file' không hợp lệ: $($_.Exception.Message)" @("sửa JSON trong '$file'", 'Hoặc cài lại Crewline:', "irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex") }
 }
 
 function Get-UserDefaults($teams) {
@@ -79,33 +79,64 @@ function Get-UserDefaults($teams) {
       if ($config.PSObject.Properties.Name -contains $key) { $result[$key] = Test-Role $key $config.$key }
     }
     return $result
-  } catch { Die "config cá nhân '$file' không hợp lệ: $($_.Exception.Message)" }
+  } catch { Die "config cá nhân '$file' không hợp lệ: $($_.Exception.Message)" @("mở '$file' sửa giá trị đó", 'Hoặc chọn lại đội:', "crew setup") }
 }
 
 # Chọn đội cho init: cờ -Team > planner/workers/rev đủ trong config > team trong config > standard.
 function Select-Team($teams, $defaults) {
   if ($InitParameters.ContainsKey('Team')) {
     $name = @($teams.Keys) | Where-Object { $_ -eq $Team } | Select-Object -First 1
-    if (-not $name) { Die "-Team phải là: $(@($teams.Keys) -join ', ')" }
+    if (-not $name) { Die "-Team phải là: $(@($teams.Keys) -join ', ')" "chạy lại với một tên trên, vd. crew init -Team $(@($teams.Keys)[0])" }
     return $teams[$name]
   }
   if ($defaults.ContainsKey('planner') -and $defaults.ContainsKey('workers') -and $defaults.ContainsKey('rev')) {
     return @{ planner = $defaults.planner; workers = $defaults.workers; rev = $defaults.rev }
   }
-  if ($defaults.team -ceq 'custom') { Die "config cá nhân có team 'custom' nhưng thiếu planner/workers/rev (cần đủ cả ba)." }
+  if ($defaults.team -ceq 'custom') { Die "config cá nhân có team 'custom' nhưng thiếu planner/workers/rev (cần đủ cả ba)." @('crew setup', 'Hoặc tạo project với đội standard:', 'crew init -Team standard') }
   if ($defaults.team) { return $teams[$defaults.team] }
-  if (-not $teams.Contains('standard')) { Die "scripts/teams.json thiếu mẫu 'standard'." }
+  if (-not $teams.Contains('standard')) { Die "scripts/teams.json thiếu mẫu 'standard'." 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' }
   return $teams['standard']
 }
 
 function Get-SkeletonVersion {
   $v = (Get-Content (Join-Path $Skeleton 'VERSION') -Raw -Encoding utf8).Trim()
-  if ($v -notmatch '^[1-9][0-9]*$') { Die 'skeleton/VERSION phải là số nguyên dương.' }
+  if ($v -notmatch '^[1-9][0-9]*$') { Die 'skeleton/VERSION phải là số nguyên dương.' 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' }
   return $v
 }
 
 function Say($msg) { Write-Host "crew: $msg" }
-function Die($msg) { Write-Host "crew: LỖI: $msg" -ForegroundColor Red; exit 1 }
+function Get-CrewCommandSuggestion([string]$command, [string[]]$choices) {
+  $best = 2
+  $matches = @()
+  foreach ($choice in $choices) {
+    $previous = @(0..$choice.Length)
+    for ($i = 1; $i -le $command.Length; $i++) {
+      $row = @($i)
+      for ($j = 1; $j -le $choice.Length; $j++) {
+        $cost = if ([char]::ToLowerInvariant($command[$i - 1]) -eq $choice[$j - 1]) { 0 } else { 1 }
+        $row += [Math]::Min([Math]::Min($previous[$j] + 1, $row[$j - 1] + 1), $previous[$j - 1] + $cost)
+      }
+      $previous = $row
+    }
+    $distance = $previous[$choice.Length]
+    if ($distance -lt $best) { $best = $distance; $matches = @($choice) }
+    elseif ($distance -eq $best) { $matches += $choice }
+  }
+  if ($best -le 1 -and $matches.Count -eq 1) { $matches[0] }
+}
+# $next: bước tiếp theo (lệnh chép chạy được hoặc chỗ cần sửa); rỗng ⇒ chỉ in lỗi như cũ.
+function Die($msg, $next = '') {
+  Write-Host "crew: LỖI: $msg" -ForegroundColor Red
+  if ($next) {
+    Write-Host '  → Làm tiếp:'
+    foreach ($step in $next) {
+      foreach ($line in ($step -split '\r?\n')) {
+        if ($line.Trim()) { Write-Host "    $line" }
+      }
+    }
+  }
+  exit 1
+}
 
 # Ghi nguyên tử file state: $text ghi đúng byte (UTF-8 không BOM, người gọi tự thêm xuống dòng cuối như trước) vào file tạm
 # cùng thư mục rồi đổi tên đè lên. Lỗi ⇒ xóa file tạm, file cũ còn nguyên, ném lỗi. Đổi tên thử lại ~2 giây vì trên Windows
@@ -163,9 +194,19 @@ function Invoke-GitQuiet {
 }
 
 # Như Invoke-GitQuiet nhưng lỗi thì Die kèm output của git.
+# Bước tiếp theo: `-Next '<việc>'` đứng ngay sau $what (không truyền cho git); thiếu ⇒ trỏ git status của thư mục -C.
 function Invoke-GitOrDie([string]$what) {
-  $r = Invoke-GitQuiet @args
-  if ($r.Code -ne 0) { Die "$what thất bại: $($r.Text)" }
+  $gitArgs = @($args); $next = ''
+  if ($gitArgs.Count -ge 2 -and "$($gitArgs[0])" -eq '-Next') { $next = [string]$gitArgs[1]; $gitArgs = @($gitArgs | Select-Object -Skip 2) }
+  $r = Invoke-GitQuiet @gitArgs
+  if ($r.Code -ne 0) {
+    if (-not $next) {
+      $at = [array]::IndexOf([object[]]$gitArgs, '-C')
+      $dir = if ($at -ge 0 -and $at + 1 -lt $gitArgs.Count) { " -C '$($gitArgs[$at + 1])'" } else { '' }
+      $next = "đọc lỗi git ở trên, kiểm: git$dir status — sửa xong chạy lại lệnh crew vừa gõ"
+    }
+    Die "$what thất bại: $($r.Text)" $next
+  }
   $r
 }
 

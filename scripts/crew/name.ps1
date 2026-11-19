@@ -36,13 +36,13 @@ function Get-FreshCrewName([string]$root) {
 function Get-CrewName([string]$root, $cfg) {
   if ($cfg -and $cfg.PSObject.Properties.Name -contains 'name' -and $null -ne $cfg.name) {
     $n = [string]$cfg.name
-    if (-not (Test-CrewName $n)) { Die "tên crew '$n' trong .crew/config.json không hợp lệ (a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-'). Sửa `"name`" hoặc chạy: crew init -Name <tên>" }
+    if (-not (Test-CrewName $n)) { Die "tên crew '$n' trong .crew/config.json không hợp lệ (a-z 0-9 -, 1–12 ký tự, không bắt đầu/kết thúc bằng '-')." 'sửa "name" trong .crew/config.json hoặc chạy: crew init -Name <tên>' }
     return $n
   }
   $s = Get-LegacySlug $root
   # -DryRun là cờ của crew.ps1, đọc theo phạm vi động như mọi hàm crew (crew up chạy Recover trong script tạm nên không dùng $script:).
   if (-not $s -and (Get-Variable -Name DryRun -ValueOnly -ErrorAction SilentlyContinue)) { return Get-FreshCrewName $root }
-  if (-not $s) { Die "không suy ra được tên crew từ thư mục '$(Split-Path $root -Leaf)'. Chạy 'crew upgrade' (tự ghi name) hoặc 'crew init -Name <tên>'." }
+  if (-not $s) { Die "không suy ra được tên crew từ thư mục '$(Split-Path $root -Leaf)'." 'chạy crew upgrade (tự ghi name) hoặc crew init -Name <tên>' }
   return $s
 }
 
@@ -86,7 +86,7 @@ function Test-IdKey([string]$k) { $k -cmatch '^[a-z0-9]{1,24}$' }
 function Get-CrewIdKey([string]$root, $cfg) {
   if ($cfg -and $cfg.PSObject.Properties.Name -contains 'idKey' -and $null -ne $cfg.idKey) {
     $k = [string]$cfg.idKey
-    if (-not (Test-IdKey $k)) { Die "idKey '$k' trong .crew/config.json không hợp lệ (a-z 0-9, 1–24 ký tự). Sửa `"idKey`" hoặc chạy: crew init -Name <tên>" }
+    if (-not (Test-IdKey $k)) { Die "idKey '$k' trong .crew/config.json không hợp lệ (a-z 0-9, 1–24 ký tự)." 'sửa "idKey" trong .crew/config.json hoặc chạy: crew init -Name <tên>' }
     return $k
   }
   $n = Get-CrewName $root $cfg
@@ -173,5 +173,5 @@ function Resolve-CrewName([string]$base, [string]$root, $map, [string[]]$takenKe
     $c = "$b$suffix"
     if (& $free $c) { return $c }
   }
-  Die "không tìm được tên crew trống từ '$base' — chạy: crew init -Name <tên>"
+  Die "không tìm được tên crew trống từ '$base'." 'chạy: crew init -Name <tên>'
 }

@@ -2,6 +2,21 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v14 — 2026-11-19 — lỗi nào cũng chỉ bước tiếp theo, cập nhật rõ ràng
+
+### Mới
+- **Mọi lỗi in thêm "→ Làm tiếp:" với lệnh chép chạy được.**
+- **Cập nhật in rõ "Crewline v13 -> v14" và có gì mới.**
+- **Agent Claude do crew bật không còn gợi ý mờ gây kẹt việc** (pane đang mở: `crew up -Restart <vai>` lúc rảnh).
+- `crew help` có lệnh cập nhật Crewline; gõ sai tên lệnh thì báo lỗi thay vì in help.
+
+### Sửa
+- **`crew upgrade` không bao giờ hạ phiên bản:** máy cài Crewline cũ hơn project (vd. hai máy cài lệch bản) ⇒ dừng, không ghi gì, chỉ lệnh cài lại. Chỉ có từ v14 — máy còn bản cũ hãy cài lại trước khi `crew upgrade`.
+- Gợi ý câu kế tiếp của Claude Code bị đọc thành tin kẹt ⇒ `crew task`/`crew queue` bị chặn. Nay tắt gợi ý cho agent crew bật; pane cũ bị chặn thì thông báo chỉ cách gỡ.
+- `crew queue` thành công không còn trả exit 1.
+- `crew send` tới tên không có trong crew liệt kê đúng tên terminal; `crew task` ngoài project báo đúng lỗi.
+- Thông báo phiên bản phân biệt "Crewline vN" và "khung context vN"; thông báo không nhắc file nội bộ.
+
 ## v13 — 2026-11-18 — đổi agent không mất việc, có số phiên bản
 
 ### Mới

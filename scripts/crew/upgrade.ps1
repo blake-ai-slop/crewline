@@ -142,9 +142,9 @@ function Update-InitSkeletonHashes([string]$root) {
 # Khối tóm tắt cuối crew upgrade (thật và -DryRun).
 function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual, $keep, $openBlocks, [bool]$dry, [bool]$other) {
   Write-Host ''
-  Write-Host "== crew upgrade$(if ($dry) { ' -DryRun' }): context v$old -> v$version"
+  Write-Host "== crew upgrade$(if ($dry) { ' -DryRun' }): khung context v$old -> v$version"
   if (-not $replace.Count -and -not $manual.Count -and -not $openBlocks.Count -and -not $other) {
-    Write-Host "context đã ở v$version, không có gì để cập nhật."
+    Write-Host "khung context đã ở v$version, không có gì để cập nhật."
     return
   }
   $join = { param($list) $s = @($list) -join ', '; if ($s.Length -gt 160) { $s.Substring(0, 157) + '...' } else { $s } }
@@ -160,34 +160,46 @@ function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual,
   $kept = @($keep) + @($openBlocks | ForEach-Object { "$_ (thiếu <!-- /crew -->)" })
   Write-Host "Giữ nguyên ($($kept.Count)): $(if ($kept.Count) { & $join $kept } else { '-' })"
   $todo = @()
-  if ($manual.Count) { $todo += 'mở từng cặp <file> và <file>.new, gộp phần mới vào bản của bạn rồi xóa .new; quy tắc riêng nên chuyển sang context/roles/<vai>.local.md (upgrade không bao giờ đụng).' }
+  if ($manual.Count) {
+    $todo += 'mở từng cặp <file> và <file>.new, gộp phần mới vào bản của bạn rồi xóa .new; quy tắc riêng nên chuyển sang context/roles/<vai>.local.md (upgrade không bao giờ đụng).'
+    $todo += 'hoặc nói với planner: gộp các file .new trong context/roles rồi xóa .new'
+  }
   if ($openBlocks.Count) { $todo += "thêm dòng <!-- /crew --> ngay sau khối crew trong $(@($openBlocks) -join ', ') rồi chạy lại crew upgrade." }
-  if ($dry) { $todo += 'chạy crew upgrade (không -DryRun) để áp dụng.' }
-  if ($todo.Count) { Write-Host "Việc cần làm: $($todo -join ' ')" -ForegroundColor $(if ($manual.Count -or $openBlocks.Count) { 'Yellow' } else { 'Gray' }) }
+  if ($dry) { $todo += 'crew upgrade' }
+  if ($todo.Count) { Write-Host "Việc cần làm:`n  $($todo -join "`n  ")" -ForegroundColor $(if ($manual.Count -or $openBlocks.Count) { 'Yellow' } else { 'Gray' }) }
 }
 
 function Invoke-Upgrade {
   $root = Get-Root (Resolve-Path $Path).Path
-  if (-not $root) { Die 'không phải repo git.' }
+  if (-not $root) { Die 'không phải repo git.' 'cd vào thư mục project rồi chạy lại: crew upgrade' }
   $context = Join-Path $root 'context'
-  if (-not (Test-Path $context -PathType Container)) { Die "chưa có context/ — chạy 'crew init' trước." }
+  if (-not (Test-Path $context -PathType Container)) { Die 'chưa có context/.' 'chạy crew init trước' }
+  $version = Get-SkeletonVersion
+  $old = '0'
+  $versionFile = Join-Path $context '.skeleton-version'
+  if (Test-Path -LiteralPath $versionFile) {
+    $old = ([IO.File]::ReadAllText($versionFile)).Trim()
+    $oldNumber = 0
+    if ($old -notmatch '^[0-9]+$' -or -not [int]::TryParse($old, [ref]$oldNumber) -or $oldNumber -le 0) {
+      Die 'context/.skeleton-version hỏng (phải là số nguyên dương) — không ghi gì.' @('git log -- context/.skeleton-version', 'Khôi phục file từ commit đúng.', 'git restore --source=<commit> -- context/.skeleton-version', 'crew upgrade')
+    }
+    if ($oldNumber -gt [int]$version) {
+      Die "project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$((Get-CrewVersion).Version), khung v$version < khung v$old của project)" @((Get-CrewInstallCommand), 'crew upgrade')
+    }
+  }
   # Kiểm JSON/schema .crew/config.json trước mọi ghi (Update-ConfigName chạy sau khi đã ghi context).
   $cfgFile = Join-Path $root '.crew/config.json'
   if (Test-Path -LiteralPath $cfgFile) { $null = Read-CrewState $cfgFile }
   $st =Invoke-GitQuiet -C $root status --porcelain --untracked-files=all -- context
-  if ($st.Code -ne 0) { Die 'không kiểm tra được trạng thái context/.' }
+  if ($st.Code -ne 0) { Die 'không kiểm tra được trạng thái context/.' @('git status -- context', 'sửa lỗi ở trên', 'crew upgrade') }
   # Bỏ qua file .bak-* / .new (kể cả khi project chưa ignore chúng).
   $dirty = @($st.Text -split '\r?\n+' | Where-Object { $_ } | ForEach-Object { $_.Substring(3).Trim('"') } | Where-Object { -not (Test-BakPath $_) -and -not (Test-NewPath $_) })
   if ($dirty.Count -and -not $Force) {
     $shown = @($dirty | Select-Object -First 5) -join ', '
     if ($dirty.Count -gt 5) { $shown += ", … (+$($dirty.Count - 5))" }
-    Die "context/ có thay đổi chưa commit: $shown. Upgrade từ chối để không trộn việc của bạn vào commit upgrade. Làm tiếp: git -C `"$root`" add context; git -C `"$root`" commit -m `"context: việc đang làm`", rồi crew upgrade (xem trước: crew upgrade -DryRun). Hoặc crew upgrade -Force để chạy luôn."
+    Die "context/ có thay đổi chưa commit: $shown. Upgrade từ chối để không trộn việc của bạn vào commit upgrade." @("git -C `"$root`" add context", "git -C `"$root`" commit -m `"context: việc đang làm`"", "crew upgrade -DryRun", "crew upgrade", "Hoặc chạy luôn nếu chắc chắn:", "crew upgrade -Force")
   }
-  $version = Get-SkeletonVersion
-  $old = '0'
-  $versionFile = Join-Path $context '.skeleton-version'
-  if (Test-Path $versionFile) { $old = (Get-Content $versionFile -Raw -Encoding utf8).Trim() }
-  Say "upgrade context v$old -> v$version"
+  Say "upgrade khung context v$old -> v$version"
   $changed = [Collections.Generic.List[string]]::new()
   $groupReplace = [Collections.Generic.List[string]]::new()
   $groupManual = [Collections.Generic.List[string]]::new()

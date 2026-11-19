@@ -127,15 +127,15 @@ function Read-CrewState([string]$file, [switch]$ThrowOnError) {
     $message = $_.Exception.Message
     if (-not $message.StartsWith($file, [StringComparison]::Ordinal)) { $message = "$file hỏng — sửa JSON hoặc khôi phục bản sao, không ghi đè file: $message" }
     if ($ThrowOnError) { throw $message }
-    Die $message
+    Die $message $(if ($message -match 'bản crew mới hơn') { 'cài lại Crewline: irm https://raw.githubusercontent.com/blake-ai-slop/crewline/main/bootstrap.ps1 | iex' } else { "mở $file sửa JSON (hoặc khôi phục bản sao) rồi chạy lại lệnh crew" })
   }
 }
 
 function Get-Config([string]$root) {
   $f = Join-Path $root '.crew/config.json'
-  if (-not (Test-Path $f)) { Die "chưa có .crew/config.json — chạy 'crew init' trước." }
+  if (-not (Test-Path $f)) { Die "chưa có .crew/config.json — chạy 'crew init' trước." "crew init (trong $root)" }
   $config = Read-CrewState $f
-  if ($config.GetType() -ne [System.Management.Automation.PSCustomObject]) { Die "$f hỏng — config phải là object; sửa JSON hoặc khôi phục bản sao." }
+  if ($config.GetType() -ne [System.Management.Automation.PSCustomObject]) { Die "$f hỏng — config phải là object; sửa JSON hoặc khôi phục bản sao." "mở $f sửa thành JSON object { ... } rồi chạy lại lệnh crew" }
   return $config
 }
 

@@ -12,7 +12,7 @@ function Read-SessionBook([string]$root) {
   $file = Get-SessionsFile $root
   if (-not (Test-Path -LiteralPath $file)) { return $book }
   $j = Read-CrewState $file
-  if ($j -isnot [pscustomobject] -or $j.roles -isnot [pscustomobject]) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." }
+  if ($j -isnot [pscustomobject] -or $j.roles -isnot [pscustomobject]) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." "mở $file sửa JSON (hoặc khôi phục bản sao) rồi chạy lại lệnh crew" }
   $book.State = $j
   foreach ($p in $j.roles.PSObject.Properties) {
     $v = $p.Value
@@ -26,7 +26,7 @@ function Read-SessionBook([string]$root) {
 function Save-SessionBook([string]$root, $book) {
   $file = Get-SessionsFile $root
   $state = if (Test-Path -LiteralPath $file) { Read-CrewState $file } else { [pscustomobject]@{ version = 1 } }
-  if ((Test-Path -LiteralPath $file) -and ($state -isnot [pscustomobject] -or $state.roles -isnot [pscustomobject])) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." }
+  if ((Test-Path -LiteralPath $file) -and ($state -isnot [pscustomobject] -or $state.roles -isnot [pscustomobject])) { Die "$file hỏng — thiếu roles; sửa JSON hoặc khôi phục bản sao." "mở $file sửa JSON (hoặc khôi phục bản sao) rồi chạy lại lệnh crew" }
   $roles = [ordered]@{}
   if ($state.roles) { foreach ($p in $state.roles.PSObject.Properties) { $roles[$p.Name] = $p.Value } }
   foreach ($k in @($book.Roles.Keys | Sort-Object)) {
@@ -213,11 +213,13 @@ function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [
   if ($cmdline) {
     # crew up chạy từ pane agent có thể truyền biến phiên cha; Claude thấy CLAUDE_CODE_CHILD_SESSION thì không lưu transcript nên không resume được.
     $clean = "foreach (`$v in 'CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN') { Remove-Item `"Env:`$v`" -ErrorAction Ignore }; "
+    # Gợi ý câu kế tiếp (chữ mờ) của Claude Code nằm trong ô nhập, hc read không có màu ⇒ crew tưởng tin kẹt; chỉ tắt trong pwsh của pane này.
+    $clean += "`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; "
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($clean + $cmdline))
     $argv += @('-NoExit', '-EncodedCommand', $enc)
   }
   $out = hc @argv
-  if ($LASTEXITCODE -ne 0) { Die "không bật được $name : $out" }
+  if ($LASTEXITCODE -ne 0) { Die "không bật được $name : $out" 'kiểm hc còn chạy: hc ls (lỗi ⇒ mở lại herdr-app), rồi chạy lại: crew up' }
   $r = $out | ConvertFrom-Json
   # chờ herdr-app nhận terminal để tab/pane hiện đúng thứ tự
   for ($i = 0; $i -lt 40; $i++) {
@@ -248,7 +250,7 @@ function Get-WorkerTree([string]$root, [int]$n) {
 # Nhánh chính = nhánh hiện tại của repo chính. Detached HEAD ⇒ Die.
 function Get-MainBranch([string]$root) {
   $b = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
-  if (-not $b) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD) — checkout nhánh chính trước." }
+  if (-not $b) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD) — checkout nhánh chính trước." "git -C '$root' switch <nhánh chính>, rồi chạy lại lệnh crew" }
   $b
 }
 
@@ -259,7 +261,7 @@ function Initialize-WorkerTree([string]$root, [int]$n, [string]$main) {
   if ($listed -and (Test-Path -LiteralPath $wt)) { return $wt }
   if ($listed) { Invoke-GitOrDie 'git worktree prune' -C $root worktree prune | Out-Null }
   Say "git worktree add --detach $wt $main"
-  Invoke-GitOrDie "tạo worktree w$n" -C $root worktree add -q --detach $wt $main | Out-Null
+  Invoke-GitOrDie "tạo worktree w$n" -Next "git -C '$root' worktree prune; còn thư mục $wt không phải worktree thì kiểm rồi xóa nó; sau đó chạy lại lệnh crew" -C $root worktree add -q --detach $wt $main | Out-Null
   $wt
 }
 

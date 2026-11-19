@@ -1,5 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
+foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 . "$PSScriptRoot/TestHome.ps1"
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 # crew queue: hàm của scripts/crew/queue.ps1 trích bằng AST, ops giả (không hc, không spawn) cho Invoke-QueueRun;
@@ -517,7 +517,7 @@ Describe 'crew queue e2e (crew task con thật, hc giả)' {
     $p = Join-Path $c.Root 'p.md'; 'Được sửa: `a.ps1`' | Set-Content $p -Encoding utf8
     $r = Run-Crew $c @('queue', 'a', $p, '-Size', 'L', '-After', 'zz')
     $r.Code | Should Be 1
-    $r.Text | Should Match '-After zz không phải task đang chạy'
+    $r.Text | Should Match 'không có task tên zz đang chạy hay trong hàng đợi'
     Test-Path (Join-Path $c.Root '.crew/queue/a.md') | Should Be $false
     Test-Path (Join-Path $c.Root '.crew/queue.json') | Should Be $false
     ConvertTo-Json -InputObject @([ordered]@{ name = 'zz'; branch = 'crew/zz'; worktree = ''; worker = 1 }) | Set-Content (Join-Path $c.Root '.crew/tasks.json') -Encoding utf8

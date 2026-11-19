@@ -105,11 +105,11 @@ function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $fals
 # hiện tại), hộp khác ⇒ dừng, không Enter. $tries = số vòng chờ ~2s.
 # Gửi trần (không bọc <hc from>) khi: terminal là shell, tin là lệnh slash ('/…'), hoặc $raw.
 function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = '', [int]$tries = 6, [bool]$raw = $false) {
-  $fail = { param($m) @{ Ok = $false; Message = $m } }
+  $fail = { param($m, $n = '') @{ Ok = $false; Message = $m; Next = $n } }
   $info = & $ops.Get $term
   switch (Get-SendPlan $info $null) {
-    'dead' { return & $fail "terminal $term không live (hc get không thấy hoặc đã tắt)." }
-    'blocked' { return & $fail "$term đang chờ duyệt — chủ dự án xử lý (không gửi, không dùng --force)." }
+    'dead' { return & $fail "terminal $term không live (hc get không thấy hoặc đã tắt)." @('crew up', 'gửi lại tin bằng crew send') }
+    'blocked' { return & $fail "$term đang chờ duyệt — chủ dự án xử lý (không gửi, không dùng --force)." "sang pane $term trả lời hộp chờ duyệt (xem: hc read $term --lines 20), rồi gửi lại" }
   }
   $st0 = Get-TermStatus $info
   $bare = $raw -or (-not $st0.App) -or $text.StartsWith('/')
@@ -117,7 +117,7 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   $busy = (-not $session) -and $st0.App -and $st0.State -eq 'working'
   $turn = if ($null -ne $info.turn) { [int]$info.turn } else { -1 }
   $r = & $ops.Send $term $text $bare
-  if ($r.Code -ne 0) { return & $fail "hc send tới $term thất bại: $($r.Text)" }
+  if ($r.Code -ne 0) { return & $fail "hc send tới $term thất bại: $($r.Text)" "kiểm terminal: hc ls (thiếu thì crew up), rồi gửi lại" }
   $result = try { $r.Text | ConvertFrom-Json } catch { [pscustomobject]@{ started = $null } }
   $verdict = {
     param($plan, $info)
@@ -139,11 +139,11 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
       }
       'stuck' {
         $shown = if ($seen.Text.Length -gt 200) { $seen.Text.Substring(0, 200) + '…' } else { $seen.Text }
-        return & $fail "đã gửi tới $term nhưng ô nhập Codex còn chữ khác tin vừa gửi: $shown — không bấm Enter. Xử lý: sang pane $term, xóa chữ (hoặc Enter nếu đúng), rồi gửi lại."
+        return & $fail "đã gửi tới $term nhưng ô nhập Codex còn chữ khác tin vừa gửi: $shown — không bấm Enter. Xử lý: sang pane $term, xóa chữ (hoặc Enter nếu đúng), rồi gửi lại." 'xem mục "Tin kẹt ở ô nhập" trong docs/troubleshooting.md (thư mục cài Crewline)'
       }
       'nobox' { return & $fail "đã gửi tới $term nhưng không nhận ra ô nhập Codex để kiểm tin — không bấm Enter; xem: hc read $term --lines 20" }
-      'dead' { return & $fail "terminal $term tắt sau khi gửi." }
-      'blocked' { return & $fail "đã gửi tới $term nhưng nó đang chờ duyệt — chủ dự án xử lý (không bấm Enter)." }
+      'dead' { return & $fail "terminal $term tắt sau khi gửi." 'crew up (bật lại terminal) rồi gửi lại' }
+      'blocked' { return & $fail "đã gửi tới $term nhưng nó đang chờ duyệt — chủ dự án xử lý (không bấm Enter)." "sang pane $term trả lời hộp chờ duyệt (xem: hc read $term --lines 20)" }
       'dialog' { return & $fail "$term đang hiện một hộp thoại lạ sau '$text' — không bấm phím; xem: hc read $term --lines 20" }
     }
     $null
@@ -207,13 +207,20 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
 }
 
 # Task/repair không được xóa bản nháp khi reset phiên; kiểm ô nhập thật của cả Claude và Codex.
-# hc không phân biệt được chữ gợi ý mờ của Claude: giữ ô có chữ để người dùng xử lý trong pane.
+# hc không phân biệt được chữ gợi ý mờ của Claude: giữ ô có chữ để người dùng xử lý trong pane (không tự xóa/ghi đè).
+# Pane Claude bật trước bản tắt gợi ý (Start-Term) có thể hiện gợi ý mờ ⇒ câu báo chỉ cách bật lại.
 function Get-WorkerInputError([string]$term, [string]$screen) {
   if (Get-ScreenDialog $screen) { return '' }
   $box = Get-InputBox $screen
   if (-not $box -or -not $box.Text) { return '' }
   $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
-  "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+  $msg = "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+  if ($box.Kind -eq 'claude') {
+    # vai = phần sau '<crew>-' trong tên terminal
+    $role = if ($term -match '-(planner|rev|w\d+)$') { $Matches[1] } else { '<vai>' }
+    $msg += "`n  Nếu không ai gõ dòng này, đó là gợi ý mờ của Claude Code (pane bật trước bản sửa) — bật lại: crew up -Restart $role (worker có task cần -Force; xem docs/troubleshooting.md mục Gợi ý của Claude)."
+  }
+  $msg
 }
 
 # Gửi tin tới terminal, dùng chung cho crew send/review. Lỗi ⇒ Die (exit 1). Agent bận ⇒ báo tin nằm chờ (exit 0).
@@ -222,7 +229,7 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
   if (-not $ops) { $ops = New-HcOps }
   if ($root) {
     $why = Get-ForeignTermError $term (& $ops.Get $term) $root
-    if ($why) { Die "$why Không gửi." }
+    if ($why) { Die "$why Không gửi." 'xem mục "Tên crew trùng" trong docs/troubleshooting.md (thư mục cài Crewline)' }
   }
   # tin cũ còn ở ô nhập: gửi nữa sẽ dính vào nó, Enter sẽ gửi cả hai ⇒ để người quyết
   # Codex rảnh: chỉ gửi khi màn hình có ô nhập thật và không có hộp thoại (vừa /new: hộp chọn worktree hoặc phiên chưa vẽ xong
@@ -235,13 +242,13 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
     if (-not $dlg -and $box -and $box.Kind -eq 'codex') {
       if ($box.Text) {
         $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
-        Die "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+        Die "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại." 'xem mục "Tin kẹt ở ô nhập" trong docs/troubleshooting.md (thư mục cài Crewline)'
       }
       break
     }
     if ($w -ge 5) {
       $why = if ($dlg -eq 'codex-new') { "đang mở hộp chọn của /new" } elseif ($dlg) { 'đang hiện hộp thoại' } else { 'chưa hiện ô nhập sẵn sàng' }
-      Die "$term $why, chưa gửi (không bấm phím); xem: hc read $term --lines 20"
+      Die "$term $why, chưa gửi (không bấm phím)." "xem: hc read $term --lines 20, xử lý xong rồi gửi lại"
     }
     & $ops.Sleep 2000
     $st = Get-TermStatus (& $ops.Get $term)
@@ -250,18 +257,30 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
   $session = if ($st.App -eq 'codex' -and $text.Trim() -ceq '/new') { 'codex' }
     elseif ($st.App -in 'claude', 'claude-code' -and $text.Trim() -ceq '/clear') { 'claude' } else { '' }
   $r = Invoke-SendFlow $term $text $ops $session $(if ($session) { 10 } else { 6 }) $raw
-  if (-not $r.Ok) { Die $r.Message }
+  if (-not $r.Ok) { Die $r.Message $r.Next }
   Say $r.Message
 }
 
 function Invoke-Send {
-  if (-not $Name -or -not $PromptFile) { Die 'dùng: crew send <terminal> "<tin>" [-Raw]' }
+  if (-not $Name -or -not $PromptFile) { Die 'dùng: crew send <terminal> "<tin>" [-Raw]' @('crew hot', 'crew send <crew>-w1 "tiếp tục"') }
   # gọi trong repo crew và terminal mang tên crew này ⇒ kiểm chủ; tên khác / ngoài repo ⇒ gửi như cũ
   $root = Get-MainRoot (Get-Location).Path
   $guard = ''
   if ($root -and (Test-Path -LiteralPath (Join-Path $root '.crew/config.json'))) {
-    if ($Name -like "$(Get-CrewName $root (Get-Config $root))-*") { $guard = $root }
-    if ($guard) { try { $mv = Get-MoveInfo $root (Get-Config $root) } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint } }
+    $cfg = Get-Config $root
+    $slug = Get-CrewName $root $cfg
+    $roles = @()
+    if ($cfg.planner -and $cfg.planner -ne 'none') { $roles += "$slug-planner" }
+    for ($i = 1; $i -le @($cfg.workers).Count; $i++) { $roles += "$slug-w$i" }
+    if ($cfg.rev -and $cfg.rev -ne 'none') { $roles += "$slug-rev" }
+    if ($Name -notin $roles) {
+      $target = Get-TermInfo $Name
+      if (-not $target -or $target.state -ne 'live') {
+        Die "không có terminal $Name trong crew $slug" @("Tên terminal: $($roles -join ', ')", 'crew hot')
+      }
+    }
+    if ($Name -like "$slug-*") { $guard = $root }
+    if ($guard) { try { $mv = Get-MoveInfo $root (Get-Config $root) } catch { $mv = $null }; if ($mv -and $mv.Moved) { Die $mv.Hint @('crew repair', 'gửi lại tin bằng crew send') } }
   }
   # Chụp người gửi trước khi gửi (-Raw tạm xóa biến HC); không tin tên terminal từ nội dung tin.
   $sender = if ($root -and $env:HC_TERMINAL_ID) { Get-TermInfo $env:HC_TERMINAL_ID } else { $null }
@@ -339,18 +358,18 @@ function Get-RevGuard($cfg, [string]$term, $info, [scriptblock]$readScreen = $nu
 
 function Invoke-Review {
   $names = @($NameList)
-  if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun]' }
-  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die 'chạy trong repo của crew.' }
+  if (-not $names.Count) { Die 'dùng: crew review <task>[,<task2>…] [-DryRun]' @('crew hot', 'crew review fix-login') }
+  $root = Get-MainRoot (Get-Location).Path; if (-not $root) { Die 'chạy trong repo của crew.' @('cd <project>', 'crew init') }
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg; $tasks = Get-Tasks $root
   $main = (Invoke-GitOrDie 'lấy nhánh hiện tại' -C $root branch --show-current).Text
-  if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." }
+  if (-not $main) { Die "repo chính $root không đứng trên nhánh nào (detached HEAD)." @("git -C '$root' switch <nhánh chính>", "crew review <task>") }
   $sel = @(foreach ($n in $names) {
     $t = $tasks | Where-Object { $_.name -eq $n } | Select-Object -First 1
-    if (-not $t) { Die "task $n không có trong .crew/tasks.json." }
+    if (-not $t) { Die "không có task tên $n." 'xem tên task đang có: crew hot' }
     $t
   })
   $rl = Get-ReviewLine $root $main $sel $cfg.review
-  if ($rl.Error) { Die $rl.Error }
+  if ($rl.Error) { Die $rl.Error $rl.Next }
   $revTerm = "$slug-rev"
   $revInfo = if ($cfg.rev -and $cfg.rev -ne 'none') { Get-TermInfo $revTerm } else { $null }
   $why = Get-RevGuard $cfg $revTerm $revInfo { & (New-HcOps).Read $revTerm }
@@ -359,7 +378,7 @@ function Invoke-Review {
     if ($why) { Say "cảnh báo: $why" }
     return
   }
-  if ($why) { Die "$why Không gửi." }
+  if ($why) { Die "$why Không gửi." "xử lý theo lỗi ở trên rồi chạy lại: crew review $($names -join ',')" }
   Send-CrewMessage $revTerm $rl.Msg $false $root
   # gửi được ⇒ đánh dấu chờ review (crew repair giao lại khi Rev bị đóng giữa chừng); +i ms giữ thứ tự gửi
   $now = [DateTime]::UtcNow

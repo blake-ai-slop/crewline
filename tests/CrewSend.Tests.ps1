@@ -278,7 +278,7 @@ Describe 'crew send ghi tín hiệu XONG sau khi gửi thành công' {
     $env:HC_TERMINAL_ID = 'fake-source'
     $script:Name = 'demo-planner'; $script:PromptFile = 'xOnG a'; $script:Raw = [switch]$false
     function Get-MainRoot { $script:DoneRoot }
-    function Get-Config { @{} }
+    function Get-Config { @{planner='claude'; workers=@('codex'); rev='none'} }
     function Get-CrewName { 'demo' }
     function Get-MoveInfo { $null }
     function Get-TermInfo { $script:Sender }

@@ -33,10 +33,10 @@ try {
   $trees = @(Invoke-CheckGit -C $Path worktree list --porcelain)
   $root = ($trees | Where-Object { $_ -like 'worktree *' } | Select-Object -First 1).Substring(9)
   $tasksFile = Join-Path $root '.crew/tasks.json'
-  if (-not (Test-Path -LiteralPath $tasksFile)) { throw "không có task ${Name}: thiếu $tasksFile" }
+  if (-not (Test-Path -LiteralPath $tasksFile)) { throw "không có task ${Name}: thiếu $tasksFile`n  → Làm tiếp: chạy trong repo của crew (cd vào project) hoặc crew check $Name -Path <thư mục project>" }
   $tasks = @(Get-Content -LiteralPath $tasksFile -Raw -Encoding UTF8 | ConvertFrom-Json)
   $task = $tasks | Where-Object { $_.name -eq $Name } | Select-Object -First 1
-  if (-not $task) { throw "task $Name không có trong .crew/tasks.json" }
+  if (-not $task) { throw "task $Name không có trong .crew/tasks.json`n  → Làm tiếp: xem tên task đang có: crew hot" }
   $worktree = $task.worktree
   if (-not [IO.Path]::IsPathRooted($worktree)) { $worktree = Join-Path $root $worktree }
   $prompt = Get-Content -LiteralPath (Join-Path $worktree '.crew/prompt.md') -Raw -Encoding UTF8
