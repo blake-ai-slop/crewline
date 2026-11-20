@@ -269,10 +269,25 @@ exit $LASTEXITCODE
     $third = Invoke-InTestHome $h $runner -Arguments $shellArgs
     $third.ExitCode | Should Be 0
     $third.Output | Should Match 'da o ban moi nhat: Crewline v15 \(commit \w+, khung context v11\)'
+    Set-Content (Join-Path $src 'VERSION') '15.1'
+    Invoke-Git $src add -A
+    Invoke-Git $src commit -qm v15.1
+    $patch = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $patch.ExitCode | Should Be 0
+    $patch.Output | Should Match 'cap nhat Crewline v15 -> v15\.1 \(commit \w+ -> \w+, khung context v11\)'
+
+    Set-Content (Join-Path $src 'VERSION') '15.01'
+    Set-Content (Join-Path $src 'skeleton/VERSION') '11.1'
+    Invoke-Git $src add -A
+    Invoke-Git $src commit -qm invalid
+    $invalid = Invoke-InTestHome $h $runner -Arguments $shellArgs
+    $invalid.ExitCode | Should Be 0
+    $invalid.Output | Should Match 'cap nhat Crewline v15\.1 -> ban cu \(commit \w+ -> \w+, khung context v11 -> v\?\)'
+
     Set-Content (Join-Path $dir 'scripts/crew.ps1') 'user edits'
     $dirty = Invoke-InTestHome $h $runner -Arguments $shellArgs
     $dirty.ExitCode | Should Be 0
-    $dirty.Output | Should Match 'skip git pull, still on old version Crewline v15 \(commit \w+, khung context v11\)'
+    $dirty.Output | Should Match 'skip git pull, still on old version Crewline ban cu \(commit \w+, khung context v\?\)'
     $dirty.Output | Should Match 'git -C .* status;.*git -C .* stash'
     (Get-Content (Join-Path $dir 'scripts/crew.ps1') -Raw).Trim() | Should Be 'user edits'
   }

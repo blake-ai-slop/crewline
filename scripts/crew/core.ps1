@@ -11,7 +11,7 @@ function Get-CrewVersion {
   $version = '?'
   try {
     $text = [IO.File]::ReadAllText($file).Trim()
-    if ($text -notmatch '\A[1-9][0-9]*\z') { throw 'cần một số nguyên dương' }
+    if ($text -notmatch '\A[1-9][0-9]*(\.[1-9][0-9]*)?\z') { throw 'cần phiên bản dạng N hoặc N.M, gồm các số nguyên dương không có số 0 đứng đầu' }
     $version = $text
   } catch { Write-Warning "Không đọc được VERSION '$file': $($_.Exception.Message)" }
   [pscustomobject]@{ Version = $version; Root = $root }

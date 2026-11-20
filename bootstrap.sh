@@ -19,7 +19,18 @@ crew_read_version() {
     esac
 }
 crew_product_version() {
-    crew_v=$(crew_read_version "$1/VERSION")
+    crew_v=''
+    if [ -f "$1/VERSION" ]; then
+        crew_v=$(LC_ALL=C awk '
+            NR == 1 { version = $0 }
+            NR > 1 { version = version "\n" $0 }
+            END {
+                sub(/^[[:space:]]+/, "", version)
+                sub(/[[:space:]]+$/, "", version)
+                if (version ~ /^[1-9][0-9]*([.][1-9][0-9]*)?$/) print version
+            }
+        ' "$1/VERSION") || crew_v=''
+    fi
     if [ -n "$crew_v" ]; then echo "v$crew_v"; else echo 'ban cu'; fi
 }
 crew_context_version() {

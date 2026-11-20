@@ -2,6 +2,15 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v15.1 — 2026-11-20 — chạy được với Codex 0.171 (bản vá)
+
+### Sửa
+- **Codex 0.171 (dòng gợi ý mới `← for agents · ? for shortcuts`) làm crew không nhận ra ô nhập** ⇒ `crew send`/`crew review`/`crew task` tới hội thoại Codex mới báo "chưa hiện ô nhập sẵn sàng" và không gửi. Nay nhận được dòng gợi ý có thêm mục phía trước.
+
+### Khác
+- Số phiên bản có dạng `15.1` cho bản vá lỗi; số chính chỉ tăng khi có tính năng mới.
+- Khung context không đổi (vẫn v13): cập nhật Crewline là đủ, không cần `crew upgrade`. Pane Codex đã thoát sau khi cập nhật Codex: `crew up -Restart <vai>`.
+
 ## v15 — 2026-11-19 — gửi tin tới Codex không kẹt khi sắp hết limit, chặn giao lại task đã xong
 
 ### Mới

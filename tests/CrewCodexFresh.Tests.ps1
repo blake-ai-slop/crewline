@@ -197,3 +197,47 @@ Describe 'Codex sau /new: cảnh báo limit trên ô nhập không phải hội 
     $pats[1] | Should Be $pats[0]
   }
 }
+
+# Codex 0.171 (GPT-6.2-Sol): dòng gợi ý dưới chân có mục phía trước '← for agents · ? for shortcuts' (demo, 2026-11-20).
+# Fixture chép nguyên màn hình thật (phiên đã có 1 lượt, Context 98%); phiên mới sạch dựng từ đầu phiên + ô + chân của nó.
+$AgentsHint = ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/codex-v0.166/new-session-agents-hint.txt')) -replace "`r`n", "`n").TrimEnd("`n")
+$AgentsRows = $AgentsHint -split "`n"
+$AgentsFresh = ((@($AgentsRows[0..4]) + '' + @($AgentsRows[-4..-1])) -join "`n").Replace('Context 98% left', 'Context 100% left')
+
+Describe 'Codex: dòng gợi ý có mục phía trước (← for agents · ? for shortcuts)' {
+  It 'màn hình thật: nhận ô nhập Codex trống (LF và CRLF)' {
+    $AgentsHint | Should Match '← for agents · \? for shortcuts'
+    foreach ($s in $AgentsHint, $AgentsHint.Replace("`n", "`r`n")) {
+      $box = Get-InputBox $s
+      $box.Kind | Should Be 'codex'
+      $box.Text | Should Be ''
+      Get-ScreenDialog $s | Should Be ''
+    }
+  }
+  It 'màn hình thật đã có hội thoại, Context 98% -> chưa phải phiên mới' {
+    Test-SessionReady 'codex' (New-Info) $AgentsHint | Should Be $false
+  }
+  It 'phiên mới sạch cùng chân/gợi ý -> sẵn sàng (Context 100%, hoặc không có Context, hoặc bỏ hẳn chân; LF và CRLF)' {
+    $noCtx = $AgentsFresh.Replace(' · Context 100% left', '')
+    $bare = ($AgentsFresh -split "`n" | Where-Object { $_ -notmatch 'GPT-6\.2-Sol' }) -join "`n"
+    foreach ($s in $AgentsFresh, $noCtx, $bare) {
+      (Get-InputBox $s).Kind | Should Be 'codex'
+      Test-SessionReady 'codex' (New-Info) $s | Should Be $true
+      Test-SessionReady 'codex' (New-Info) ($s.Replace("`n", "`r`n")) | Should Be $true
+    }
+    Test-SessionReady 'codex' (New-Info) ($noCtx.Replace('› Ask Codex', "• Xong.`n`n› Ask Codex")) | Should Be $false
+  }
+  It 'nhận dạng tổng quát <chữ> · trước gợi ý, kể cả tab to queue message' {
+    foreach ($h in '  ← for agents · ? for shortcuts', '  esc to interrupt · ← for agents · ? for shortcuts', '  ← for agents · tab to queue message', '  ? for shortcuts') {
+      $s = "› tin`n`n  GPT-6.2-Sol medium · Context 98% left`n$h"
+      (Get-InputBox $s).Text | Should Be 'tin'
+    }
+  }
+  It 'không nhận nhầm: tiền tố quá dài/quá nhiều mục, dòng prompt, hay thiếu dấu ·' {
+    foreach ($h in '  ← for agents ? for shortcuts', '  › ← for agents · ? for shortcuts',
+      '  a · b · c · d · ? for shortcuts', ('  ' + ('x' * 40) + ' · ? for shortcuts')) {
+      # Thiếu chân nhận dạng được (chỉ có dòng trống + gợi ý lạ) ⇒ không phải ô Codex
+      Get-InputBox "› tin`n`n$h" | Should BeNullOrEmpty
+    }
+  }
+}

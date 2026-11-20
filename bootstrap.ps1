@@ -34,14 +34,14 @@ function Invoke-CrewlineBootstrap {
   $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir)
 
   # VERSION = so phien ban Crewline; skeleton/VERSION = so khung context cua project.
-  function Read-VersionFile([string]$file) {
+  function Read-VersionFile([string]$file, [string]$pattern = '^[0-9]+$') {
     if (-not (Test-Path -LiteralPath $file)) { return '' }
     $v = ([IO.File]::ReadAllText($file)).Trim()
-    if ($v -match '^[0-9]+$') { return $v }
+    if ($v -match $pattern) { return $v }
     return ''
   }
   function Get-CrewlineVersion([string]$root) {
-    $v = Read-VersionFile (Join-Path $root 'VERSION')
+    $v = Read-VersionFile (Join-Path $root 'VERSION') '\A[1-9][0-9]*(\.[1-9][0-9]*)?\z'
     if ($v) { return "v$v" }
     return 'ban cu'
   }

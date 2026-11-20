@@ -127,7 +127,7 @@ function Show-StartupTrust($roles, $ops) {
 
 # Hàm thuần: ô nhập thường ở cuối màn hình, nhận theo khung đã thấy thật. Không chắc ⇒ $null.
 # Claude: ─── / ❯ chữ / ─── rồi chân (bypass permissions on, …). Codex: › chữ (dòng nối thụt 2, có thể thêm ≤3 dòng trống cuối ô), dòng trống, chân GPT-…, Context N% left hoặc 5h/weekly N% left.
-# Chân Codex do status_line của user quyết định, có thể bị cắt '…' hoặc bỏ hẳn: có dòng gợi ý '? for shortcuts' thì nhận mọi chân có ' · ', hoặc không có chân (gợi ý ngay sau dòng trống).
+# Chân Codex do status_line của user quyết định, có thể bị cắt '…' hoặc bỏ hẳn: có dòng gợi ý '? for shortcuts' (có thể có mục phía trước, vd. '← for agents · ') thì nhận mọi chân có ' · ', hoặc không có chân (gợi ý ngay sau dòng trống).
 # Ra @{ Kind = 'claude'|'codex'; Text = chữ trong ô ('' nếu trống/placeholder); Lines = các dòng của ô (chỉ Codex); After = các dòng dưới ô chưa rõ là gì }.
 function Get-InputBox([string]$screen) {
   $lines = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' } | ForEach-Object { $_.TrimEnd() })
@@ -149,7 +149,8 @@ function Get-InputBox([string]$screen) {
   if ($n -lt 2) { return $null }
   # Codex: dòng phụ dưới chân chỉ nhận các dạng đã thấy
   $f = $n
-  $hint = $lines[$f] -match '^\s*(\? for shortcuts|tab to queue message)'
+  # Codex mới có thể thêm mục phía trước gợi ý: '← for agents · ? for shortcuts' (0.171, GPT-6.2-Sol). Nhận ≤3 mục ngắn '<chữ> · '.
+  $hint = $lines[$f] -match '^\s*(?:[^\s·›][^·›]{0,30} · ){0,3}(\? for shortcuts|tab to queue message)'
   if ($hint) { $f-- }
   $foot = $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left|(^\s*|·\s*)(5h|weekly) \d+% left' -or ($hint -and $lines[$f] -match '\S · \S')
   if ($hint -and -not $lines[$f]) { $f++; $foot = $true }

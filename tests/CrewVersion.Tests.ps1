@@ -19,6 +19,13 @@ Describe 'crew version' {
     $r.Output | Should Match ([regex]::Escape($installRoot))
   }
 
+  It 'in nguyên phiên bản vá gồm hai phần' {
+    [IO.File]::WriteAllText($versionFile, '15.10')
+    $r = Invoke-InTestHome -TestHome $testHome -File $entry -Arguments @('version')
+    $r.ExitCode | Should Be 0
+    $r.Output | Should Match '(?m)^Crewline v15\.10$'
+  }
+
   It 'bản cài cũ thiếu VERSION: v? + cảnh báo, exit 0' {
     Remove-Item -LiteralPath $versionFile -Force
     $r = Invoke-InTestHome -TestHome $testHome -File $entry -Arguments @('version')
@@ -27,7 +34,7 @@ Describe 'crew version' {
     $r.Output | Should Match 'Không đọc được VERSION'
   }
 
-  foreach ($invalid in @('0', '-1', 'v13', "13`n14", '')) {
+  foreach ($invalid in @('0', '-1', 'v13', '015', '0.1', '15.0', '15.01', '15.1.2', '15x1', "13`n14", '')) {
     It "VERSION sai '$invalid': v? + cảnh báo, exit 0" {
       [IO.File]::WriteAllText($versionFile, $invalid)
       $r = Invoke-InTestHome -TestHome $testHome -File $entry -Arguments @('version')

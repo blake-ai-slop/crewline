@@ -155,17 +155,18 @@ if ($isUpdate) {
   $crewVersionFile = Join-Path $Repo 'VERSION'
   if (Test-Path -LiteralPath $crewVersionFile) {
     $text = [IO.File]::ReadAllText($crewVersionFile).Trim()
-    if ($text -match '^[1-9][0-9]*$') { $crewVersion = $text }
+    if ($text -match '\A[1-9][0-9]*(\.[1-9][0-9]*)?\z') { $crewVersion = $text }
   }
   Write-Host $(if ($crewVersion) { "== Cập nhật Crewline v$crewVersion" } else { '== Cập nhật Crewline' })
-  # Có gì mới: tối đa 3 gạch đầu dòng in đậm đầu tiên của mục "## v<N>" trong CHANGELOG.md.
+  # Có gì mới: tối đa 3 gạch đầu dòng in đậm đầu tiên của mục phiên bản trong CHANGELOG.md.
   $changelog = Join-Path $Repo 'CHANGELOG.md'
   if ($crewVersion -and (Test-Path -LiteralPath $changelog)) {
+    $versionHeading = "^## v$([regex]::Escape($crewVersion))(\s|$)"
     $news = @(); $inSection = $false
     foreach ($line in [IO.File]::ReadAllLines($changelog)) {
       if ($line -match '^## ') {
         if ($inSection) { break }
-        $inSection = $line -match "^## v$crewVersion(\s|$)"
+        $inSection = $line -match $versionHeading
         continue
       }
       if ($inSection -and $line -match '^\s*- \*\*') {
