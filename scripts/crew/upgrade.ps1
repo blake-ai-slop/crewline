@@ -140,9 +140,9 @@ function Update-InitSkeletonHashes([string]$root) {
 }
 
 # Khối tóm tắt cuối crew upgrade (thật và -DryRun).
-function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual, $keep, $openBlocks, [bool]$dry, [bool]$other) {
+function Write-UpgradeSummary([string]$old, [string]$version, $replace, $manual, $keep, $openBlocks, [bool]$dry, [bool]$other, [string]$crew = '?') {
   Write-Host ''
-  Write-Host "== crew upgrade$(if ($dry) { ' -DryRun' }): khung context v$old -> v$version"
+  Write-Host "== crew upgrade$(if ($dry) { ' -DryRun' }) (Crewline v$crew): khung context v$old -> v$version"
   if (-not $replace.Count -and -not $manual.Count -and -not $openBlocks.Count -and -not $other) {
     Write-Host "khung context đã ở v$version, không có gì để cập nhật."
     return
@@ -175,6 +175,7 @@ function Invoke-Upgrade {
   $context = Join-Path $root 'context'
   if (-not (Test-Path $context -PathType Container)) { Die 'chưa có context/.' 'chạy crew init trước' }
   $version = Get-SkeletonVersion
+  $crew = (Get-CrewVersion).Version
   $old = '0'
   $versionFile = Join-Path $context '.skeleton-version'
   if (Test-Path -LiteralPath $versionFile) {
@@ -184,7 +185,7 @@ function Invoke-Upgrade {
       Die 'context/.skeleton-version hỏng (phải là số nguyên dương) — không ghi gì.' @('git log -- context/.skeleton-version', 'Khôi phục file từ commit đúng.', 'git restore --source=<commit> -- context/.skeleton-version', 'crew upgrade')
     }
     if ($oldNumber -gt [int]$version) {
-      Die "project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$((Get-CrewVersion).Version), khung v$version < khung v$old của project)" @((Get-CrewInstallCommand), 'crew upgrade')
+      Die "project này đã được cập nhật bằng Crewline mới hơn bản đang cài (v$crew, khung v$version < khung v$old của project)" @((Get-CrewInstallCommand), 'crew upgrade')
     }
   }
   # Kiểm JSON/schema .crew/config.json trước mọi ghi (Update-ConfigName chạy sau khi đã ghi context).
@@ -327,7 +328,7 @@ function Invoke-Upgrade {
     foreach ($l in $ignoreAdd) { Say "sẽ thêm $l vào .gitignore." }
     if ($script:UpgradeWillWrite -and -not $NoCommit) { Confirm-GitIdentity $root $true $true }
     Say 'DryRun: không ghi file, không commit.'
-    Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $true ([bool]$other)
+    Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $true ([bool]$other) $crew
     return
   }
   foreach ($l in $ignoreAdd) {
@@ -344,7 +345,7 @@ function Invoke-Upgrade {
   else {
     Invoke-GitOrDie 'git add' -C $root add -- @files | Out-Null
     # Chỉ commit file upgrade, không kéo theo các file đã stage ngoài phạm vi.
-    Invoke-GitOrDie 'commit upgrade' -C $root commit -q --only -m "chore: crew upgrade context -> v$version" -- @files | Out-Null
+    Invoke-GitOrDie 'commit upgrade' -C $root commit -q --only -m "chore: crew upgrade (Crewline v$crew) context -> v$version" -- @files | Out-Null
   }
-  Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $false ([bool]$other)
+  Write-UpgradeSummary $old $version $groupReplace $groupManual $groupKeep $openBlocks $false ([bool]$other) $crew
 }

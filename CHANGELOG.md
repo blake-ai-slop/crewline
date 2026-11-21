@@ -2,6 +2,14 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v16.1 — 2026-11-21 — `crew upgrade` hiện cả số Crewline (bản vá)
+
+### Sửa
+- **`crew upgrade` chỉ in số khung context (vd `v13 -> v14`) nên dễ tưởng nhầm là Crewline chưa lên bản mới.** Nay dòng tóm tắt và commit tự tạo ghi cả hai: `== crew upgrade (Crewline v16.1): khung context v13 -> v14`, `chore: crew upgrade (Crewline v16.1) context -> v14`.
+
+### Khác
+- Khung context không đổi (vẫn v14): cập nhật Crewline là đủ, không cần `crew upgrade`.
+
 ## v16 — 2026-11-21 — Claude/Codex đổi giao diện không làm kẹt crew, bật lại gợi ý Claude ở planner
 
 ### Mới

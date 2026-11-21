@@ -59,8 +59,8 @@ Describe 'crew messages users can act on' {
   }
   It 'upgrade summary offers planner help and keeps DryRun instructions on separate lines' {
     . ([scriptblock]::Create((Get-CrewFunction 'Write-UpgradeSummary').Extent.Text))
-    $output = Write-UpgradeSummary 12 13 @() @('context/roles/worker.md') @() @() $true $false 6>&1 | Out-String
-    $output | Should Match 'khung context v12 -> v13'
+    $output = Write-UpgradeSummary 12 13 @() @('context/roles/worker.md') @() @() $true $false '16' 6>&1 | Out-String
+    $output | Should Match '== crew upgrade -DryRun \(Crewline v16\): khung context v12 -> v13'
     $output | Should Match 'hoặc nói với planner: gộp các file .new trong context/roles rồi xóa .new'
     $output | Should Match '\r?\n  crew upgrade\r?\n'
   }

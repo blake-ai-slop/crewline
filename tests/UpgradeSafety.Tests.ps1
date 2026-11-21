@@ -100,9 +100,9 @@ Describe 'crew upgrade an toàn' {
     # .new không commit, worktree sạch
     @(git -C $repo ls-files '*.new').Count | Should Be 0
     @(git -C $repo status --porcelain --untracked-files=all).Count | Should Be 0
-    (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$newVersion"
+    (git -C $repo log -1 --format=%s) | Should Match "^chore: crew upgrade \(Crewline v[0-9.]+\) context -> v$newVersion$"
     # khối tóm tắt
-    $r.Text | Should Match ([regex]::Escape("== crew upgrade: khung context v10 -> v$newVersion"))
+    $r.Text | Should Match ("== crew upgrade \(Crewline v[0-9.]+\): " + [regex]::Escape("khung context v10 -> v$newVersion"))
     $r.Text | Should Match 'Đã cập nhật \(\d+\): .*context/roles/rev\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới ở .new (2): context/roles/planner.md -> context/roles/planner.md.new, CLAUDE.md -> CLAUDE.md.new'))
     $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))
@@ -179,7 +179,7 @@ Describe 'crew upgrade an toàn' {
     $snap = Get-TreeSnapshot $repo
     $r = & $run $crewScript @('-DryRun')
     $r.ExitCode | Should Be 0
-    $r.Text | Should Match ([regex]::Escape("== crew upgrade -DryRun: khung context v10 -> v$newVersion"))
+    $r.Text | Should Match ("== crew upgrade -DryRun \(Crewline v[0-9.]+\): " + [regex]::Escape("khung context v10 -> v$newVersion"))
     $r.Text | Should Match 'Sẽ cập nhật \(\d+\): .*context/roles/worker\.md'
     $r.Text | Should Match ([regex]::Escape('Giữ bản của bạn, bản mới sẽ ở .new (1): context/roles/planner.md -> context/roles/planner.md.new'))
     $r.Text | Should Match ([regex]::Escape("git diff --no-index -- 'context/roles/planner.md' 'context/roles/planner.md.new'"))

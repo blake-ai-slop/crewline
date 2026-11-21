@@ -39,7 +39,7 @@ Describe 'crew upgrade' {
     (Get-Content "$repo/context/PROJECT.md" -Raw).Trim() | Should Be 'my project'
     (Get-Content "$repo/context/HOT.md" -Raw).Trim() | Should Be 'my hot'
     (Get-Content "$repo/context/.skeleton-version" -Raw).Trim() | Should Be $skeletonVersion
-    (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$skeletonVersion"
+    (git -C $repo log -1 --format=%s) | Should Match "^chore: crew upgrade \(Crewline v[0-9.]+\) context -> v$skeletonVersion$"
     @(git -C $repo show --name-only --format= HEAD | Where-Object { $_ -like '*.bak-*' -or $_ -like '*.new' -or $_ -eq 'context/roles/worker.md' }).Count | Should Be 0
     ($output -join "`n") | Should Match ([regex]::Escape('CẢNH BÁO: context/roles/worker.md đã sửa tay — bản mới ở context/roles/worker.md.new'))
     @(git -C $repo status --porcelain --untracked-files=all).Count | Should Be 0
@@ -59,7 +59,7 @@ Describe 'crew upgrade' {
     $result = Invoke-InTestHome -TestHome $h -File $crewScript -Env $testEnv -Arguments @('upgrade', '-Path', $repo)
     $output = $result.Output
     if ($result.ExitCode -ne 0) { throw "$output" }
-    (git -C $repo log -1 --format=%s) | Should Be "chore: crew upgrade context -> v$skeletonVersion"
+    (git -C $repo log -1 --format=%s) | Should Match "^chore: crew upgrade \(Crewline v[0-9.]+\) context -> v$skeletonVersion$"
     $committed = @(git -C $repo show --name-only --format= HEAD)
     $committed -ccontains '.gitignore' | Should Be $true
     $committed -ccontains 'context/roles/planner.md' | Should Be $false

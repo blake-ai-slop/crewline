@@ -14,7 +14,7 @@ ghi ra `<file>.new` bên cạnh (không commit), lệnh in `CẢNH BÁO: <file> 
 `-DryRun` không ghi file, không commit; cuối lệnh (thật hoặc `-DryRun`) in khối tóm tắt:
 
 ```text
-== crew upgrade: context v10 -> v11
+== crew upgrade (Crewline v16): khung context v10 -> v11
 Đã cập nhật (3): context/roles/rev.md, context/roles/worker.md, context/.skeleton-version (v10 -> v11)
 Giữ bản của bạn, bản mới ở .new (1): context/roles/planner.md -> context/roles/planner.md.new
 Giữ nguyên (3): context/README.md, CLAUDE.md (khối crew), AGENTS.md (khối crew)
@@ -22,7 +22,7 @@ Việc cần làm: mở từng cặp <file> và <file>.new, gộp phần mới v
 ```
 
 Không có gì thay đổi ⇒ một dòng `context đã ở v<N>, không có gì để cập nhật.` Bình thường lệnh commit
-`chore: crew upgrade context -> v<N>`. `-NoCommit` để bạn kiểm tra và commit sau.
+`chore: crew upgrade (Crewline v<M>) context -> v<N>`. `-NoCommit` để bạn kiểm tra và commit sau.
 Nếu `context/` có thay đổi chưa commit (kể cả file mới, trừ `*.bak-*`/`*.new`), lệnh từ chối, nêu file và lệnh để làm tiếp;
 `-Force` cho phép tiếp tục. Commit upgrade chỉ chứa các file được lệnh thay đổi; file đã stage ngoài phạm vi được giữ lại.
 
