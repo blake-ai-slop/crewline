@@ -84,3 +84,35 @@ Describe 'crew init personal defaults' {
     }
   }
 }
+
+. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($fn in 'Get-SuggestionMode', 'Test-SuggestionsOn') { . ([scriptblock]::Create((Get-CrewFunction $fn).Extent.Text)) }
+Describe 'config suggestions của project (.crew/config.json)' {
+  It 'thiếu ⇒ off (như cũ); planner chỉ bật pane planner; all bật mọi vai; giá trị sai ⇒ off' {
+    Get-SuggestionMode $null | Should Be 'off'
+    Get-SuggestionMode ' OFF ' | Should Be 'off'
+    Get-SuggestionMode 'planner' | Should Be 'planner'
+    Get-SuggestionMode 'ALL' | Should Be 'all'
+    Get-SuggestionMode 'true' | Should Be 'off'
+    foreach ($role in 'planner', 'rev', 'w1') { Test-SuggestionsOn 'off' $role | Should Be $false; Test-SuggestionsOn 'all' $role | Should Be $true }
+    Test-SuggestionsOn 'planner' 'planner' | Should Be $true
+    Test-SuggestionsOn 'planner' 'w3' | Should Be $false
+  }
+}
+
+Describe 'config assist (v16 screen-assist)' {
+  . (Join-Path $PSScriptRoot 'CrewAst.ps1')
+  . ([scriptblock]::Create((Get-CrewFunction 'Get-AssistMode').Extent.Text))
+  It 'off | ask | auto; thiếu hoặc sai ⇒ ask (mặc định)' {
+    Get-AssistMode 'off' | Should Be 'off'
+    Get-AssistMode 'Ask' | Should Be 'ask'
+    Get-AssistMode 'auto' | Should Be 'auto'
+    Get-AssistMode $null | Should Be 'ask'
+    Get-AssistMode 42 | Should Be 'ask'
+  }
+  It 'crew init không ghi assist (thiếu = ask); crew hot cảnh báo giá trị sai' {
+    $hot = (Get-CrewFunction 'Invoke-Hot').Extent.Text
+    $hot.Contains('assist=''$($cfg.assist)'' không hợp lệ (off | ask | auto)') | Should Be $true
+    $hot | Should Match 'planner hỗ trợ hôm nay'
+  }
+}

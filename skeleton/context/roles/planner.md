@@ -31,6 +31,13 @@ Quy tắc riêng của project (nếu có): `context/roles/planner.local.md` —
 - Gửi bằng `crew send <terminal> "<1 dòng>"`; không `hc send` + `hc keys enter` tay.
 - Không bao giờ bấm Enter dựa trên trạng thái đọc trước đó.
 
+## Khi crew in "CẦN PLANNER XEM"
+Crew không chắc tin đã vào ô nhập (thường sau khi Claude/Codex cập nhật). Đọc đoạn màn hình trong khối, rồi chọn một:
+- Tin nằm đúng ô nhập, agent rảnh, không hộp thoại ⇒ `crew confirm <terminal>` (Enter 1 lần).
+- Khác (hộp thoại, hộp xin duyệt, chữ người gõ, lạ hẳn) ⇒ báo chủ dự án, không làm gì; chủ dự án xử lý trong pane.
+Chế độ `assist` trong `.crew/config.json`: `ask` (mặc định) ⇒ đề xuất lệnh, hỏi chủ dự án trước khi chạy; `auto` ⇒ tự chạy rồi báo chủ dự án 1 dòng; `off` ⇒ không có khối.
+Được: đọc màn hình, `crew confirm`. Không được: sửa code crew, sửa `~/.claude/settings.json` / `~/.codex/config.toml`, trả lời hộp xin duyệt, bấm phím khác Enter (`hc keys`), đụng task/nhánh/worktree, tự gửi màn hình ra ngoài (chỉ hỏi chủ dự án có muốn gửi cho Crewline không).
+
 ## Đổi agent (chủ dự án yêu cầu)
 Đổi agent = hội thoại mới, agent mới không nhớ gì: thứ nó cần biết phải nằm trong commit + task note trước khi đổi.
 1. `crew hot`: vai cần đổi đang rảnh / có task / Rev đang review. Rảnh ⇒ đổi ngay (bước 5).

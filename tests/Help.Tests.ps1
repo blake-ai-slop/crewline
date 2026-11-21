@@ -5,7 +5,7 @@ $savedHelpEncoding = [Console]::OutputEncoding
 [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)
 $repo = Split-Path $PSScriptRoot -Parent
 $helpScript = Join-Path $repo 'scripts/help.ps1'
-$commandNames = @('version', 'setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'help')
+$commandNames = @('version', 'setup', 'doctor', 'init', 'upgrade', 'up', 'repair', 'task', 'queue', 'status', 'hot', 'lint', 'limits', 'check', 'review', 'send', 'clean', 'selfcheck', 'probe', 'confirm', 'help')
 
 # Chạy pwsh con, đọc stdout+stderr bằng UTF-8 qua ProcessStartInfo (không qua [Console]::OutputEncoding của tiến trình cha).
 function Invoke-PwshText([string[]]$Arguments) {
@@ -134,18 +134,18 @@ Describe 'crew help' {
     $result.Text | Should Not Match 'crew (task|check|review|send|clean|limits|selfcheck|repair)\b|Mẹo'
   }
 
-  It 'agent liệt kê đủ mười lệnh theo nhóm và thứ tự' {
+  It 'agent liệt kê đủ mười hai lệnh theo nhóm và thứ tự' {
     $result = Invoke-HelpPage 'agent'
     $result.ExitCode | Should Be 0
     $result.Text | Should Match '^Đây là lệnh planner, Rev dùng; người dùng thường không cần gõ\.'
-    $ordered = @('Giao việc', 'crew task', 'crew queue', 'crew limits', 'crew send', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'crew lint', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck')
+    $ordered = @('Giao việc', 'crew task', 'crew queue', 'crew limits', 'crew send', 'crew confirm', 'Kiểm và gộp', 'crew check', 'crew review', 'crew clean', 'crew lint', 'Chẩn đoán, phát hành', 'crew repair', 'crew selfcheck', 'crew probe')
     $previous = -1
     foreach ($item in $ordered) {
       $index = $result.Text.IndexOf($item)
       ($index -gt $previous) | Should Be $true
       $previous = $index
     }
-    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 10
+    ([regex]::Matches($result.Text, '(?m)^  crew ').Count) | Should Be 12
   }
 
   It 'status và hot dispatch cùng Invoke-Hot, không gọi hc thật' {
@@ -186,6 +186,43 @@ Describe 'crew help' {
     $text | Should Match ([regex]::Escape('<!-- /crew -->'))
     $text | Should Match '-DryRun in 3 nhóm'
     $text | Should Not Match 'sao lưu'
+  }
+
+  It 'up/hot/send nhắc config suggestions và phép thử gõ 1 phím' {
+    $up = (Invoke-HelpPage 'up').Text
+    $up | Should Match 'suggestions'
+    $up | Should Match 'off \(mặc định'
+    $up | Should Match 'crew up -Restart <vai>'
+    (Invoke-HelpPage 'hot').Text | Should Match 'có thể là gợi ý Claude'
+    (Invoke-HelpPage 'send').Text | Should Match 'gõ đúng 1 dấu cách để thử, không bao giờ bấm phím xóa'
+  }
+
+  It 'probe/confirm: terminal tạm, lưu màn hình, ghi bản đã kiểm; confirm chỉ Enter 1 lần khi không hộp thoại' {
+    $p = (Invoke-HelpPage 'probe').Text
+    $p | Should Match '^crew probe <claude\|codex>'
+    $p | Should Match 'terminal hc tạm'
+    $p | Should Match '~/\.crewline/probe/<agent>-<phiên bản>-<thời điểm>/'
+    $p | Should Match 'Luôn đóng terminal tạm'
+    $p | Should Match '~/\.crewline/agents\.json'
+    $p | Should Match 'crew confirm <terminal>'
+    $c = (Invoke-HelpPage 'confirm').Text
+    $c | Should Match '^crew confirm <terminal>'
+    $c | Should Match 'Enter đúng 1 lần'
+    $c | Should Match 'không bấm phím'
+    $c | Should Match 'crew review <task> -Sent'
+    (Invoke-HelpPage '').Text | Should Not Match 'crew (probe|confirm)'
+  }
+
+  It 'v16 assist-nolearn: không còn crew assist; confirm nói khối CẦN PLANNER XEM, 3 chế độ, không học mẫu' {
+    $c = (Invoke-HelpPage 'confirm').Text
+    $c | Should Match 'CẦN PLANNER XEM'
+    $c | Should Match 'off \(như cũ\) \| ask .* \| auto'
+    $c | Should Match 'không học kiểu màn hình'
+    $c | Should Match '\.crew/assist\.log'
+    $c | Should Not Match 'assist learn'
+    $r = Invoke-HelpPage 'assist'
+    $r.ExitCode | Should Be 1
+    (Invoke-HelpPage 'agent').Text | Should Not Match 'crew assist'
   }
 
   It 'crew help send nói rõ agent bận thì tin nằm chờ' {

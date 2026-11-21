@@ -20,7 +20,7 @@ function New-CrewTestHome {
 }
 
 # Chay `<Shell> -NoProfile -File <File> <Arguments>` (Shell mac dinh pwsh; powershell de thu 5.1) voi ho so nguoi dung tro vao $TestHome.
-# Luon dat CREWLINE_NO_PATH=1. -Env them bien moi truong khac. Tra @{ ExitCode; Output } (Output la chuoi gop stdout+stderr).
+# Luon dat CREWLINE_NO_PATH=1, CREWLINE_NO_UPDATE_CHECK=1, CREWLINE_AGENTS_FILE (cache agent gia trong HOME gia). -Env them bien moi truong khac. Tra @{ ExitCode; Output } (Output la chuoi gop stdout+stderr).
 function Invoke-InTestHome {
   param(
     [Parameter(Mandatory)][hashtable]$TestHome,
@@ -44,6 +44,14 @@ function Invoke-InTestHome {
     CREWLINE_USER_CONFIG = $null
     GIT_CONFIG_GLOBAL = Join-Path $TestHome.Home 'gitconfig'
     GIT_CONFIG_NOSYSTEM = '1'
+    # crew hot / loi gui tin: khong kiem Crewline public qua mang, khong goi claude/codex --version (cache hom nay da co, ban rong)
+    CREWLINE_NO_UPDATE_CHECK = '1'
+    CREWLINE_AGENTS_FILE = Join-Path $TestHome.Home 'agents-test.json'
+  }
+  if (-not (Test-Path -LiteralPath $vars.CREWLINE_AGENTS_FILE)) {
+    $day = Get-Date -Format 'yyyy-MM-dd'
+    $seed = [ordered]@{ claude = [ordered]@{ version = ''; checkedAt = $day }; codex = [ordered]@{ version = ''; checkedAt = $day } }
+    try { [IO.File]::WriteAllText($vars.CREWLINE_AGENTS_FILE, ($seed | ConvertTo-Json)) } catch { }
   }
   if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
     $vars.XDG_CONFIG_HOME = $TestHome.AppData

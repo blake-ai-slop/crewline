@@ -26,8 +26,14 @@ function Get-StuckText([string]$app, [string]$state, [string]$screen) {
   ''
 }
 
-function Get-PendingInput([string]$app, [string]$state, [string]$screen) {
+# $suggest = pane Claude bật gợi ý (config "suggestions"): crew hot chỉ đọc, không gõ phím thử (Test-GhostInput) ⇒ chữ trong ô nhập
+# Claude rảnh là 'maybe' (có thể là gợi ý), không phải tin kẹt. Pane tắt gợi ý giữ như cũ (Claude không báo).
+function Get-PendingInput([string]$app, [string]$state, [string]$screen, [bool]$suggest = $false) {
   if (Get-StuckText $app $state $screen) { return 'stuck' }
+  if ($suggest -and $app -in 'claude', 'claude-code' -and $state -notin 'working', 'blocked') {
+    $box = Get-InputBox $screen
+    if ($box -and $box.Kind -eq 'claude' -and $box.Text) { return 'maybe' }
+  }
   if ($state -ne 'working') { return '' }
   if ($app -in 'claude', 'claude-code') {
     $boxes = [regex]::Matches($screen, '(?m)^\s*─{8,}\s*\r?\n[>❯]\s*Press up to edit queued messages\s*\r?\n\s*─{8,}\s*$')
@@ -44,6 +50,7 @@ function Get-HotWarnings([string]$root, $cfg, $tasks, $terminals, $pending = @{}
   foreach ($name in @($pending.Keys | Sort-Object)) {
     if ($pending[$name] -eq 'stuck') { "${name}: tin kẹt ở ô nhập — sang pane ${name}: Enter để gửi hoặc xóa chữ" }
     elseif ($pending[$name] -eq 'queued') { "${name}: có tin chờ, agent đọc khi xong lượt" }
+    elseif ($pending[$name] -eq 'maybe') { "${name}: có chữ trong ô nhập (có thể là gợi ý Claude) — crew send tự phân biệt; chữ bạn gõ dở thì sang pane ${name} xử lý" }
   }
   $status = Invoke-GitQuiet -C $root status --porcelain
   $branch = (Invoke-GitQuiet -C $root branch --show-current).Text
@@ -79,8 +86,18 @@ function Invoke-Hot {
   $root = Get-Root (Resolve-Path $Path).Path; if (-not $root) { Die 'không phải repo git.' 'cd vào thư mục project rồi chạy lại: crew hot' }
   Show-CrewUpgradeWarning $root
   $cfg = Get-Config $root; $slug = Get-CrewName $root $cfg
+  try { Show-CrewAgentNotices $cfg } catch { }
   try { $mv = Get-MoveInfo $root $cfg } catch { $mv = $null }; if ($mv -and $mv.Moved) { Write-Host "crew: CẢNH BÁO: $($mv.Hint)" -ForegroundColor Yellow }
   Write-Host "== crew:$slug  review=$($cfg.review) access=$($cfg.access) planner=$($cfg.planner) workers=$($cfg.workers -join ',') rev=$($cfg.rev)"
+  $suggestMode = Get-SuggestionMode $cfg.suggestions
+  if ($null -ne $cfg.suggestions -and "$($cfg.suggestions)".Trim().ToLowerInvariant() -ne $suggestMode) {
+    Write-Host "crew: CẢNH BÁO: .crew/config.json suggestions='$($cfg.suggestions)' không hợp lệ (off | planner | all) — đang dùng off" -ForegroundColor Yellow
+  }
+  elseif ($suggestMode -ne 'off') { Write-Host "== gợi ý Claude: $suggestMode (đổi config chỉ áp cho pane bật lại: crew up -Restart <vai>)" }
+  if ($null -ne $cfg.assist -and "$($cfg.assist)".Trim().ToLowerInvariant() -ne (Get-AssistMode $cfg.assist)) {
+    Write-Host "crew: CẢNH BÁO: .crew/config.json assist='$($cfg.assist)' không hợp lệ (off | ask | auto) — đang dùng ask" -ForegroundColor Yellow
+  }
+  try { $assistToday = Get-AssistTodayCount $root; if ($assistToday -gt 0) { Write-Host "== planner hỗ trợ hôm nay: $assistToday lần (.crew/assist.log)" } } catch { }
   Write-Host "== git worktree list"; git -C $root worktree list
   Write-Host "== terminal"
   $terminals = try { @(Get-LiveTerminals) } catch { Write-Host "crew: CẢNH BÁO: $($_.Exception.Message) — không liệt kê được terminal." -ForegroundColor Yellow; @() }
@@ -123,10 +140,11 @@ function Invoke-Hot {
               $screen -match '(?m)^\s*[↓·] [1-9]\d* background tasks? running(?:\s*·[^\r\n]*)?\s*$'
           }
           if ($background -and $st.State -in 'idle', 'done', 'working') { $status = 'working (nền)' }
-          $inputState = Get-PendingInput $app $(if ($background) { 'working' } else { $st.State }) $screen
+          $suggestOn = $role -and (Test-SuggestionsOn $cfg.suggestions $role.Role)
+          $inputState = Get-PendingInput $app $(if ($background) { 'working' } else { $st.State }) $screen $suggestOn
           if ($inputState) {
             $pending[$_.name] = $inputState
-            if (-not $background) { $status = if ($inputState -eq 'queued') { 'tin chờ' } else { 'tin kẹt' } }
+            if (-not $background) { $status = switch ($inputState) { 'queued' { 'tin chờ' } 'maybe' { 'có chữ' } default { 'tin kẹt' } } }
           }
         }
       }

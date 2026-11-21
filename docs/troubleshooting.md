@@ -21,11 +21,25 @@ Khi hiện `Chờ bạn bấm "trust thư mục" (crew không tự bấm)`, sang
 
 Nếu `crew hot` hiện `tin kẹt`, hoặc `crew send` báo `có tin kẹt ở ô nhập, chưa gửi tin mới` và exit 1, sang đúng pane đó. Đọc nội dung rồi Enter để gửi hoặc xóa chữ đang có, sau đó gửi lại tin mới. `crew review` cũng chặn trường hợp này. Crew không tự gửi chồng hoặc xóa bản nháp; Codex đang working còn có cơ chế queue riêng, xem [tin kẹt ở ô nhập Codex](herdr-windows.md#tin-kẹt-ở-ô-nhập-codex).
 
+## Crew không chắc tin đã vào ô nhập (Unsure send, crew confirm)
+
+Dấu hiệu: `crew send`/`crew review` báo `không nhận ra ô nhập để kiểm tin`, `agent chưa chạy` hoặc review "chưa chắc Rev đã nhận". Crew không bấm Enter khi không chắc, vì Enter có thể trả lời hộ một hộp thoại. Xem màn hình: `hc read <terminal> --lines 20`. Tin nằm đúng ô nhập, agent rảnh, không có hộp thoại ⇒ `crew confirm <terminal>`: crew đọc màn hình 1 lần và bấm Enter đúng 1 lần; với Rev còn ghi review đã gửi (như `crew review <task> -Sent`). Có hộp thoại/ô trống ⇒ crew confirm từ chối, không bấm phím.
+
+Thường gặp sau khi Claude Code/Codex cập nhật giao diện. Kiểm bản đang cài: `crew probe claude` hoặc `crew probe codex` mở một terminal tạm, thử các bước crew dùng (phiên mới, gõ tin + kiểm ô nhập + Enter, chờ xong lượt, `/clear`/`/new`), in bảng đạt/hụt và lưu màn hình ở `~/.crewline/probe/`. Có hụt ⇒ cập nhật Crewline; trong lúc chờ dùng `crew confirm`.
+
+Planner hỗ trợ (`"assist"` trong `.crew/config.json`: `"ask"` mặc định, `"auto"`, `"off"`): khi crew không chắc, nó không bấm phím mà in khối `CẦN PLANNER XEM` gồm 20–40 dòng màn hình, agent + phiên bản, lý do và lệnh `crew confirm <terminal>`. Planner đọc khối đó: tin nằm đúng ô nhập, agent rảnh, không hộp thoại ⇒ `crew confirm <terminal>` (Enter 1 lần); khác (hộp xin duyệt, hộp lạ, ô còn chữ khác) ⇒ bạn xử lý trong pane rồi gửi lại. Ở `ask` planner hỏi bạn trước khi chạy; ở `auto` planner tự chạy rồi báo bạn 1 dòng; `off` như cũ (không khối).
+
+Crew không học hay ghi nhớ kiểu màn hình nào: mọi nhận diện màn hình là ghi cứng trong code, bản agent mới chỉ được hỗ trợ khi cập nhật Crewline. Nhật ký: `.crew/assist.log` (shown/confirmed); `crew status` in số lần planner hỗ trợ hôm nay. Crew không tự gửi màn hình đi đâu — muốn Crewline hỗ trợ bản mới, bạn tự gửi màn hình mẫu.
+
 ## Gợi ý của Claude bị coi là tin kẹt (Claude prompt suggestion)
 
-Dấu hiệu: `crew task`, `crew queue -Run` hoặc `crew repair` báo `có tin kẹt ở ô nhập` với pane Claude, nhưng không ai gõ dòng đó (vd. `❯ chạy tests rồi báo kết quả`). Đó là gợi ý câu kế tiếp, chữ mờ, của Claude Code; `hc read` không có màu nên crew không phân biệt được với chữ thật. Gõ rồi xóa thì gợi ý hiện lại, nên xóa tay không gỡ được lâu.
+Dấu hiệu: `crew task`, `crew queue -Run` hoặc `crew repair` báo `có tin kẹt ở ô nhập` với pane Claude, nhưng không ai gõ dòng đó (vd. `❯ chạy tests rồi báo kết quả`). Đó là gợi ý câu kế tiếp, chữ mờ, của Claude Code; `hc read` không có màu nên chỉ đọc màn hình thì không phân biệt được với chữ thật. Gõ rồi xóa thì gợi ý hiện lại, nên xóa tay không gỡ được lâu.
 
-Cách gỡ: bật lại pane đó bằng `crew up -Restart <vai>` (vd. `crew up -Restart w1`; worker đang có task cần thêm `-Force`). Pane do bản crew mới bật đã tự tắt gợi ý bằng biến môi trường `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, chỉ trong pwsh của pane đó; crew không sửa `~/.claude/settings.json`. Crew không tự xóa hoặc ghi đè ô nhập.
+Mặc định pane do crew bật tắt gợi ý bằng biến môi trường `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, chỉ trong pwsh của pane đó; crew không sửa `~/.claude/settings.json`. Pane bật trước bản này có thể còn gợi ý: bật lại bằng `crew up -Restart <vai>` (vd. `crew up -Restart w1`; worker đang có task cần thêm `-Force`).
+
+Muốn giữ gợi ý (vd. ở planner bạn trò chuyện trực tiếp), đặt `"suggestions"` trong `.crew/config.json`: `"off"` (mặc định), `"planner"` (chỉ pane planner) hoặc `"all"`. Pane đang mở không đổi tới khi `crew up -Restart <vai>`.
+
+Với pane Claude có chữ trong ô nhập, `crew send` và `crew task` thử bằng **một phím**: gõ đúng 1 dấu cách rồi đọc lại; crew không bao giờ bấm phím xóa. Gợi ý biến mất khi gõ dấu cách ⇒ ô thật trống, crew gửi tin bình thường (tin đứng sau dấu cách đó). Chữ còn ⇒ chữ bạn gõ, crew chặn như tin kẹt; chữ của bạn giữ nguyên, chỉ thêm 1 dấu cách ở cuối. Pane đổi trong lúc kiểm (bạn gõ tiếp, hộp duyệt hiện…) ⇒ crew dừng, không bấm thêm phím. Đây là phím duy nhất crew gõ ngoài tin của nó. `crew hot` chỉ đọc nên với pane bật gợi ý chỉ ghi `có chữ trong ô nhập (có thể là gợi ý Claude)`. Crew không tự xóa hoặc ghi đè ô nhập.
 
 ## Git chưa có tên hoặc email (Missing Git identity)
 

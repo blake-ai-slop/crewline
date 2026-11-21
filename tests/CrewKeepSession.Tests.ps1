@@ -1,9 +1,10 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($ghostFn in 'Get-SuggestionMode', 'Test-SuggestionsOn', 'Get-SuggestionEnvLine') { . ([scriptblock]::Create((Get-CrewFunction $ghostFn).Extent.Text)) }
 foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Test worker giữ phiên (worktree cố định w<N>): trích hàm bằng AST từ crew.ps1, repo git tạm trong $TestDrive, hc giả tiêm qua $ops — không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$want = 'Get-WorkerInputError', 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Get-DoneTasks', 'Save-DoneTask', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
+$want = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-WorkerInputError', 'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Get-DoneTasks', 'Save-DoneTask', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Get-MainBranch',
   'Initialize-WorkerTree', 'Get-RestartTargets', 'Get-WorkerStartLine', 'Get-Flags', 'Quote', 'Get-AgentCommand', 'Get-TermStatus',
   'Get-SendPlan', 'Invoke-SendFlow', 'Get-WorkerMode', 'Get-TermShellState', 'Test-SessionReady', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-TaskLine', 'Format-DirtyFiles', 'Initialize-TaskBranch', 'Send-WorkerTask',
   'Start-WorkerTask', 'Remove-TaskBranch', 'Remove-TaskGit', 'Test-KeepTask', 'Reset-WorkerTree', 'New-TaskRecord',

@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($ghostFn in 'Get-SuggestionMode', 'Test-SuggestionsOn', 'Get-SuggestionEnvLine') { . ([scriptblock]::Create((Get-CrewFunction $ghostFn).Extent.Text)) }
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/platform.ps1')
 foreach ($shared in 'Get-CrewInstallCommand', 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Hàm thật trích AST, Git thật trong TestDrive; terminal/sổ giả, không đọc màn hình.
@@ -153,6 +154,29 @@ Describe 'crew hot cảnh báo chỉ đọc' {
     $output = Invoke-Hot 6>&1 | Out-String
     $output | Should Match '== Cảnh báo'
     $output | Should Match 'bản chép.*crew init -Name'
+  }
+  It 'agent mới hơn bản đã kiểm và Crewline public mới hơn: mỗi thứ 1 dòng vàng, không chặn, không gọi mạng' {
+    foreach ($fn in 'Get-CrewTestedAgents', 'Get-CrewAgentsFile', 'Read-CrewAgentsFile', 'Set-CrewAgentsEntry', 'Compare-CrewVersion', 'Get-CrewAgentKey', 'Get-AgentInstalledVersion', 'Get-AgentTestedVersion', 'Get-AgentVersionNotice', 'Get-CrewPublicVersionUrl', 'Get-CrewUpdateNotice', 'Show-CrewAgentNotices', 'Write-CrewStateFile') { . ([scriptblock]::Create((Get-CrewFunction $fn).Extent.Text)) }
+    function Invoke-CrewFetch { $script:fetched++; '99' }
+    function Get-CrewVersion { [pscustomobject]@{ Version = '15.1' } }
+    $script:fetched = 0
+    $savedFile = $env:CREWLINE_AGENTS_FILE; $savedNoCheck = $env:CREWLINE_NO_UPDATE_CHECK
+    try {
+      $env:CREWLINE_AGENTS_FILE = Join-Path $TestDrive "$([guid]::NewGuid().ToString('N'))/agents.json"
+      $env:CREWLINE_NO_UPDATE_CHECK = $null
+      $today = Get-Date -Format 'yyyy-MM-dd'
+      New-Item -ItemType Directory -Force (Split-Path $env:CREWLINE_AGENTS_FILE) | Out-Null
+      [IO.File]::WriteAllText($env:CREWLINE_AGENTS_FILE, (@{ codex = @{ version = '99.0.0'; checkedAt = $today } } | ConvertTo-Json))
+      $output = Invoke-Hot 6>&1 | Out-String
+      $output | Should Match ([regex]::Escape("crew: Codex 99.0.0 mới hơn bản Crewline này đã kiểm ($((Get-CrewTestedAgents).codex)) — nếu crew không gửi được tin: cập nhật Crewline ($(Get-CrewInstallCommand)) hoặc báo planner"))
+      $output | Should Match ([regex]::Escape("crew: Có Crewline v99: cập nhật bằng $(Get-CrewInstallCommand)"))
+      $output | Should Match '== task'
+      $script:fetched | Should Be 1
+      $env:CREWLINE_NO_UPDATE_CHECK = '1'
+      $output = Invoke-Hot 6>&1 | Out-String
+      $output | Should Not Match 'Có Crewline'
+      $script:fetched | Should Be 1
+    } finally { $env:CREWLINE_AGENTS_FILE = $savedFile; $env:CREWLINE_NO_UPDATE_CHECK = $savedNoCheck }
   }
 }
 

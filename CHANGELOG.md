@@ -2,6 +2,24 @@
 
 Mới nhất ở trên. Cập nhật Crewline: chạy lại lệnh cài 1 dòng, rồi `crew upgrade` trong từng project.
 
+## v16 — 2026-11-21 — Claude/Codex đổi giao diện không làm kẹt crew, bật lại gợi ý Claude ở planner
+
+### Mới
+- **Gợi ý chat của Claude ở tab planner:** thêm `"suggestions": "planner"` vào `.crew/config.json` rồi `crew up -Restart planner`. Crew tự phân biệt gợi ý mờ với chữ bạn đang gõ: gợi ý ⇒ tin vẫn gửi được; chữ bạn gõ dở ⇒ crew dừng, không xóa gì (chỉ có thể thêm 1 dấu cách).
+- **Crew báo khi Claude/Codex mới hơn bản đã kiểm** và khi có Crewline mới (`crew hot`, kiểm 1 lần/ngày; tắt bằng `CREWLINE_NO_UPDATE_CHECK=1`).
+- **`crew probe claude|codex`:** sau khi cập nhật agent, kiểm nhanh crew còn giao việc được không (mở tab tạm, tự dọn).
+- **Khi crew không chắc tin đã nằm đúng ô nhập:** in khối "CẦN PLANNER XEM" ở tab planner; xem xong dùng `crew confirm <terminal>` để bấm Enter 1 lần. Config `"assist"`: `off` | `ask` (mặc định, planner hỏi bạn) | `auto` (planner tự xử lý rồi báo 1 dòng).
+
+### Sửa
+- Nhận ô nhập bằng cách so màn hình trước/sau khi dán ⇒ dòng gợi ý/chân/cảnh báo mới của Codex/Claude không còn làm kẹt việc gửi tin.
+- Crew không bao giờ bấm phím khi có hộp thoại/xin duyệt, chữ lạ trong hoặc dưới ô nhập, hoặc pane đổi trong lúc kiểm.
+- Hộp trust kiểu mới của Codex 0.171 (`Back to Agent Command Center`) khi bật agent ở thư mục mới.
+- `Context: 90% left` (có dấu hai chấm) được nhận là hội thoại cũ.
+
+### Khác
+- **Khung context lên v14** (role planner có mục "Khi crew in CẦN PLANNER XEM"): sau khi cập nhật Crewline, chạy `crew upgrade` trong từng project. Role đã sửa tay ⇒ giữ bản của bạn, bản mới ở `.new`.
+- Bản agent đã kiểm: Claude Code 2.1.330, Codex 0.171.0.
+
 ## v15.1 — 2026-11-20 — chạy được với Codex 0.171 (bản vá)
 
 ### Sửa

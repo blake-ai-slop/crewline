@@ -1,10 +1,11 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($ghostFn in 'Get-SuggestionMode', 'Test-SuggestionsOn', 'Get-SuggestionEnvLine') { . ([scriptblock]::Create((Get-CrewFunction $ghostFn).Extent.Text)) }
 foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # AST + hc giả; không gọi terminal thật.
 
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
-$want = 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished',
+$want = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-TermStatus', 'Get-SendPlan', 'Get-WorkerMode', 'Get-TermShellState', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Wait-WorkerReady', 'Invoke-SendFlow', 'Show-StartupTrust', 'Invoke-Up', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished',
   'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner', 'Get-ForeignTermError', 'Test-FolderOwner', 'Get-ForeignSpaceError', 'Get-PendingInput'
 $want += 'Get-SessionsFile', 'New-SessionBook', 'Test-SessionId', 'Read-SessionBook', 'Save-SessionBook', 'Set-SessionRecord', 'Get-NewSessionPlan', 'Get-SessionPlan', 'Format-SessionPlan', 'Test-AgentScreen', 'Get-ResumeState', 'Wait-ResumeStates'
 $want += 'Get-SelfTerm', 'Get-SelfPaneState'
@@ -62,6 +63,18 @@ Describe 'trust thư mục' {
     Get-ScreenDialog "$Picker`n$CodexTrust" | Should Be 'other'
     Get-ScreenDialog $Picker | Should Be 'codex-new'
     Get-ScreenDialog 'Do you want to proceed?' | Should Be 'other'
+  }
+  It 'Codex 0.171 (màn hình thật từ crew probe): trust mới nhận là trust, phím vẫn Enter; hộp lạ kèm theo vẫn other' {
+    $real = ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/probe-v16/codex-0.171-trust.txt')) -replace "`r`n", "`n" -replace '^﻿', '').TrimEnd("`n")
+    Get-ScreenDialog $real | Should Be 'trust'
+    Get-ScreenDialog ($real -replace "`n", "`r`n") | Should Be 'trust'
+    Get-ScreenDialog "$real`nAllow command" | Should Be 'other'
+    Get-ScreenDialog "$real`n  Do you want to proceed?" | Should Be 'other'
+    Get-ScreenDialog ($real -replace 'esc back', 'esc back (y/n)') | Should Be 'other'
+    $ops = New-TrustOps @{ t = $real } @{ t = (New-TrustInfo 'codex') }
+    $why = Wait-WorkerReady 't' 'codex' $ops 1
+    $why | Should Match 'trust thư mục — bấm trong pane: Enter \(hoặc: hc keys t enter\)'
+    $ops.State.Keys | Should Be 0
   }
   It 'SendFlow không Enter với trust, cả tin thường và /new' {
     foreach ($screen in @($ClaudeTrust, $CodexTrust)) {

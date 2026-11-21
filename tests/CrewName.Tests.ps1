@@ -1,4 +1,5 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($ghostFn in 'Get-SuggestionMode', 'Test-SuggestionsOn', 'Get-SuggestionEnvLine') { . ([scriptblock]::Create((Get-CrewFunction $ghostFn).Extent.Text)) }
 foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tên crew duy nhất theo project: slug, sổ ~/.crewline/projects.json (HOME giả / file trong $TestDrive), kiểm chủ terminal theo cwd.
 # Hàm trích bằng AST từ crew.ps1, hc giả — không gọi hc thật. Init chạy e2e qua Invoke-InTestHome (HOME giả).
@@ -8,7 +9,7 @@ $OnWindows = $PSVersionTable.PSEdition -ne 'Core' -or $IsWindows
 
 # Invoke-Up gọi; stub để không đọc stdin hay config git của máy chạy test (danh tính git test ở CrewGitIdentity).
 function Confirm-GitIdentity { }
-$want = 'Get-WorkerInputError', 'Get-LegacySlug', 'Get-Slug', 'Get-FreshCrewName', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
+$want = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-WorkerInputError', 'Get-LegacySlug', 'Get-Slug', 'Get-FreshCrewName', 'Test-CrewName', 'Get-CrewName', 'ConvertTo-RootKey', 'Test-SamePath', 'Test-TermOwner',
   'Get-ForeignTermError', 'Read-ProjectRegistry', 'Save-ProjectRegistry', 'Get-NameOwner', 'Resolve-CrewName', 'Register-CrewName',
   'Get-NameConflict', 'Update-ConfigName', 'Get-Config', 'Invoke-Up', 'Invoke-Send', 'Send-CrewMessage', 'Get-MainRoot',
   'Invoke-GitQuiet', 'Invoke-GitOrDie', 'Get-Tasks', 'Save-Tasks', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Update-Tasks', 'Test-WorktreeListed', 'Get-WorkerTree', 'Initialize-WorkerTree',

@@ -1,8 +1,9 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
+foreach ($ghostFn in 'Get-SuggestionMode', 'Test-SuggestionsOn', 'Get-SuggestionEnvLine') { . ([scriptblock]::Create((Get-CrewFunction $ghostFn).Extent.Text)) }
 foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFile', 'Use-CrewStateLock', 'Get-CrewVersion', 'Show-CrewUpgradeWarning', 'Get-SkeletonVersion') { . ([scriptblock]::Create((Get-CrewFunction $shared).Extent.Text)) }
 # Tin kẹt ở ô nhập + nhận nhầm hộp thoại: hàm thật qua AST, hc giả. Fixture Codex lấy từ màn hình thật 2026-11-02 (hc 0.1.16, codex-cli 0.166.0).
 
-$want = 'Get-WorkerInputError', 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Test-SessionReady', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review', 'Update-Tasks'
+$want = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-WorkerInputError', 'Get-InputBox', 'Get-StuckText', 'Get-PendingInput', 'Get-ScreenDialog', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Test-SentInput', 'Send-CodexQueue', 'Test-SessionReady', 'Send-CrewMessage', 'Get-HotWarnings', 'Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished', 'Get-WorkerMode', 'Get-RevGuard', 'Invoke-Review', 'Update-Tasks'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }

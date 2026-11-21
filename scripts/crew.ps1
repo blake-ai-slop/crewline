@@ -77,7 +77,7 @@ $InitParameters = $PSBoundParameters
 $CrewScriptsDir = $PSScriptRoot
 $CrewScriptPath = $PSCommandPath
 # Các nhóm hàm (thứ tự cố định, không glob).
-foreach ($crewPart in 'core', 'identity', 'name', 'herdr', 'sessions', 'init', 'upgrade', 'up', 'task', 'queue', 'hot', 'repair', 'move', 'selfpane', 'limits', 'clean', 'send') {
+foreach ($crewPart in 'core', 'identity', 'name', 'herdr', 'sessions', 'init', 'upgrade', 'up', 'task', 'queue', 'hot', 'agents', 'repair', 'move', 'selfpane', 'limits', 'clean', 'send', 'probe', 'assist') {
   . (Join-Path $PSScriptRoot "crew/$crewPart.ps1")
 }
 Remove-Variable crewPart
@@ -102,7 +102,7 @@ if ($Command -ne 'queue' -and ($After -or $Run -or $Remove -or $InitParameters.C
 
 # Cờ chung mà lệnh không dùng thì bị bỏ qua lặng lẽ ⇒ chặn -DryRun ở lệnh không có nó (vd. crew task -DryRun từng giao thật).
 # Lệnh có -DryRun (đọc từ code): up, upgrade, repair, review, queue (-Run). Lệnh lạ để default báo "không có lệnh".
-$CrewCommands = 'version','setup','doctor','init','upgrade','up','task','queue','status','hot','lint','limits','clean','send','review','check','selfcheck','repair','help'
+$CrewCommands = 'version','setup','doctor','init','upgrade','up','task','queue','status','hot','lint','limits','clean','send','review','check','selfcheck','repair','probe','confirm','help'
 if ($DryRun -and $Command -in $CrewCommands) {
   $dryHint = 'Lệnh có -DryRun: crew up, crew upgrade, crew repair, crew review <task>, crew queue -Run'
   if ($Command -eq 'queue' -and -not $Run) { Die 'crew queue chỉ có -DryRun khi đi với -Run (xem trước việc giao hàng đợi); xếp/bỏ/liệt kê không có -DryRun.' @('xem trước: crew queue -Run -DryRun', 'Hoặc bỏ -DryRun rồi chạy lại crew queue') }
@@ -151,6 +151,8 @@ switch ($Command) {
   'clean' { Invoke-Clean }
   'send' { Invoke-Send }
   'review' { Invoke-Review }
+  'probe' { Invoke-ProbeCommand }
+  'confirm' { Invoke-Confirm; try { Add-AssistConfirmLog $Name } catch { } }
   'check' { & (Join-Path $PSScriptRoot 'check.ps1') -Name $Name -Path $Path -NoTest:$NoTest; exit $LASTEXITCODE }
   'selfcheck' { & (Join-Path $PSScriptRoot 'selfcheck.ps1'); exit $LASTEXITCODE }
   'repair' { Invoke-Recover $false }
@@ -170,6 +172,8 @@ switch ($Command) {
     $next = @('xem danh sách: crew help')
     $near = Get-CrewCommandSuggestion $Command $CrewCommands
     if ($near) { $next += "ý bạn là: crew ${near}?" }
+    # v16: 'crew assist learn|list|remove' đã bỏ (không còn mẫu học) — tin đúng ô nhập thì dùng crew confirm
+    if ($Command -eq 'assist') { $next = @("tin nằm đúng ô nhập: crew confirm <terminal>") + $next }
     Die "không có lệnh '$Command'" $next
   }
 }

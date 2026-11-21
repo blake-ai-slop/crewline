@@ -229,3 +229,50 @@ function Read-GitInitChoice([string]$title, [string]$label) {
   $options = @((New-Option 'yes' $label -Alias 'y', 'yes'), (New-Option 'no' 'Thôi' -Alias 'n', 'no'))
   Read-Choice $title $options 'yes' -NoStep -NullOnEof
 }
+
+# ---------------- gợi ý Claude (config "suggestions") ----------------
+# .crew/config.json "suggestions": "off" (mặc định: mọi pane tắt gợi ý câu kế tiếp của Claude Code) | "planner" (pane planner bật) | "all".
+# Hàm thuần: giá trị config ⇒ chế độ; thiếu ⇒ 'off', sai ⇒ 'off' (crew hot cảnh báo giá trị sai).
+function Get-SuggestionMode($value) {
+  $v = "$value".Trim().ToLowerInvariant()
+  if ($v -in 'off', 'planner', 'all') { return $v }
+  'off'
+}
+
+# Hàm thuần: vai ('planner' | 'rev' | 'w<N>') có bật gợi ý Claude không, theo giá trị config.
+function Test-SuggestionsOn($value, [string]$role) {
+  $m = Get-SuggestionMode $value
+  $m -eq 'all' -or ($m -eq 'planner' -and $role -eq 'planner')
+}
+
+# Pane hc tên '<crew>-<vai>' chạy ở $cwd (root hoặc worktree w<N>) có bật gợi ý không: đọc .crew/config.json của repo chính.
+# Không Die: thiếu config/JSON hỏng/không phải git ⇒ $false (tắt như cũ).
+function Test-PaneSuggestions([string]$name, [string]$cwd) {
+  if ($name -notmatch '-(planner|rev|w\d+)$') { return $false }
+  $role = $Matches[1]
+  try {
+    $r = Invoke-GitQuiet -C $cwd rev-parse --path-format=absolute --git-common-dir
+    if ($r.Code -ne 0 -or -not $r.Text) { return $false }
+    $file = Join-Path (Split-Path $r.Text -Parent) '.crew/config.json'
+    if (-not (Test-Path -LiteralPath $file)) { return $false }
+    $cfg = Read-CrewState $file -ThrowOnError
+    return [bool](Test-SuggestionsOn $cfg.suggestions $role)
+  } catch { return $false }
+}
+
+# Đoạn lệnh pwsh đặt đầu lệnh bật agent (Start-Term, task.ps1 bật agent trong shell): chỗ DUY NHẤT dựng biến gợi ý.
+# Tắt: CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false (gợi ý mờ nằm trong ô nhập, hc read không có màu ⇒ giống tin kẹt).
+# Bật: xóa biến (pane crew cha có thể đã truyền 'false'). Chỉ trong pwsh của pane; crew không sửa ~/.claude/settings.json.
+function Get-SuggestionEnvLine([bool]$on) {
+  if ($on) { return "Remove-Item Env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION -ErrorAction Ignore; " }
+  "`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; "
+}
+
+# ---------------- planner hỗ trợ khi crew không chắc (config "assist", v16 screen-assist) ----------------
+# .crew/config.json "assist": "off" (như cũ: không in khối) | "ask" (mặc định: in khối "CẦN PLANNER XEM",
+# planner đề xuất, chờ chủ dự án) | "auto" (planner tự quyết rồi báo chủ dự án 1 dòng). Hàm thuần: thiếu/sai ⇒ 'ask' (crew hot cảnh báo sai).
+function Get-AssistMode($value) {
+  $v = "$value".Trim().ToLowerInvariant()
+  if ($v -in 'off', 'ask', 'auto') { return $v }
+  'ask'
+}

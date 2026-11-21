@@ -60,7 +60,7 @@ function Get-WorkerMode($info, [string]$kind) {
 
 # Hàm thuần: phiên mới đã sẵn sàng sau /clear (claude) hoặc /new (codex)? $screen = chữ màn hình (hc read).
 # Mọi hộp thoại trên màn hình (kể cả hộp chọn của /new) ⇒ chưa sẵn sàng, dù marker sẵn sàng cũng có mặt.
-# Codex: chân còn 'Context N% left' thì N = 100. Không còn (status_line của user bỏ mục này hoặc chân bị cắt '…'): phải thấy
+# Codex: chân còn 'Context N% left' (hoặc 'Context: N% left') thì N = 100. Không còn (status_line của user bỏ mục này hoặc chân bị cắt '…'): phải thấy
 # dòng đầu phiên '>_ OpenAI Codex (v…)', ô nhập trống (placeholder) và giữa hai thứ không có dòng hội thoại nào
 # (› tin người gửi, • trả lời/lệnh agent, └ kết quả, ■ lỗi, ⚠). Dòng đầu phiên còn trên màn hình nghĩa là cả hội thoại
 # hiện đủ ⇒ phiên cũ còn tin luôn lộ dấu hội thoại. Thấy thật Codex 0.166 sau /new: đầu phiên, logo, ô trống, chân cắt.
@@ -71,7 +71,7 @@ function Test-SessionReady([string]$kind, $info, [string]$screen) {
   if ($st.State -in 'working', 'blocked') { return $false }
   if (Get-ScreenDialog $screen) { return $false }
   if ($kind -eq 'codex') {
-    if ("$screen" -match 'Context (\d+)% left') { return $Matches[1] -eq '100' }
+    if ("$screen" -match 'Context:? (\d+)% left') { return $Matches[1] -eq '100' }
     $box = Get-InputBox $screen
     if (-not $box -or $box.Kind -ne 'codex' -or $box.Text) { return $false }
     $rows = @("$screen" -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' })
@@ -152,7 +152,7 @@ function Get-InputBox([string]$screen) {
   # Codex mới có thể thêm mục phía trước gợi ý: '← for agents · ? for shortcuts' (0.171, GPT-6.2-Sol). Nhận ≤3 mục ngắn '<chữ> · '.
   $hint = $lines[$f] -match '^\s*(?:[^\s·›][^·›]{0,30} · ){0,3}(\? for shortcuts|tab to queue message)'
   if ($hint) { $f-- }
-  $foot = $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context \d+% left|(^\s*|·\s*)(5h|weekly) \d+% left' -or ($hint -and $lines[$f] -match '\S · \S')
+  $foot = $lines[$f] -match '^\s*GPT-\S+\s.*·|·\s*Context:? \d+% left|(^\s*|·\s*)(5h|weekly) \d+% left' -or ($hint -and $lines[$f] -match '\S · \S')
   if ($hint -and -not $lines[$f]) { $f++; $foot = $true }
   if ($f -ge 2 -and $foot -and -not $lines[$f - 1]) {
     # Enter của hc send lúc Codex bận có thể thành xuống dòng trong ô: tối đa 3 dòng trống cuối ô, không tính vào Lines
@@ -196,7 +196,9 @@ function Get-ScreenDialog([string]$screen) {
     $own = if ($claudeTrust) {
       @('^\s*Quick safety check:.*$', '^\s*[›❯]?\s*No, exit\s*$', '^\s*[›❯]?\s*Yes, I trust this folder\s*$', '^\s*Enter to confirm · Esc to cancel\s*$')
     } else {
-      @('^\s*Trust this folder\?.*$', '^\s*[›❯]?\s*1\. Trust and continue\s*$', '^\s*2\. Quit\s*$', '^\s*enter continue · esc quit\s*$')
+      @('^\s*Trust this folder\?.*$', '^\s*[›❯]?\s*1\. Trust and continue\s*$', '^\s*2\. Quit\s*$', '^\s*enter continue · esc quit\s*$',
+        # Codex 0.171 (thấy thật qua crew probe, tests/fixtures/probe-v16/codex-0.171-trust.txt): dòng 2 và chân hộp đổi chữ; phím vẫn Enter
+        '^\s*2\. Back to Agent Command Center\s*$', '^\s*enter continue · esc back\s*$')
     }
     $rest = @($s -split '\r?\n' | Where-Object { $l = $_; -not @($own | Where-Object { $l -match $_ }).Count }) -join "`n"
     if (& $hasMark $rest) { return 'other' }
@@ -244,26 +246,29 @@ function Initialize-TaskBranch([string]$root, [int]$n, [string]$main, [string]$n
 
 # Gửi việc vào terminal worker qua Invoke-SendFlow (luồng an toàn của crew send). Trả @{ Ok; Message }.
 # agent ⇒ /clear | /new, chờ phiên mới, rồi dòng giao việc. shell ⇒ bật agent trong worktree với dòng giao việc.
-function Send-WorkerTask([string]$term, [string]$kind, [string]$mode, [string]$wt, [string]$line, [string]$access, $ops) {
+# $suggest = config "suggestions" bật cho vai này (Test-SuggestionsOn): chỉ đổi biến gợi ý khi bật agent trong shell.
+function Send-WorkerTask([string]$term, [string]$kind, [string]$mode, [string]$wt, [string]$line, [string]$access, $ops, [bool]$suggest = $false) {
+  # v16 screen-assist: crew không chắc ⇒ khối "CẦN PLANNER XEM" (suite trích AST không nạp assist.ps1 ⇒ try). Không mẫu học nào được áp.
+  $assist = { param($r) if ($r -and $r.Assist -and (-not $r.Ok -or $r.Unsure)) { try { Show-AssistNeeded $term $r $kind } catch { } }; $r }
   if ($mode -eq 'shell') {
-    # bật agent thẳng trong shell, không qua Start-Term ⇒ tự tắt gợi ý mờ của Claude Code (xem Start-Term)
-    $cmd = "`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; Set-Location -LiteralPath $(Quote $wt); if ((Get-Location).Path -eq $(Quote $wt)) { $(Get-AgentCommand $kind $access $line) } else { Write-Host 'crew: sai thư mục, không bật agent' }"
+    # bật agent thẳng trong shell, không qua Start-Term ⇒ tự đặt biến gợi ý mờ của Claude Code (xem Start-Term, Get-SuggestionEnvLine)
+    $cmd = "$(Get-SuggestionEnvLine $suggest)Set-Location -LiteralPath $(Quote $wt); if ((Get-Location).Path -eq $(Quote $wt)) { $(Get-AgentCommand $kind $access $line) } else { Write-Host 'crew: sai thư mục, không bật agent' }"
     return Invoke-SendFlow $term $cmd $ops
   }
-  $why = Get-WorkerInputError $term (& $ops.Read $term)
+  $why = Get-WorkerInputError $term (& $ops.Read $term) $ops
   if ($why) { return @{ Ok = $false; Message = $why } }
   $reset = if ($kind -eq 'codex') { '/new' } else { '/clear' }
   # claude: ~15s để xác nhận /clear; codex: thêm thời gian cho hộp chọn + phiên mới
-  $r = Invoke-SendFlow $term $reset $ops $kind $(if ($kind -eq 'codex') { 10 } else { 7 })
+  $r = & $assist (Invoke-SendFlow $term $reset $ops $kind $(if ($kind -eq 'codex') { 10 } else { 7 }))
   if (-not $r.Ok) { return @{ Ok = $false; Message = "$reset chưa xong, chưa giao việc: $($r.Message)" } }
   # đọc lại màn hình ngay trước khi gửi dòng giao việc: có hộp thoại ⇒ không gửi
   $screen = & $ops.Read $term
-  $why = Get-WorkerInputError $term $screen
+  $why = Get-WorkerInputError $term $screen $ops
   if ($why) { return @{ Ok = $false; Message = $why } }
   if (Get-ScreenDialog $screen) {
     return @{ Ok = $false; Message = "$term hiện hộp thoại sau $reset — chưa giao việc, không bấm phím; xem: hc read $term --lines 20" }
   }
-  Invoke-SendFlow $term $line $ops
+  & $assist (Invoke-SendFlow $term $line $ops)
 }
 
 # Lõi crew task (không Die, lỗi ⇒ throw): kiểm terminal TRƯỚC khi đụng git, tạo nhánh + prompt, ghi tasks.json, gửi việc.
@@ -282,7 +287,7 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
   $mode = $m.Mode
   if ($mode -eq 'shell' -and (Test-AgentScreen $kind (& $ops.Read $term))) { $mode = 'agent' }
   if ($mode -eq 'agent') {
-    $why = Get-WorkerInputError $term (& $ops.Read $term)
+    $why = Get-WorkerInputError $term (& $ops.Read $term) $ops
     if ($why) { throw $why }
   }
   $wt = Initialize-TaskBranch $root $n $main $name $promptPath
@@ -296,7 +301,8 @@ function Start-WorkerTask([string]$root, [string]$main, [int]$n, [string]$kind, 
   }
   $line = Get-TaskLine $wt "crew/$name"
   if ($mode -eq 'shell') { Say "bật $kind trong $term" } else { Say "phiên mới cho $kind trong $term" }
-  $r = Send-WorkerTask $term $kind $mode $wt $line $access $ops
+  $suggest = try { Test-PaneSuggestions $term $root } catch { $false }
+  $r = Send-WorkerTask $term $kind $mode $wt $line $access $ops $suggest
   @{ Ok = $r.Ok; Message = $r.Message; Line = $line }
 }
 
@@ -369,7 +375,7 @@ function Invoke-Task {
   try { $r = Start-WorkerTask $root $main $Worker $kind $cfg.access $term $Name $promptPath $tasks (New-HcOps) }
   catch { Die $_.Exception.Message @('crew hot', 'sửa theo lỗi ở trên', "crew task $Name $PromptFile") }
   if (-not $r.Ok) {
-    Die "$($r.Message)`n  Task $Name đã ghi (nhánh $branch, prompt đã chép)." @("Xử lý terminal rồi gửi lại:", "crew send $term `"$($r.Line)`"", "Hoặc bỏ task nếu chắc chắn:", "crew clean $Name -Force")
+    Die "$($r.Message)`n  Task $Name đã ghi (nhánh $branch, prompt đã chép)." @("Xử lý terminal rồi gửi lại:", "crew send $term `"$($r.Line)`"", $(try { Get-AgentVersionHint $kind } catch { '' }), "Hoặc bỏ task nếu chắc chắn:", "crew clean $Name -Force")
   }
   Say $r.Message
   Say "task $Name -> $term ($kind), nhánh $branch từ $main trong $wt. Theo dõi: hc wait $term / hc read $term --lines 60"

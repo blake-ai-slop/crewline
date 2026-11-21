@@ -46,6 +46,8 @@ function New-HcOps {
     }
     Keys  = { param($term) & { $ErrorActionPreference = 'Continue'; hc keys $term enter 2>&1 } | Out-Null }
     Tab   = { param($term) & { $ErrorActionPreference = 'Continue'; hc keys $term tab 2>&1 } | Out-Null }
+    # Space: CHỈ dùng trong Test-GhostInput (phép thử gõ 1 phím, không có phím xóa). Trả $true khi hc keys thành công.
+    Space = { param($term) & { $ErrorActionPreference = 'Continue'; hc keys $term space 2>&1 } | Out-Null; $LASTEXITCODE -eq 0 }
     Read  = { param($term) (@(& { $ErrorActionPreference = 'Continue'; hc read $term --lines 15 2>$null }) -join "`n") }
     Sleep = { param($ms) Start-Sleep -Milliseconds $ms }
   }
@@ -68,9 +70,205 @@ function Test-SentInput([string[]]$lines, [string]$text, [bool]$bare = $false) {
   $m.Success -and (& $same $m.Groups[1].Value)
 }
 
+# ---- So màn hình trước/sau khi dán (v16): không phụ thuộc chữ chân/gợi ý/cảnh báo của từng bản agent ----
+# Dòng màn hình để so: bỏ BOM, dòng '[hc] …', khoảng trắng cuối (kể cả NBSP sau '❯' của Claude 2.1.329), dòng trống cuối.
+function Get-ScreenRows([string]$screen) {
+  [string[]]$rows = @(("$screen" -replace '^﻿', '') -split '\r?\n' | Where-Object { $_ -notmatch '^\[hc\]' } | ForEach-Object { $_.TrimEnd() })
+  $n = $rows.Count - 1
+  while ($n -ge 0 -and -not $rows[$n]) { $n-- }
+  if ($n -lt 0) { return , [string[]]@() }
+  , [string[]]$rows[0..$n]
+}
+
+# Hàm thuần: ô nhập chung cho Claude/Codex, chỉ dựa vào ký tự đầu ô '›'/'❯' gần cuối màn hình (không đọc chữ chân).
+# Ô = dòng '›|❯ …' cuối cùng (không phải dòng chọn số '› 1.') + các dòng nối thụt ≥2. Dưới ô (Tail) chỉ được là chân/gợi ý/cảnh báo:
+# ≤6 dòng có chữ, không dòng hội thoại (› ❯ • ● ⏺ └ ■ ↳ ✻, Worked for), không dòng chọn số. Không đạt ⇒ $null.
+# Dialog = Tail có dấu hiệu hộp thoại (cùng danh sách Get-ScreenDialog). Ra @{ Start; End; Lines; Text; Char; Tail; Dialog }.
+function Find-PromptBox([string[]]$rows) {
+  $rows = @($rows)
+  $i = $rows.Count - 1
+  while ($i -ge 0 -and $rows.Count - 1 - $i -le 40 -and -not ($rows[$i] -match '^\s*[›❯](\s|$)' -and $rows[$i] -notmatch '^\s*[›❯]\s*\d+\.\s')) { $i-- }
+  if ($i -lt 0 -or $rows.Count - 1 - $i -gt 40) { return $null }
+  $e = $i
+  while ($e + 1 -lt $rows.Count -and $rows[$e + 1] -match '^\s{2,}\S' -and $e - $i -lt 30) { $e++ }
+  $tail = if ($e + 1 -lt $rows.Count) { @($rows[($e + 1)..($rows.Count - 1)]) } else { @() }
+  $filled = @($tail | Where-Object { $_.Trim() })
+  if ($filled.Count -gt 6) { return $null }
+  if (@($filled | Where-Object { $_ -match '^\s*([›❯•●⏺└■↳✻]|─ Worked for|Worked for |\d+\.\s)' }).Count) { return $null }
+  $marks = 'Where should the new conversation run', 'Do you want to', 'Allow command', '^\s*Allow\b', '\(y/n\)', 'enter select', 'esc back',
+    'Esc to cancel', 'Yes, proceed', 'Trust this folder', 'trust this folder'
+  $dialog = [bool]@($filled | Where-Object { $l = $_; @($marks | Where-Object { $l -match $_ }).Count }).Count
+  $char = ([regex]::Match($rows[$i], '[›❯]')).Value
+  [string[]]$lines = @(($rows[$i] -replace '^\s*[›❯]\s*', '').Trim())
+  if ($e -gt $i) { $lines += @($rows[($i + 1)..$e] | ForEach-Object { $_.Trim() }) }
+  if (-not $lines[0] -and $lines.Count -eq 1) { $lines = @() }
+  @{ Start = $i; End = $e; Lines = $lines; Text = ($lines -join ' ').Trim(); Char = $char; Tail = $tail; Dialog = $dialog }
+}
+
+# Hai dòng phía trên ô nhập coi là như nhau: giống hệt, hoặc cả hai là dòng hay đổi và chỉ khác số / chữ spinner.
+# Dòng hay đổi (liệt kê, có test CrewPasteVerify): '% left' (5h/weekly/Context, ⚠ limit), đồng hồ h:mm, thời gian chạy '(12s', '3m 41s',
+# 'esc to interrupt', 'tokens', 'N warnings'; dòng spinner/trạng thái Claude-Codex ('✻ Baked for 18s · done 4:43 PM', '✶ Pondering… (…)',
+# '• Working (…)'): cả hai cùng là dòng spinner thì coi như nhau dù chữ động từ khác.
+function Test-SameScreenRow([string]$a, [string]$b) {
+  if ($a -ceq $b) { return $true }
+  $spin = '^\s*(?:[✻✽✶✳✢✺·*]\s+\S+(?:…|\s+for\s+\d)|•\s+Working\s+\()'
+  if ($a -match $spin -and $b -match $spin) { return $true }
+  $vol = '\d+% left|\b\d{1,2}:\d{2}\b|\(\d+[smh]\b|\b\d+m \d+s\b|esc to interrupt|\d+(\.\d+)?[kK]? tokens|\d+ warnings?'
+  if ($a -match $vol -and $b -match $vol) { return (($a -replace '\d+', '#') -ceq ($b -replace '\d+', '#')) }
+  $false
+}
+
+# Hàm thuần (hợp đồng v16, ghost-key dùng lại): tin vừa dán có nằm đúng ô nhập không, so màn hình trước/sau khi dán.
+# Đạt khi: sau dán có ô nhập gần cuối (Find-PromptBox) mà nội dung ĐÚNG và CHỈ tin vừa dán (Test-SentInput: cho gói dòng, thụt dòng nối,
+# vỏ <hc from> nếu không $bare), dưới ô không có dấu hộp thoại, trước dán cũng có ô, ô đã đổi, và KHÔNG có dòng mới nào ngoài khối ô:
+# - phía trên ô: so từ dưới lên, bỏ dòng trống (dòng hay đổi theo Test-SameScreenRow); dòng nào của màn sau không so được theo vị trí
+#   (mép cuộn: Codex 0.171 hc read ghép dòng đầu khác khi ô dài thêm; hay màn sau dài hơn) phải có y hệt ở màn trước;
+#   hoặc màn sau chỉ MẤT dòng (phía trên ô là dãy con đúng thứ tự của màn trước);
+# - dưới ô: mỗi dòng có chữ phải có ở dưới ô màn trước (chân/gợi ý được MẤT — Codex 0.171 ẩn '← for agents · ? for shortcuts' khi ô có chữ,
+#   Claude 2.1.329 bỏ mục cuối ' · ← for agents' của dòng chân — không được THÊM).
+# Ra @{ Ok; Reason; Box = các dòng ô nhập sau dán; Kind = 'codex' (ô '›') | 'claude' (ô '❯') | '' (không thấy ô) } — người gọi đối chiếu Kind với app.
+# Reason: ok | no-box | empty | text-mismatch | dialog | no-box-before | unchanged | above-changed | below-changed | no-context.
+function Compare-PasteScreens([string]$before, [string]$after, [string]$text, [bool]$bare = $false) {
+  $kind = ''
+  $out = { param($ok, $why, $box) @{ Ok = $ok; Reason = $why; Box = [string[]]@($box); Kind = $kind } }
+  $A = Get-ScreenRows $after
+  $pa = Find-PromptBox $A
+  if ($pa) { $kind = if ($pa.Char -eq '›') { 'codex' } else { 'claude' } }
+  if (-not $pa) { return & $out $false 'no-box' @() }
+  if (-not $pa.Text) { return & $out $false 'empty' @() }
+  if (-not (Test-SentInput $pa.Lines $text $bare)) { return & $out $false 'text-mismatch' $pa.Lines }
+  if ($pa.Dialog) { return & $out $false 'dialog' $pa.Lines }
+  $B = Get-ScreenRows $before
+  $pb = Find-PromptBox $B
+  if (-not $pb) { return & $out $false 'no-box-before' $pa.Lines }
+  if (($pb.Lines -join "`n") -ceq ($pa.Lines -join "`n")) { return & $out $false 'unchanged' $pa.Lines }
+  # dòng cảnh báo ⚠ ghi cứng của Codex (limit/warnings, căn phải nhiều khoảng trắng — thấy thật 0.171: tests/fixtures/codex-v0.171/warn-rightaligned.txt)
+  # hiện/ẩn/tách khỏi dòng gợi ý theo lúc vẽ ⇒ không tính là dòng mới/mất, cả trên lẫn dưới ô. Mẫu lấy từ danh sách đóng của Get-SendBox.
+  $warnRow = { param($l) $l.Trim().StartsWith('⚠') -and (Get-SendBox '' 'codex' $l) }
+  $up = { param($rows, $end) if ($end -le 0) { return , @() }; , @($rows[0..($end - 1)] | Where-Object { $_.Trim() -and -not (& $warnRow $_) }) }
+  $ua = & $up $A $pa.Start
+  $ub = & $up $B $pb.Start
+  $k = [math]::Min($ua.Count, $ub.Count)
+  if (-not $k) { return & $out $false 'no-context' $pa.Lines }
+  $d = 1
+  while ($d -le $k -and (Test-SameScreenRow $ua[$ua.Count - $d] $ub[$ub.Count - $d])) { $d++ }
+  # còn lại của màn sau (từ chỗ lệch lên tới đầu): chỉ chấp nhận khi chỉ là mép cuộn — đúng 1 dòng trên cùng và dòng đó có y hệt ở màn trước
+  $rest = @(if ($d -le $ua.Count) { $ua[0..($ua.Count - $d)] })
+  if ($rest.Count -gt 1 -or ($rest.Count -eq 1 -and $B -cnotcontains $rest[0])) {
+    # chỉ MẤT dòng phía trên ô (Codex 0.171 phiên mới: logo động biến mất khi ô có chữ; crew probe): các dòng của màn sau phải là
+    # dãy con ĐÚNG THỨ TỰ của màn trước — dòng mới, hay dòng cũ hiện lại ở chỗ khác (hộp vẽ trên ô), vẫn là above-changed
+    $j = 0
+    foreach ($row in $ua) {
+      while ($j -lt $ub.Count -and -not (Test-SameScreenRow $row $ub[$j])) { $j++ }
+      if ($j -ge $ub.Count) { return & $out $false 'above-changed' $pa.Lines }
+      $j++
+    }
+  }
+  $tb = @($pb.Tail | Where-Object { $_.Trim() })
+  foreach ($row in @($pa.Tail | Where-Object { $_.Trim() -and -not (& $warnRow $_) })) {
+    # dòng chân chỉ MẤT mục cuối ' · …' (Claude 2.1.329 accept edits: '… (shift+tab to cycle) · ← for agents' mất '· ← for agents' khi ô có chữ) ⇒ vẫn là mất, không thêm
+    if (-not @($tb | Where-Object { (Test-SameScreenRow $row $_) -or $_.StartsWith($row + ' · ', [StringComparison]::Ordinal) }).Count) { return & $out $false 'below-changed' $pa.Lines }
+  }
+  & $out $true 'ok' $pa.Lines
+}
+
+# Ô nhập cho các bước gửi: Get-InputBox (mẫu chữ đã biết) trước; không nhận ra ⇒ Find-PromptBox (chỉ dựa ký tự đầu ô, Tail sạch, không hộp).
+# Placeholder đã biết 'Ask Codex to do anything' / 'Try "…"' (Claude phiên mới) tính là ô trống. Ra @{ Kind; Text; Lines; Generic; KnownTail } hoặc $null.
+# KnownTail (v16 knowntail-fix): ô nhận bằng mẫu chữ cũ (Get-InputBox) và TỪNG dòng từ ngay dưới ô (Claude: dưới đường kẻ đóng; Codex: từ dòng
+# trống đóng ô) tới hết màn, sau khi trim, KHỚP TOÀN DÒNG một mẫu trong danh sách đóng bên dưới (hoặc trống). Lối Find-PromptBox luôn $false.
+# Mọi phím KHÔNG phải tin (Tab hàng đợi Codex, Space ghost-key) đòi KnownTail. Danh sách mẫu chỉ ở đây; nơi khác hỏi qua
+# Get-SendBox -rowKind 'claude'|'codex' -row '<dòng>' (ra $true/$false) — vd. Compare-PasteScreens bỏ qua dòng ⚠ ghi cứng.
+function Get-SendBox([string]$screen, [string]$rowKind = '', [string]$row = '') {
+  # Danh sách đóng (neo ^…$ trên dòng đã trim). Chân có thể bị cắt ở mục cuối: '<đầu mục>…' chỉ nhận khi là đầu của một mục đã biết (số chuẩn hóa).
+  $warn = '⚠ (?:(?:5h|weekly) limit: \d+% left(?: · resets at \d{1,2}:\d{2} (?:AM|PM)(?: on \d{1,2} [A-Za-z]{3})?)?(?: · /status)?|\d+ warnings? · f2 to view)'
+  $known = @{
+    claude = @{
+      Rows = @('^\? for shortcuts$',
+        '^(?:Opus|Sonnet|Haiku|Fable) \d+(?:\.\d+)? - (?:low|medium|high|xhigh|max) - (?:\d+%|-)$')
+      Head = '^(?:[⏵⏸]+ )?(?:bypass permissions|accept edits|auto mode|plan mode) on(?: \(shift\+tab to cycle\))?'
+      Segs = @('← for agents', '\d+ background tasks?', '\d+ shells?', '↓ to view')
+      Cut  = @('← for agents', '0 background tasks', '0 shells', '↓ to view')
+      Free = $null
+    }
+    codex = @{
+      Rows = @("^(?:esc to interrupt · )?(?:← for agents · )?(?:\? for shortcuts|tab to queue message)(?:\s{2,}$warn)?$", "^$warn$")
+      Head = '^GPT-[\w.]+(?:-[\w.]+)* (?:minimal|low|medium|high|xhigh|max)'
+      Segs = @('(?:5h|weekly) \d+% left', 'Context:? \d+% left', '(?:~|[A-Za-z]:)(?:[\\/][^\s·]*)*',
+        '\d+(?:\.\d+)?[KkM]?(?: tokens)? used')
+      Cut  = @('5h 0% left', 'weekly 0% left', 'Context 0% left', 'Context: 0% left', '0K used', '0 tokens used')
+      # tên luồng do Codex vẽ trong chân (thấy thật: queue-wrap '… · Đọc vai trò rev và chờ giao việc · …'): đúng tối đa 1 đoạn tự do, chỉ khi có đầu GPT-,
+      # chỉ sau đầu/đường dẫn và TRƯỚC mục số (5h/weekly/Context/used); không ở cuối, không sau mục số (knowntail-fix2, planner chọn B).
+      # Giới hạn đã biết: chèn ' · <chữ> · ' giữa đường dẫn và mục số không phân biệt được với tên luồng thật.
+      Free = '^[^·⚠›❯<>()\[\]{}?|…]{1,60}$'
+      Pre  = '(?:~|[A-Za-z]:)(?:[\\/][^\s·]*)*'
+      # mảnh mục số (không phân biệt hoa thường, dính liền/cách): tên luồng chứa mảnh này ⇒ không phải chân
+      Frag = '\d\s*%|%\s*left|context|5h|weekly|\d\s*[km]?\s*(?:tokens\s*)?used'
+    }
+  }
+  $isKnown = {
+    param([string]$kind, [string]$line)
+    $t = $line.Trim()
+    if (-not $t) { return $true }
+    $k = $known[$kind]
+    if (-not $k) { return $false }
+    foreach ($p in $k.Rows) { if ($t -cmatch $p) { return $true } }
+    # chân: [đầu] (' · ' mục)*; Codex không đầu GPT- vẫn nhận khi mọi mục là mục số đã biết (status line bị bỏ model)
+    $m = [regex]::Match($t, $k.Head)
+    $rest = $t
+    $hasHead = $m.Success
+    if ($hasHead) { $rest = $t.Substring($m.Length); if (-not $rest) { return $true }; if (-not $rest.StartsWith(' · ')) { return $false }; $rest = $rest.Substring(3) }
+    elseif ($kind -ne 'codex') { return $false }
+    $segs = @($rest -split ' · ')
+    $free = -1; $num = $false
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+      $s = $segs[$i]
+      if (@($k.Segs | Where-Object { $s -cmatch "^(?:$_)$" }).Count) {
+        # đường dẫn (Pre) không tính là mục số; mục số khác chốt vùng tự do
+        if (-not ($k.Pre -and $s -cmatch "^(?:$($k.Pre))$")) { $num = $true }
+        continue
+      }
+      if ($i -eq $segs.Count - 1 -and $s.EndsWith('…')) {
+        $c = ($s.Substring(0, $s.Length - 1)) -replace '\d+', '#'
+        if (@($k.Cut | Where-Object { ($_ -replace '\d+', '#').StartsWith($c, [StringComparison]::Ordinal) }).Count) { $num = $true; continue }
+      }
+      # đoạn tự do: 1 lần, trước mọi mục số, không ở cuối (sau nó phải có mục số — kiểm ở cuối vòng)
+      # đoạn bắt đầu bằng một mục đã biết + hậu tố dính ('Context 97% left Xác nhận…') không phải tên luồng
+      # và không chứa mảnh nào giống mục số ở BẤT KỲ vị trí, dính liền hay cách (Rev: 'Context 97% leftXác…') — đoạn đó phải khớp toàn đoạn mục số
+      $stuck = @($k.Segs | Where-Object { $s -cmatch "^(?:$_)\s" }).Count -or ($k.Frag -and $s -match $k.Frag)
+      if ($hasHead -and $k.Free -and $free -lt 0 -and -not $num -and -not $stuck -and $i -lt $segs.Count - 1 -and $s -cmatch $k.Free) { $free = $i; continue }
+      return $false
+    }
+    if ($free -ge 0 -and -not $num) { return $false }
+    $true
+  }
+  if ($rowKind) { return [bool](& $isKnown $rowKind $row) }
+  $box = Get-InputBox $screen
+  if ($box) {
+    # dòng dưới ô: Claude = After (dưới đường kẻ đóng). Codex = từ dòng trống đầu tiên sau dòng '›' cuối (ô Codex không có dòng trống giữa) tới hết.
+    $tail = if ($box.Kind -eq 'claude') { @("$($box.After)" -split '\r?\n') } else {
+      [string[]]$rows = Get-ScreenRows $screen
+      $p = $rows.Count - 1
+      while ($p -ge 0 -and -not ($rows[$p] -match '^\s*›(\s|$)' -and $rows[$p] -notmatch '^\s*›\s*\d+\.\s')) { $p-- }
+      $q = $p + 1
+      while ($q -lt $rows.Count -and $rows[$q].Trim()) { $q++ }
+      if ($p -lt 0) { @('?') } elseif ($q -lt $rows.Count) { @($rows[$q..($rows.Count - 1)]) } else { @() }
+    }
+    $ok = -not @($tail | Where-Object { -not (& $isKnown $box.Kind $_) }).Count
+    return @{ Kind = $box.Kind; Text = $box.Text; Lines = $(if ($box.Lines) { @($box.Lines) } else { @($box.Text) }); Generic = $false; KnownTail = [bool]$ok }
+  }
+  $pb = Find-PromptBox (Get-ScreenRows $screen)
+  if (-not $pb -or $pb.Dialog) { return $null }
+  $t = $pb.Text
+  if ($t -eq 'Ask Codex to do anything' -or ($pb.Char -eq '❯' -and $t -match '^Try ".*"$')) { return @{ Kind = $(if ($pb.Char -eq '›') { 'codex' } else { 'claude' }); Text = ''; Lines = @(); Generic = $true; KnownTail = $false } }
+  @{ Kind = $(if ($pb.Char -eq '›') { 'codex' } else { 'claude' }); Text = $t; Lines = @($pb.Lines); Generic = $true; KnownTail = $false }
+}
+
 # Ô nhập đúng và chỉ có tin vừa gửi (Test-SentInput) ⇒ Tab 1 lần để vào hàng đợi thật của Codex: Tab gửi cả ô, nên chữ thêm, chữ sửa, bản nháp cùng đầu tin ⇒ không bấm.
 # Đọc lại màn hình + trạng thái ngay trước phím; không live, không phải Codex, hết working, blocked, hộp thoại ⇒ không bấm.
 # Tin dài gói nhiều dòng và có dòng trống cuối ô (Enter bị đổi thành xuống dòng) vẫn nhận qua Get-InputBox; khối queued phía trên không ảnh hưởng.
+# v16: nhận ô qua Get-SendBox; hộp thoại vẫn theo Get-ScreenDialog (kể cả 'other').
+# v16 assist-nolearn (đổi hành vi có chủ ý, planner chốt): Tab chỉ khi dưới ô toàn dòng ghi cứng đã biết (KnownTail). Chân/dòng lạ (vd. hộp
+# không đánh số dưới chân) ⇒ 0 phím, kết quả không chắc mang Assist ⇒ khối CẦN PLANNER XEM; Codex xong lượt mà tin còn ở ô ⇒ crew confirm.
 function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $false) {
   $unsure = @{ Ok = $true; Unsure = $true; Queued = $true; Message = "đã gửi -> $term nhưng agent đang bận: tin có thể nằm lại ô nhập, xem crew hot" }
   if (-not $ops.Read -or -not $ops.Tab) { return $unsure }
@@ -82,15 +280,20 @@ function Send-CodexQueue([string]$term, [string]$text, $ops, [bool]$bare = $fals
     $info = & $ops.Get $term
     $st = Get-TermStatus $info
     if (-not $info -or $info.state -ne 'live' -or $st.App -ne 'codex' -or $st.State -ne 'working' -or (Get-ScreenDialog $screen)) { return $unsure }
-    $box = Get-InputBox $screen
+    $box = Get-SendBox $screen
     if ($box -and $box.Kind -eq 'codex' -and -not $box.Text) { return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: Codex đang bận đã nhận tin khỏi ô nhập (xem: crew hot)" } }
     $match = $box -and $box.Kind -eq 'codex' -and (Test-SentInput $box.Lines $text $bare)
+    if ($match -and -not $box.KnownTail) {
+      $unsure.Message = "đã gửi -> $term nhưng Codex đang bận và dưới ô nhập có dòng lạ — không bấm Tab (0 phím); tin có thể nằm lại ô nhập. Codex xong lượt mà tin còn trong ô: crew confirm $term"
+      $unsure.Assist = 'queue-unknown-tail'; $unsure.Why = 'dòng lạ dưới ô nhập, Codex đang bận'; $unsure.Screen = "$screen"
+      return $unsure
+    }
   }
   if (-not $match) { return $unsure }
   & $ops.Tab $term
   for ($i = 0; $i -lt 3; $i++) {
     & $ops.Sleep 500
-    $after = Get-InputBox (& $ops.Read $term)
+    $after = Get-SendBox (& $ops.Read $term)
     if ($after -and $after.Kind -eq 'codex' -and -not $after.Text) {
       return @{ Ok = $true; Queued = $true; Message = "đã gửi -> ${term}: tin vào hàng đợi của Codex, chạy khi xong lượt (xem: crew hot)" }
     }
@@ -117,9 +320,15 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   # agent đang chạy lượt TRƯỚC khi gửi (tin thường): tin nằm chờ trong ô nhập, agent đọc khi xong lượt ⇒ báo rõ, không Enter thêm
   $busy = (-not $session) -and $st0.App -and $st0.State -eq 'working'
   $turn = if ($null -ne $info.turn) { [int]$info.turn } else { -1 }
+  # màn hình TRƯỚC khi dán (agent rảnh, tin thường): Enter thêm của crew chỉ bấm khi so trước/sau xác nhận tin nằm đúng ô nhập
+  # (Compare-PasteScreens). Agent đang bận: phía trên ô đổi liên tục, không chụp — giữ luồng Send-CodexQueue / lớp mẫu chữ.
+  $before = if ($ops.Read -and $st0.App -and -not $session -and -not $busy) { "$(& $ops.Read $term)" } else { $null }
   $r = & $ops.Send $term $text $bare
   if ($r.Code -ne 0) { return & $fail "hc send tới $term thất bại: $($r.Text)" "kiểm terminal: hc ls (thiếu thì crew up), rồi gửi lại" }
   $sent = $true
+  # v16 screen-assist: kết quả KHÔNG CHẮC (crew không bấm gì) mang thêm lý do + màn hình để in khối "CẦN PLANNER XEM" (Show-AssistNeeded).
+  # Chỉ để planner/chủ dự án xem; không có mẫu học nào được áp (v16 assist-nolearn).
+  $unsure = { param($res, $why) $res.Assist = $why; $res.Why = $seen.Why; $res.Screen = $seen.Screen; $res }
   $result = try { $r.Text | ConvertFrom-Json } catch { [pscustomobject]@{ started = $null } }
   $verdict = {
     param($plan, $info)
@@ -141,39 +350,74 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
       }
       'stuck' {
         $shown = if ($seen.Text.Length -gt 200) { $seen.Text.Substring(0, 200) + '…' } else { $seen.Text }
-        return & $fail "đã gửi tới $term nhưng ô nhập Codex còn chữ khác tin vừa gửi: $shown — không bấm Enter. Xử lý: sang pane $term, xóa chữ (hoặc Enter nếu đúng), rồi gửi lại." 'xem mục "Tin kẹt ở ô nhập" trong docs/troubleshooting.md (thư mục cài Crewline)'
+        $where = if ((Get-TermStatus $info).App -eq 'codex') { 'ô nhập Codex' } else { 'ô nhập' }
+        return & $unsure (& $fail "đã gửi tới $term nhưng $where còn chữ khác tin vừa gửi: $shown — không bấm Enter. Xử lý: sang pane $term, xóa chữ (hoặc Enter nếu đúng), rồi gửi lại." 'xem mục "Tin kẹt ở ô nhập" trong docs/troubleshooting.md (thư mục cài Crewline)') 'stuck'
       }
-      'nobox' { return & $fail "đã gửi tới $term nhưng không nhận ra ô nhập Codex để kiểm tin — không bấm Enter; xem: hc read $term --lines 20" }
+      'nobox' {
+        $where = if ((Get-TermStatus $info).App -eq 'codex') { 'ô nhập Codex' } else { 'ô nhập' }
+        return & $unsure (& $fail "đã gửi tới $term nhưng không nhận ra $where để kiểm tin (so màn hình trước/sau khi dán: $($seen.Why)) — không bấm Enter; xem: hc read $term --lines 20" @("sang pane ${term}: tin còn trong ô thì Enter, không có thì gửi lại", "Hoặc sau khi xem hc read $term --lines 20 thấy tin nằm đúng ô nhập: crew confirm $term", $(try { Get-AgentVersionHint (Get-TermStatus $info).App } catch { '' }))) 'nobox'
+      }
+      'ghost-changed' { return & $fail "đã gửi tới $term nhưng pane đổi trong lúc crew kiểm ô nhập (crew đã gõ 1 dấu cách, không bấm thêm phím, không Enter) — có thể còn 1 dấu cách thừa ở ô nhập; xem: hc read $term --lines 20" "sang pane ${term}: tin còn trong ô thì Enter, không có thì gửi lại" }
       'dead' { return & $fail "terminal $term tắt sau khi gửi." 'crew up (bật lại terminal) rồi gửi lại' }
       'blocked' { return & $fail "đã gửi tới $term nhưng nó đang chờ duyệt — chủ dự án xử lý (không bấm Enter)." "sang pane $term trả lời hộp chờ duyệt (xem: hc read $term --lines 20)" }
-      'dialog' { return & $fail "$term đang hiện một hộp thoại lạ sau '$text' — không bấm phím; xem: hc read $term --lines 20" }
+      'dialog' { return & $unsure (& $fail "$term đang hiện một hộp thoại lạ sau '$text' — không bấm phím; xem: hc read $term --lines 20") 'dialog' }
     }
     $null
   }
   # kế hoạch sau gửi; chế độ phiên mới: 'ok' chỉ khi phiên mới sẵn sàng, agent đang chạy ⇒ 'wait' (không Enter);
   # màn hình đọc lại mỗi lần, hộp thoại xét TRƯỚC mọi kiểm sẵn sàng: hộp lạ ⇒ 'dialog' (dừng, 0 Enter);
   # hộp chọn Codex /new ⇒ 'pick' (1 lần, sau đó 'wait'). Tin thường: chỉ đọc màn hình ngay trước Enter (có $ops.Read).
-  # Codex (tin thường): chỉ Enter khi ô nhập có ĐÚNG tin vừa gửi (Test-SentInput); chữ khác ⇒ 'stuck', ô trống ⇒ 'wait', không nhận ra ô ⇒ 'nobox'.
+  # Tin thường, cả Claude và Codex (v16): Enter khi so màn hình trước/sau dán đạt (Compare-PasteScreens), hoặc lớp mẫu chữ cũ thấy ô
+  # nhập ĐÚNG tin (Get-InputBox + Test-SentInput). Hộp thoại trên màn sau ⇒ 'dialog' trước mọi lối; ô có chữ khác ⇒ 'stuck', ô trống ⇒ 'wait', còn lại ⇒ 'nobox'.
+  # Không chắc ⇒ không Enter. Bảng hc không có Read ⇒ như cũ (chỉ theo trạng thái).
   $picked = 0
-  $seen = @{ Text = '' }
+  $seen = @{ Text = ''; Why = ''; Screen = '' }
+  $ghost = @{ Tried = $null; Is = '' }
+  $check = {
+    param($screen, $app)
+    $seen.Screen = "$screen"
+    # hộp thoại/xin duyệt trên MÀN SAU (Get-ScreenDialog, kể cả 'other') xét TRƯỚC cả hai lối Enter: Enter có thể duyệt hộ
+    if (Get-ScreenDialog $screen) { return 'dialog' }
+    # loại ô phải khớp app của terminal (codex ↔ ô '›', claude/claude-code ↔ ô '❯') ở CẢ HAI lối; lệch hoặc app lạ ⇒ không Enter
+    $kind = @{ codex = 'codex'; 'claude-code' = 'claude'; claude = 'claude' }["$app"]
+    $cmp = if ($null -ne $before) { Compare-PasteScreens $before $screen $text $bare } else { $null }
+    if ($cmp -and $cmp.Ok) {
+      if ($kind -and $cmp.Kind -eq $kind) { return 'press-enter' }
+      $seen.Why = "kind-mismatch (ô $($cmp.Kind), app $app)"; return 'nobox'
+    }
+    # so trước/sau thấy dòng mới ngoài khối ô (hộp hiện phía trên ô nhập: Get-ScreenDialog coi là lịch sử) ⇒ cấm cả lối mẫu chữ cũ
+    if ($cmp -and $cmp.Reason -in 'above-changed', 'below-changed', 'dialog') { $seen.Why = $cmp.Reason; return 'nobox' }
+    $box = Get-SendBox $screen
+    if ($box -and $box.Kind -ne $kind) { $seen.Why = "kind-mismatch (ô $($box.Kind), app $app)"; return 'nobox' }
+    if ($box -and $box.Text) {
+      if (-not $box.Generic -and (Test-SentInput $box.Lines $text $bare)) { return 'press-enter' }
+      if (-not (Test-SentInput $box.Lines $text $bare)) {
+        # Claude: chữ khác tin có thể là gợi ý mờ ⇒ phép thử gõ 1 phím (mỗi chữ thử 1 lần); gợi ý ⇒ ô thật trống ⇒ 'wait'
+        if ($box.Kind -eq 'claude' -and $ops.Space) {
+          if ($ghost.Tried -cne $box.Text -and $ghost.Is -ne 'changed') { $ghost.Tried = $box.Text; $ghost.Is = Test-GhostInput $term $ops }
+          if ($ghost.Is -eq 'changed') { return 'ghost-changed' }
+          if ($ghost.Is -eq 'ghost' -and $ghost.Tried -ceq $box.Text) { return 'wait' }
+          if ($ghost.Is -eq 'unknown') { $seen.Why = 'không thử gõ 1 phím (dòng lạ dưới ô hoặc không đọc được)' }
+        }
+        $seen.Text = $box.Text
+        if ($ghost.Is -eq 'real' -and $ghost.Tried -ceq $box.Text) { $seen.Text += ' (crew đã thêm 1 dấu cách để kiểm, không xóa gì)' }
+        return 'stuck'
+      }
+    }
+    if ($box -and -not $box.Text) { return 'wait' }
+    $seen.Why = if ($cmp) { $cmp.Reason } else { 'không có màn hình trước khi dán' }
+    'nobox'
+  }
   $judge = {
     param($info)
     $plan = Get-SendPlan $info $result $turn
     if (-not $session) {
-      if ($plan -eq 'press-enter' -and $ops.Read) {
-        $screen = & $ops.Read $term
-        if (Get-ScreenDialog $screen) { return 'dialog' }
-        if ((Get-TermStatus $info).App -eq 'codex') {
-          $box = Get-InputBox $screen
-          if (-not $box -or $box.Kind -ne 'codex') { return 'nobox' }
-          if (-not $box.Text) { return 'wait' }
-          if (-not (Test-SentInput $box.Lines $text $bare)) { $seen.Text = $box.Text; return 'stuck' }
-        }
-      }
+      if ($plan -eq 'press-enter' -and $ops.Read -and (Get-TermStatus $info).App) { return & $check "$(& $ops.Read $term)" (Get-TermStatus $info).App }
       return $plan
     }
     if ($plan -notin 'ok', 'press-enter') { return $plan }
     $screen = & $ops.Read $term
+    $seen.Screen = "$screen"
     $dlg = Get-ScreenDialog $screen
     if ($dlg -eq 'codex-new' -and $session -eq 'codex') { if ($picked -ge 1) { return 'wait' } return 'pick' }
     if ($dlg) { return 'dialog' }
@@ -203,18 +447,71 @@ function Invoke-SendFlow([string]$term, [string]$text, $ops, [string]$session = 
   }
   if ($session) {
     $what = if ($session -eq 'codex') { "phiên Codex mới trống (đầu phiên '>_ OpenAI Codex', ô nhập trống, không còn tin cũ)" } else { "màn hình đã xóa ('❯ /clear' rồi ô nhập trống)" }
-    return & $fail "chưa xác nhận được $what sau '$text' tới $term (~$(2 * $tries)s); xem: hc read $term --lines 20"
+    return & $unsure (& $fail "chưa xác nhận được $what sau '$text' tới $term (~$(2 * $tries)s); xem: hc read $term --lines 20") 'fresh-session'
   }
-  & $fail "đã gửi tới $term nhưng agent chưa chạy (vẫn $((Get-TermStatus $info).State)); xem: hc read $term --lines 20"
+  & $unsure (& $fail "đã gửi tới $term nhưng agent chưa chạy (vẫn $((Get-TermStatus $info).State)); xem: hc read $term --lines 20" "sau khi xem hc read $term --lines 20 thấy tin nằm đúng ô nhập: crew confirm $term") 'not-started'
+}
+
+# ---- Phép thử "gõ 1 phím" (v16 ghost-key): chữ trong ô nhập Claude là gợi ý mờ hay chữ thật? ----
+# ĐÂY LÀ CÁCH DUY NHẤT crew gõ phím không phải tin của mình (Enter/Tab khác chỉ bấm sau khi kiểm đúng tin crew vừa gửi):
+# ĐÚNG 1 dấu cách, KHÔNG BAO GIỜ phím xóa. hc read không có màu nên không phân biệt được chữ mờ; đo thật (Claude Code 2.1.329,
+# context/tasks/suggest-probe.md): gõ dấu cách ⇒ gợi ý biến mất (dòng ô chỉ còn '❯' + khoảng trắng/NBSP); chữ thật + dấu cách ⇒ chữ còn.
+# Không Backspace (Rev v16): hc read không có vị trí con trỏ và cắt khoảng trắng cuối — người dùng bấm ←/gõ chữ trong lúc chờ, hoặc pane
+# bị thay cùng tên, thì Backspace có thể xóa chữ người dùng / trả lời hộp thoại. Hệ quả: ô còn 1 dấu cách của crew
+# (gợi ý ⇒ tin dán sau dấu cách, Find-PromptBox/Test-SentInput bỏ khoảng trắng đầu; chữ thật ⇒ chữ người dùng +1 dấu cách, crew dừng).
+# Chỉ Claude (Codex giữ nguyên). Chỉ gõ khi: terminal live, app claude, không blocked/working, màn hình không hộp thoại, ô '❯' có chữ.
+# Đọc lại sau dấu cách phải cùng address/app/turn, live, không blocked/working, không hộp thoại, nhận ra ô '❯'; không thì 'changed'.
+# $ops cần Get/Read/Sleep/Space; thiếu Space (bảng hc giả cũ) ⇒ 'unknown', 0 phím. Space thất bại ⇒ 'unknown'.
+# Ra: 'ghost' (ô thật trống) | 'real' (chữ thật, đã +1 dấu cách) | 'unknown' (không thử, 0 phím) | 'changed' (đã gõ dấu cách, pane đổi).
+function Test-GhostInput([string]$term, $ops) {
+  if (-not $ops -or -not $ops.Space -or -not $ops.Read -or -not $ops.Get) { return 'unknown' }
+  $info = & $ops.Get $term
+  $st = Get-TermStatus $info
+  if (-not $info -or $info.state -ne 'live' -or $st.App -notin 'claude', 'claude-code' -or $st.State -in 'blocked', 'working') { return 'unknown' }
+  $screen = "$(& $ops.Read $term)"
+  if (Get-ScreenDialog $screen) { return 'unknown' }
+  $box = Get-SendBox $screen
+  if (-not $box -or $box.Kind -ne 'claude') { return 'unknown' }
+  if (-not $box.Text) { return 'ghost' }
+  # v16 assist-nolearn: Space không phải tin ⇒ chỉ khi dưới ô toàn dòng ghi cứng đã biết; dòng lạ ⇒ không thử (0 phím), người gọi báo không chắc
+  if (-not $box.KnownTail) { return 'unknown' }
+  $before = $box.Text
+  if ((& $ops.Space $term) -ne $true) { return 'unknown' }
+  & $ops.Sleep 300
+  try {
+    $info2 = & $ops.Get $term
+    $after = "$(& $ops.Read $term)"
+  } catch { return 'changed' }
+  $st2 = Get-TermStatus $info2
+  if (-not $info2 -or $info2.state -ne 'live' -or "$($info2.address)" -cne "$($info.address)" -or $st2.App -ne $st.App -or
+      $st2.State -in 'blocked', 'working' -or "$($info2.turn)" -ne "$($info.turn)") { return 'changed' }
+  if (Get-ScreenDialog $after) { return 'changed' }
+  $box = Get-SendBox $after
+  if (-not $box -or $box.Kind -ne 'claude') { return 'changed' }
+  if (-not $box.Text) { return 'ghost' }
+  if ($box.Text -ceq $before) { return 'real' }
+  'changed'
+}
+
+# Câu báo theo kết quả phép thử (crew đã gõ 1 dấu cách, không xóa): 'real' ⇒ chữ người dùng; 'changed' ⇒ pane đổi giữa chừng.
+function Get-GhostProbeMessage([string]$term, [string]$probe, [string]$text = '') {
+  $shown = if ($text.Length -gt 200) { $text.Substring(0, 200) + '…' } else { $text }
+  if ($probe -eq 'real') {
+    return "$term`: ô nhập Claude có chữ bạn gõ (crew đã thêm 1 dấu cách để kiểm, không xóa gì), chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
+  }
+  "$term đổi trong lúc crew kiểm ô nhập (crew đã gõ 1 dấu cách, không bấm thêm phím) — chưa gửi tin mới. Xem: hc read $term --lines 20; có thể còn 1 dấu cách thừa ở ô nhập, rồi gửi lại."
 }
 
 # Task/repair không được xóa bản nháp khi reset phiên; kiểm ô nhập thật của cả Claude và Codex.
-# hc không phân biệt được chữ gợi ý mờ của Claude: giữ ô có chữ để người dùng xử lý trong pane (không tự xóa/ghi đè).
-# Pane Claude bật trước bản tắt gợi ý (Start-Term) có thể hiện gợi ý mờ ⇒ câu báo chỉ cách bật lại.
-function Get-WorkerInputError([string]$term, [string]$screen) {
+# hc không phân biệt được chữ gợi ý mờ của Claude: có $ops ⇒ phép thử gõ 1 phím (Test-GhostInput): gợi ý ⇒ coi ô trống;
+# chữ thật ⇒ giữ ô có chữ để người dùng xử lý trong pane (không tự xóa/ghi đè). Không thử được ⇒ câu báo chỉ cách bật lại pane.
+function Get-WorkerInputError([string]$term, [string]$screen, $ops = $null) {
   if (Get-ScreenDialog $screen) { return '' }
   $box = Get-InputBox $screen
   if (-not $box -or -not $box.Text) { return '' }
+  $probe = if ($box.Kind -eq 'claude' -and $ops -and $ops.Space) { Test-GhostInput $term $ops } else { 'unknown' }
+  if ($probe -eq 'ghost') { return '' }
+  if ($probe -in 'changed', 'real') { return (Get-GhostProbeMessage $term $probe $box.Text) }
   $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
   $msg = "$term có tin kẹt ở ô nhập, chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại."
   if ($box.Kind -eq 'claude') {
@@ -239,8 +536,9 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
   $st = Get-TermStatus (& $ops.Get $term)
   for ($w = 0; $ops.Read -and $st.App -eq 'codex' -and $st.State -in 'idle', 'done'; $w++) {
     $screen = & $ops.Read $term
+    # v16: chân/gợi ý lạ không còn chặn gửi — Get-SendBox lùi về ô nhận theo ký tự đầu ô khi mẫu chữ không khớp; hộp thoại (kể cả 'other') vẫn chặn
     $dlg = Get-ScreenDialog $screen
-    $box = Get-InputBox $screen
+    $box = Get-SendBox $screen
     if (-not $dlg -and $box -and $box.Kind -eq 'codex') {
       if ($box.Text) {
         $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
@@ -250,15 +548,32 @@ function Send-CrewMessage([string]$term, [string]$text, [bool]$raw = $false, [st
     }
     if ($w -ge 5) {
       $why = if ($dlg -eq 'codex-new') { "đang mở hộp chọn của /new" } elseif ($dlg) { 'đang hiện hộp thoại' } else { 'chưa hiện ô nhập sẵn sàng' }
-      Die "$term $why, chưa gửi (không bấm phím)." "xem: hc read $term --lines 20, xử lý xong rồi gửi lại"
+      if ($dlg -ne 'codex-new') { try { Show-AssistNeeded $term @{ Assist = $(if ($dlg) { 'dialog' } else { 'nobox' }); Why = $why; Screen = "$screen" } $st.App } catch { } }
+      Die "$term $why, chưa gửi (không bấm phím)." @("xem: hc read $term --lines 20, xử lý xong rồi gửi lại", $(try { Get-AgentVersionHint $st.App } catch { '' }))
     }
     & $ops.Sleep 2000
     $st = Get-TermStatus (& $ops.Get $term)
+  }
+  # Claude rảnh mà ô nhập có chữ: hc send dán + Enter sẽ gửi chồng chữ đó ⇒ phép thử gõ 1 phím (Test-GhostInput):
+  # gợi ý mờ ⇒ gửi như ô trống (ô còn 1 dấu cách của crew, tin dán sau nó); chữ thật / pane đổi / không chắc ⇒ chặn, không phím xóa nào.
+  # Bảng hc không có Space (bảng giả cũ) ⇒ như trước, không kiểm.
+  if ($ops.Space -and $ops.Read -and $st.App -in 'claude', 'claude-code' -and $st.State -notin 'working', 'blocked') {
+    $screen = & $ops.Read $term
+    $box = if (Get-ScreenDialog $screen) { $null } else { Get-SendBox $screen }
+    $probe = if ($box -and $box.Kind -eq 'claude' -and $box.Text) { Test-GhostInput $term $ops } else { 'ghost' }
+    $next = 'xem mục "Tin kẹt ở ô nhập" trong docs/troubleshooting.md (thư mục cài Crewline)'
+    if ($probe -in 'changed', 'real') { Die (Get-GhostProbeMessage $term $probe $box.Text) $next }
+    if ($probe -ne 'ghost') {
+      $shown = if ($box.Text.Length -gt 200) { $box.Text.Substring(0, 200) + '…' } else { $box.Text }
+      Die "$term có chữ ở ô nhập Claude (không kiểm được là gợi ý hay chữ thật), chưa gửi tin mới: $shown`n  Xử lý: sang pane $term, Enter để gửi hoặc xóa chữ, rồi gửi lại." $next
+    }
   }
   # /new tới Codex, /clear tới Claude: chờ phiên mới như crew task (Test-SessionReady).
   $session = if ($st.App -eq 'codex' -and $text.Trim() -ceq '/new') { 'codex' }
     elseif ($st.App -in 'claude', 'claude-code' -and $text.Trim() -ceq '/clear') { 'claude' } else { '' }
   $r = Invoke-SendFlow $term $text $ops $session $(if ($session) { 10 } else { 6 }) $raw
+  # crew không chắc (không bấm gì) ⇒ khối "CẦN PLANNER XEM" (config assist ≠ off), rồi báo lỗi như cũ. Suite trích AST không nạp assist.ps1 ⇒ try.
+  if ($r.Assist -and (-not $r.Ok -or $r.Unsure)) { try { Show-AssistNeeded $term $r $st.App } catch { } }
   if ($PassResult) { return $r }
   if (-not $r.Ok) { Die $r.Message $r.Next }
   Say $r.Message
@@ -405,7 +720,7 @@ function Invoke-Review {
     $current
   } | Out-Null
   if ($r -and $r.Unsure) {
-    Die "$($r.Message) — chưa chắc Rev đã nhận review $($names -join ',')." @("hc read $revTerm --lines 20", "nếu tin còn nằm ô nhập thì bấm Enter tay rồi: crew review $($names -join ',') -Sent")
+    Die "$($r.Message) — chưa chắc Rev đã nhận review $($names -join ',')." @("hc read $revTerm --lines 20", "thấy tin nằm đúng ô nhập: crew confirm $revTerm (Enter 1 lần + đánh dấu đã gửi)", "Hoặc bấm Enter tay rồi: crew review $($names -join ',') -Sent")
   }
   if ($r) { Say $r.Message }
 }

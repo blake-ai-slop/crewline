@@ -86,7 +86,7 @@ Describe 'crew: tham số tên' {
     (Invoke-CrewCmd 'task').Text | Should Match 'dùng: crew task'
   }
   It 'lệnh 1 tên nhận 2 tên -> lỗi rõ, không chạy' {
-    foreach ($cmd in 'clean alpha,beta', 'check alpha,beta', 'task a,b p.md', 'send t1,t2 hi') {
+    foreach ($cmd in 'clean alpha,beta', 'check alpha,beta', 'task a,b p.md', 'send t1,t2 hi', 'probe claude,codex', 'confirm t1,t2') {
       $r = Invoke-CrewCmd $cmd
       $r.Code | Should Be 1
       $r.Text | Should Match 'chỉ nhận một tên, nhận 2: '
@@ -96,10 +96,22 @@ Describe 'crew: tham số tên' {
     $r.Text | Should Match 'crew clean chỉ nhận một tên, nhận 2: alpha, beta'
   }
 
+  It 'probe: agent lạ / thiếu tên ⇒ exit 1 trước khi gọi hc; confirm thiếu terminal ⇒ cách dùng' {
+    foreach ($a in @(@('probe', 'gemini'), @('probe'))) {
+      $r = Invoke-CrewFile $a
+      $r.Code | Should Be 1
+      $r.Text | Should Match 'dùng: crew probe <claude\|codex>'
+      $r.Text | Should Match '→ Làm tiếp:'
+    }
+    $c = Invoke-CrewFile @('confirm')
+    $c.Code | Should Be 1
+    $c.Text | Should Match 'dùng: crew confirm <terminal>'
+  }
+
   It '-DryRun ở lệnh không có nó ⇒ exit 1 trước khi làm gì, kèm Làm tiếp; lệnh có -DryRun không bị chặn' {
     Set-Content (Join-Path $repo 'p.md') 'x'
     $before = git -C $repo branch --list 'crew/*'
-    foreach ($cmd in @(@('task', 'gamma', 'p.md', '-DryRun'), @('clean', 'alpha', '-DryRun'), @('send', 't1', 'hi', '-DryRun'), @('init', '-DryRun'))) {
+    foreach ($cmd in @(@('task', 'gamma', 'p.md', '-DryRun'), @('clean', 'alpha', '-DryRun'), @('send', 't1', 'hi', '-DryRun'), @('init', '-DryRun'), @('probe', 'claude', '-DryRun'), @('confirm', 't1', '-DryRun'))) {
       $r = Invoke-CrewFile $cmd
       $r.Code | Should Be 1
       $r.Text | Should Match ([regex]::Escape("crew: LỖI: crew $($cmd[0]) không có -DryRun"))

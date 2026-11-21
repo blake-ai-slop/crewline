@@ -95,7 +95,7 @@ function Test-AgentScreen([string]$kind, [string]$screen) {
   $last = @("$screen" -split '\r?\n' | Where-Object { $_.Trim() -and $_ -notmatch '^\[hc\]' }) | Select-Object -Last 1
   if ("$last" -match '(^\s*PS .*>|[$#])\s*$') { return $false }
   # Codex: chân có thể không có 'Context N% left' (status_line của user, bị cắt '…') ⇒ nhận thêm đầu phiên, chân GPT-…/limit, gợi ý.
-  if ($kind -eq 'codex') { return "$screen" -match 'Context \d+% left|>_ OpenAI Codex|(?m)^\s*GPT-\S+\s.*·|(?m)^\s*(5h|weekly) \d+% left|(?m)^\s*\? for shortcuts' }
+  if ($kind -eq 'codex') { return "$screen" -match 'Context:? \d+% left|>_ OpenAI Codex|(?m)^\s*GPT-\S+\s.*·|(?m)^\s*(5h|weekly) \d+% left|(?m)^\s*\? for shortcuts' }
   "$screen" -match '(accept edits|bypass permissions|auto mode|plan mode) on|shift\+tab to cycle'
 }
 
@@ -208,14 +208,17 @@ function Get-Ids([string]$k) {
 }
 
 # Chạy một chương trình trong pwsh (giữ shell khi chương trình thoát) thành terminal hc có tên, gắn vào tab herdr.
-function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [string]$cmdline) {
+# $suggest: $null ⇒ theo "suggestions" của .crew/config.json và vai trong tên (Test-PaneSuggestions); $true/$false ⇒ ép.
+function Start-Term([string]$name, [string]$cwd, [string]$space, [string]$tab, [string]$cmdline, $suggest = $null) {
   $argv = @('run', '--bg', '--json', '--name', $name, '--keep', '--outlive-parent', '--no-parent', '--no-notify',
     '--cwd', $cwd, '--label', "herdr.space=$space", '--label', "herdr.tab=$tab", '--', 'pwsh', '-NoLogo')
   if ($cmdline) {
     # crew up chạy từ pane agent có thể truyền biến phiên cha; Claude thấy CLAUDE_CODE_CHILD_SESSION thì không lưu transcript nên không resume được.
     $clean = "foreach (`$v in 'CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN') { Remove-Item `"Env:`$v`" -ErrorAction Ignore }; "
-    # Gợi ý câu kế tiếp (chữ mờ) của Claude Code nằm trong ô nhập, hc read không có màu ⇒ crew tưởng tin kẹt; chỉ tắt trong pwsh của pane này.
-    $clean += "`$env:CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false'; "
+    # Gợi ý câu kế tiếp (chữ mờ) của Claude Code nằm trong ô nhập, hc read không có màu ⇒ crew tưởng tin kẹt: mặc định tắt trong pwsh
+    # của pane này; config "suggestions" = planner|all bật lại cho vai đó (crew send phân biệt bằng phép thử gõ 1 phím, xem Test-GhostInput).
+    if ($null -eq $suggest) { $suggest = try { Test-PaneSuggestions $name $cwd } catch { $false } }
+    $clean += Get-SuggestionEnvLine ([bool]$suggest)
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($clean + $cmdline))
     $argv += @('-NoExit', '-EncodedCommand', $enc)
   }

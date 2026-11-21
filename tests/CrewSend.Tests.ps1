@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Write-CrewStateFil
 # Test crew send/review/task -Review: trích hàm thuần bằng AST từ crew.ps1, không gọi hc thật.
 $crewScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/crew.ps1'
 
-$wanted = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady', 'Invoke-Send', 'Update-TaskDone', 'Update-Tasks'
+$wanted = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Get-StuckText', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Get-ReviewLevel', 'Format-ReviewMessage', 'New-TaskRecord', 'Send-CrewMessage', 'Test-SessionReady', 'Invoke-Send', 'Update-TaskDone', 'Update-Tasks'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $wanted } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -138,11 +138,20 @@ Describe 'Invoke-SendFlow (hc giả)' {
     $r.Message | Should Match 'hộp thoại'
     $ops.State.Keys | Should Be 0
   }
-  It 'tin kẹt ở ô nhập, màn hình thường -> vẫn Enter như cũ' {
+  It 'tin kẹt ở ô nhập, màn hình thường -> vẫn Enter như cũ (v16: so trước/sau khi dán xác nhận tin nằm đúng ô)' {
     $ops = New-FakeOps @((New-Info), (New-Info), (New-Info), (New-Info -status 'working'))
-    $ops.Read = { param($t) "● xong`n❯ tin" }
+    $ops.State.Reads = 0
+    $ops.Read = { param($t) $ops.State.Reads++; if ($ops.State.Reads -eq 1) { "● xong`n❯" } else { "● xong`n❯ tin" } }.GetNewClosure()
     (Invoke-SendFlow 't' 'tin' $ops).Ok | Should Be $true
     $ops.State.Keys | Should Be 1
+  }
+  It 'v16: màn hình không đổi sau dán (tin không hiện, ô đã có chữ y hệt từ trước) -> 0 Enter' {
+    $ops = New-FakeOps @((New-Info))
+    $ops.Read = { param($t) "● xong`n❯ tin" }
+    $r = Invoke-SendFlow 't' 'tin' $ops
+    $r.Ok | Should Be $false
+    $r.Message | Should Match 'unchanged'
+    $ops.State.Keys | Should Be 0
   }
   It 'crew send -Raw -> gửi trần cả tin thường' {
     $ops = New-FakeOps @((New-Info), (New-Info -status 'working'))

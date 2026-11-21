@@ -3,7 +3,7 @@ foreach ($shared in 'Get-CrewStateSchema', 'Read-CrewState', 'Get-CrewVersion', 
 # Hàm thật qua AST, hc giả; fixture là đoạn cuối hc read --json thực tế
 # 2026-11-01: crewline-planner/w1/rev (chỉ đọc), hp-test-claude/codex (đã kill).
 
-$pendingFunctions = 'Get-WorkerMode','Get-SendPlan','Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Get-HotWarnings'
+$pendingFunctions = 'Get-WorkerMode','Get-SendPlan','Get-PendingInput','Get-TermStatus','Get-InputBox','Get-StuckText','Get-ScreenDialog','Invoke-Hot', 'Get-TaskGitFacts', 'Test-TaskFinished','Get-HotWarnings', 'Get-SuggestionMode', 'Test-SuggestionsOn'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $pendingFunctions } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -82,6 +82,20 @@ Describe 'Get-PendingInput bảo thủ với gợi ý và marker hàng đợi th
   }
 }
 
+Describe 'Get-PendingInput với pane Claude bật gợi ý (ghost-key)' {
+  It 'bật gợi ý: chữ trong ô Claude rảnh ⇒ maybe; ô trống, working, Codex ⇒ như cũ' {
+    foreach ($state in 'idle', 'done') {
+      Get-PendingInput claude $state $ClaudeSuggestion $true | Should Be 'maybe'
+      Get-PendingInput claude-code $state $ClaudeSuggestion $true | Should Be 'maybe'
+      Get-PendingInput claude $state $ClaudeEmpty $true | Should Be ''
+      Get-PendingInput claude $state $ClaudeSuggestion $false | Should Be ''
+    }
+    Get-PendingInput claude working $ClaudeQueued $true | Should Be 'queued'
+    Get-PendingInput claude working $ClaudeSuggestion $true | Should Be ''
+    Get-PendingInput codex idle ($CodexEmpty.Replace('Ask Codex to do anything','bản nháp')) $true | Should Be 'stuck'
+  }
+}
+
 Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
   BeforeEach {
     $script:Path = $TestDrive
@@ -116,6 +130,31 @@ Describe 'crew hot pending chỉ đọc, một lần mỗi pane' {
         Keys = { $script:PendingKeys++; throw 'cấm phím' }
       }
     }
+  }
+  It 'suggestions=planner: pane planner Claude có chữ ⇒ có chữ (có thể là gợi ý), không tin kẹt, 0 phím; worker không đổi' {
+    function Get-Config($p) { [pscustomobject]@{ workers=@('claude'); planner='claude'; rev='none'; review='lean'; access='full'; suggestions='planner' } }
+    function Get-WorkerTree { Join-Path $TestDrive 'không-có' }
+    function Get-LiveTerminals {
+      [pscustomobject]@{name='demo-planner'; state='live'; status=@{app='claude'; state='idle'}; agent='claude'}
+      [pscustomobject]@{name='demo-w1'; state='live'; status=@{app='claude'; state='idle'}; agent='claude'}
+    }
+    $script:PendingScreens = @{'demo-planner'=$ClaudeSuggestion; 'demo-w1'=$ClaudeSuggestion}
+    $out = Invoke-Hot 6>&1 | Out-String
+    $out | Should Match '== gợi ý Claude: planner \(đổi config chỉ áp cho pane bật lại: crew up -Restart <vai>\)'
+    $out | Should Match 'demo-planner\s+có chữ'
+    $out | Should Match 'demo-planner: có chữ trong ô nhập \(có thể là gợi ý Claude\)'
+    $out | Should Not Match 'tin kẹt'
+    $out | Should Not Match 'demo-w1: có chữ'
+    $script:PendingKeys | Should Be 0
+    $script:PendingSend | Should Be 0
+  }
+  It 'suggestions sai giá trị ⇒ cảnh báo, dùng off' {
+    function Get-Config($p) { [pscustomobject]@{ workers=@(); planner='claude'; rev='none'; review='lean'; access='full'; suggestions='yes' } }
+    function Get-LiveTerminals { [pscustomobject]@{name='demo-planner'; state='live'; status=@{app='claude'; state='idle'}; agent='claude'} }
+    $script:PendingScreens = @{'demo-planner'=$ClaudeSuggestion}
+    $out = Invoke-Hot 6>&1 | Out-String
+    $out | Should Match "suggestions='yes' không hợp lệ"
+    $out | Should Not Match 'có chữ'
   }
   It 'fixture nền Codex v0.166/Claude v2.1 thay done và idle, chỉ đọc một lần' {
     foreach ($fixture in 'codex-v0.166/background-running.txt', 'codex-v0.166/background-waiting.txt', 'claude-v2.1/background-running.txt') {

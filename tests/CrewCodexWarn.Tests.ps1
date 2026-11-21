@@ -2,7 +2,7 @@
 function Say { }
 function Die($m) { throw $m }
 . (Join-Path $PSScriptRoot 'CrewAst.ps1')
-foreach ($name in 'Get-InputBox','Get-ScreenDialog','Get-TermStatus','Get-SendPlan','Test-SentInput','Send-CodexQueue','Invoke-SendFlow','Send-CrewMessage') {
+foreach ($name in 'Get-ScreenRows','Find-PromptBox','Test-SameScreenRow','Compare-PasteScreens','Get-SendBox','Get-InputBox','Get-ScreenDialog','Get-TermStatus','Get-SendPlan','Test-SentInput','Send-CodexQueue','Invoke-SendFlow','Send-CrewMessage') {
   . ([scriptblock]::Create((Get-CrewFunction $name).Extent.Text))
 }
 

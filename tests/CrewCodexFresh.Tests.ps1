@@ -1,7 +1,7 @@
 ﻿. (Join-Path $PSScriptRoot 'CrewAst.ps1')
 # Nhận phiên Codex mới sau /new khi chân không có 'Context N% left' (status_line của user, bị cắt '…') và hộp chọn /new
 # vẽ dưới hội thoại cũ. Fixture chép từ màn hình thật Codex 0.166 (demo-win-w2, 2026-11-19). Không gọi hc thật.
-$want = 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Test-AgentScreen'
+$want = 'Get-ScreenRows', 'Find-PromptBox', 'Test-SameScreenRow', 'Compare-PasteScreens', 'Get-SendBox', 'Get-TermStatus', 'Get-SendPlan', 'Invoke-SendFlow', 'Get-InputBox', 'Test-SentInput', 'Send-CodexQueue', 'Get-ScreenDialog', 'Test-SessionReady', 'Test-AgentScreen'
 foreach ($fn in (Find-CrewAst { param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -in $want } -Recurse:$false)) {
   . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -124,6 +124,15 @@ Describe 'Codex sau /new: nhận phiên mới không cần Context N% left' {
   It 'Context vẫn quyết định khi có: 100 -> mới, khác -> chưa (dù có đầu phiên)' {
     Test-SessionReady 'codex' (New-Info) ($FreshScreen.Replace('· C…', '· Context 100% left')) | Should Be $true
     Test-SessionReady 'codex' (New-Info) ($FreshScreen.Replace('· C…', '· Context 63% left')) | Should Be $false
+  }
+  It "v16 assist-nolearn: dạng có dấu hai chấm 'Context: N% left' cũng quyết định (90 -> phiên cũ, 100 -> mới)" {
+    Test-SessionReady 'codex' (New-Info) ($FreshScreen.Replace('· C…', '· Context: 90% left')) | Should Be $false
+    Test-SessionReady 'codex' (New-Info) ($FreshScreen.Replace('· C…', '· Context: 100% left')) | Should Be $true
+    $ctxOnly = $OldScreen.Replace('GPT-6.1-Sol medium · 5h 74% left · weekly 57% left · C…', 'o9-mini high · Context: 90% left').Replace("`n  ? for shortcuts", '')
+    $ctxOnly | Should Not Be $OldScreen
+    (Get-InputBox $ctxOnly).Kind | Should Be 'codex'
+    (Get-InputBox ($ctxOnly.Replace('Context: 90%', 'Kontext 90%'))) | Should Be $null
+    Test-AgentScreen codex "  Context: 90% left" | Should Be $true
   }
   It 'Test-AgentScreen nhận TUI Codex khi chân không có Context' {
     Test-AgentScreen codex $OldScreen | Should Be $true

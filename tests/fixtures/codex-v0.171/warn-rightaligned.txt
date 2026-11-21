@@ -1,0 +1,49 @@
+› <hc from="t2v crewline-planner">Planner: assist-nolearn (review Nhanh nhưng nhờ chạy lại đủ 42 phép đối chiếu tấn công của bạn trên nhánh + kiểm quy tắc mới: Tab hàng đợi Codex/Space ghost-key chỉ…
+    + 166 lines (ctrl+t to expand)
+
+• Ran git status --short --branch; git log -5 --oneline; Get-Content context/roles/rev.md
+  └ ## Không làm
+    Push; sửa code ngoài phạm vi chỗ nối; merge khi test đỏ.
+    Báo cáo ≤10 dòng: commit, findings, số test, việc còn lại.
+    + 35 lines (ctrl+t to expand)
+
+• Ran rg -n 'function (Get-TermStatus|Get-InputBox|Get-ScreenDialog|Get-ScreenRows|Find-PromptBox|Test-SentInput)|queue-unknown-tail|KnownTail' scripts tests; Get-Content scripts/crew/task.ps1 | Sele…
+  └   if ($box -and -not (& $hasMark $box.After)) { return '' }
+      $claudeTrust = $s -match 'Yes, I trust this folder'
+      $codexTrust = $s -match 'Trust this folder\?' -and $s -match 'Trust and continue'
+    + 114 lines (ctrl+t to expand)
+
+• Ran Get-Content scripts/crew/send.ps1 -TotalCount 76; Get-Content tests/CrewAssist.Tests.ps1 | Select-Object -Skip 108 -First 74; Get-Content context/roles/rev.local.md
+  └ - Lỗi do chính chỗ nối Rev sửa khi gộp (vd đổi Save-Tasks sang Update-Tasks) ⇒ Rev tự sửa, không dừng chờ; lỗi trong phần của worker ⇒ báo planner để giao lại worker.
+    - Full test chạy ở foreground (chờ tới khi xong trong cùng lượt). Codex không tự quay lại khi lệnh nền kết thúc (sự cố 2026-11-18: full xong 10:41, Rev đứng yên với 9 lỗi chưa xử lý).
+    - Không để thay đổi chưa commit ở main khi kết thúc lượt: commit, hoặc báo planner rõ file nào đang dở.
+    + 153 lines (ctrl+t to expand)
+
+• Ran $ErrorActionPreference = 'Stop' …
+  └ Codex unknown hint suffix LF    True            0   1
+    Codex unknown hint suffix CRLF  True            0   1
+
+    + 15 lines (ctrl+t to expand)
+
+• Ca bổ sung trên eb959a4 tái hiện P1 với cả LF và CRLF. Claude vẫn gọi Space khi có dòng lạ trước chân chuẩn. Codex vẫn gọi Tab khi nhận nhầm dòng lạ thành chân hoặc gợi ý. Mình báo planner ngay.
+
+• Ran crew send crewline-planner 'P1 assist-nolearn eb959a4 (đã vào main qua 0862b2f và đã clean trước lượt kiểm bổ sung): 42 đối chiếu trên nhánh đã đạt, full 1295 pass/0 fail/2 skip, nhưng fake ops…
+  └ crew: đã gửi -> crewline-planner (working)
+    ## main...origin/main [ahead 40]
+    + Show details
+
+• Đã báo planner P1 trên eb959a4, hiện đã nằm trong main qua merge 0862b2f. Kiểm tra bằng bộ giả lập tái hiện trên cả LF và CRLF:
+
+  • Claude gọi Space khi có dòng lạ ngay trước chân chuẩn.
+  • Codex gọi Tab khi dòng lạ có dấu · được nhận nhầm là chân, hoặc khi gợi ý chuẩn có thêm hậu tố lạ.
+
+  Trước merge, 42 phép đối chiếu trên nhánh đều đạt. Full test sau merge có 1.295 pass, 0 fail, 2 skip và crew clean đã xong. Lượt kiểm bổ sung kết thúc với main sạch, không push.
+
+  Worked for 2m 14s • 10:45 AM
+                                                                                                                                                     ⚠ 5h limit: 47% left · resets at 2:05 PM · /status
+
+› <hc from="t2v crewline-planner">Rev Nhanh: merge crew/tested-agents (2f8333a). Đọc context/tasks/tested-agents.md. Full test, crew clean tested-agents, báo planner. Không push.</hc>
+
+
+  GPT-6.2-Sol medium · 5h 47% left · weekly 26% left · Context 94% left
+                                                                                                                                                                               ⚠ 1 warning · f2 to view
